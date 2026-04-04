@@ -1,0 +1,44 @@
+{
+  "name": "pfizer-hbu-ai-bootcamp-evaluator",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "run-p dev:api dev:web",
+    "dev:api": "tsx watch src/server.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "run-s build:api build:web",
+    "build:api": "tsc -p tsconfig.build.json",
+    "build:web": "vite build --config web/vite.config.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:push": "drizzle-kit push",
+    "seed:demo": "tsx src/scripts/seed-demo.ts",
+    "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts"
+  },
+  "dependencies": {
+    "@fastify/cors": "^11.1.0",
+    "@fastify/sensible": "^6.0.3",
+    "@larksuiteoapi/node-sdk": "^1.42.0",
+    "better-sqlite3": "^12.4.1",
+    "drizzle-orm": "^0.44.5",
+    "fastify": "^5.6.1",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "zod": "^4.1.8"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.7.2",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "@vitejs/plugin-react": "^5.0.4",
+    "drizzle-kit": "^0.31.4",
+    "npm-run-all": "^4.1.5",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.10",
+    "vitest": "^3.2.4"
+  }
+}

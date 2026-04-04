@@ -1,0 +1,14 @@
+node_modules
+dist
+dist-web
+coverage
+.vite
+data
+.env
+*.tsbuildinfo
+output
+.agents
+.claude
+.trae
+skills
+skills-lock.json

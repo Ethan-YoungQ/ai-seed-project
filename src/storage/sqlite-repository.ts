@@ -1,0 +1,921 @@
+import Database from "better-sqlite3";
+
+import { demoCamp, demoMembers, demoSessions } from "../config/defaults";
+import { buildBoardRanking } from "../domain/ranking";
+import { nextMemberStatusFromWarnings, resolveWarningLevel } from "../domain/warnings";
+import type {
+  AnnouncementJob,
+  AnnouncementType,
+  AuditEvent,
+  BoardSnapshotRecord,
+  CampRecord,
+  MemberProfile,
+  OperatorSubmissionEntry,
+  RawMessageEvent,
+  ReviewAction,
+  ScoringResult,
+  SessionDefinition,
+  SubmissionCandidate,
+  WarningRecord
+} from "../domain/types";
+import { buildBoardOverview } from "../services/board/overview";
+
+const tableDefinitions = `
+CREATE TABLE IF NOT EXISTS camps (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  group_id TEXT NOT NULL,
+  start_date TEXT NOT NULL,
+  end_date TEXT NOT NULL,
+  status TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS members (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  department TEXT NOT NULL,
+  role_type TEXT NOT NULL,
+  is_participant INTEGER NOT NULL DEFAULT 1,
+  is_excluded_from_board INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'active'
+);
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  homework_tag TEXT NOT NULL,
+  cycle_type TEXT NOT NULL,
+  course_date TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  window_end TEXT NOT NULL,
+  active INTEGER NOT NULL DEFAULT 1
+);
+CREATE TABLE IF NOT EXISTS raw_events (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL DEFAULT '',
+  member_id TEXT NOT NULL,
+  session_id TEXT,
+  message_id TEXT NOT NULL UNIQUE,
+  raw_text TEXT NOT NULL,
+  parsed_tags TEXT NOT NULL,
+  attachment_count INTEGER NOT NULL DEFAULT 0,
+  attachment_types TEXT NOT NULL,
+  event_time TEXT NOT NULL,
+  event_url TEXT NOT NULL,
+  parse_status TEXT NOT NULL DEFAULT 'raw'
+);
+CREATE TABLE IF NOT EXISTS submission_candidates (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  homework_tag TEXT NOT NULL,
+  event_ids TEXT NOT NULL,
+  combined_text TEXT NOT NULL,
+  attachment_count INTEGER NOT NULL DEFAULT 0,
+  attachment_types TEXT NOT NULL,
+  first_event_time TEXT NOT NULL,
+  latest_event_time TEXT NOT NULL,
+  deadline_at TEXT NOT NULL,
+  evaluation_window_end TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS scores (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  candidate_id TEXT NOT NULL,
+  base_score INTEGER NOT NULL DEFAULT 0,
+  process_score INTEGER NOT NULL DEFAULT 0,
+  quality_score INTEGER NOT NULL DEFAULT 0,
+  community_bonus INTEGER NOT NULL DEFAULT 0,
+  total_score INTEGER NOT NULL DEFAULT 0,
+  score_reason TEXT NOT NULL,
+  llm_reason TEXT NOT NULL,
+  final_status TEXT NOT NULL,
+  manual_override_flag INTEGER NOT NULL DEFAULT 0,
+  auto_base_score INTEGER NOT NULL DEFAULT 0,
+  auto_process_score INTEGER NOT NULL DEFAULT 0,
+  auto_quality_score INTEGER NOT NULL DEFAULT 0,
+  auto_community_bonus INTEGER NOT NULL DEFAULT 0,
+  review_note TEXT NOT NULL DEFAULT '',
+  reviewed_by TEXT NOT NULL DEFAULT '',
+  reviewed_at TEXT NOT NULL DEFAULT '',
+  llm_model TEXT NOT NULL DEFAULT '',
+  llm_input_excerpt TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS warnings (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  session_id TEXT,
+  violation_type TEXT NOT NULL,
+  level TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  resolved_flag INTEGER NOT NULL DEFAULT 0,
+  note TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE IF NOT EXISTS board_snapshots (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  session_id TEXT,
+  period_start TEXT NOT NULL,
+  period_end TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS audit_events (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  action TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS announcement_jobs (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  type TEXT NOT NULL,
+  text TEXT NOT NULL,
+  status TEXT NOT NULL,
+  triggered_by TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+`;
+
+function asBoolean(value: number) {
+  return value === 1;
+}
+
+function nowIso() {
+  return new Date().toISOString();
+}
+
+function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (rows.some((row) => row.name === column)) {
+    return;
+  }
+
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+export class SqliteRepository {
+  private readonly db: Database.Database;
+
+  constructor(databaseUrl: string) {
+    this.db = new Database(databaseUrl);
+    this.db.exec(tableDefinitions);
+    this.ensureCompatibility();
+  }
+
+  private ensureCompatibility() {
+    ensureColumn(this.db, "scores", "auto_base_score", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(this.db, "scores", "auto_process_score", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(this.db, "scores", "auto_quality_score", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(this.db, "scores", "auto_community_bonus", "INTEGER NOT NULL DEFAULT 0");
+    ensureColumn(this.db, "scores", "review_note", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "scores", "reviewed_by", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "scores", "reviewed_at", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "scores", "llm_model", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "scores", "llm_input_excerpt", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "chat_id", "TEXT NOT NULL DEFAULT ''");
+  }
+
+  close() {
+    this.db.close();
+  }
+
+  seedDemo() {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO camps (id, name, group_id, start_date, end_date, status)
+         VALUES (@id, @name, @groupId, @startDate, @endDate, @status)`
+      )
+      .run(demoCamp);
+
+    const insertMember = this.db.prepare(
+      `INSERT OR REPLACE INTO members
+      (id, camp_id, name, department, role_type, is_participant, is_excluded_from_board, status)
+      VALUES (@id, @campId, @name, @department, @roleType, @isParticipant, @isExcludedFromBoard, @status)`
+    );
+
+    for (const member of demoMembers) {
+      insertMember.run({
+        ...member,
+        isParticipant: member.isParticipant ? 1 : 0,
+        isExcludedFromBoard: member.isExcludedFromBoard ? 1 : 0
+      });
+    }
+
+    const insertSession = this.db.prepare(
+      `INSERT OR REPLACE INTO sessions
+      (id, camp_id, title, homework_tag, cycle_type, course_date, deadline_at, window_start, window_end, active)
+      VALUES (@id, @campId, @title, @homeworkTag, @cycleType, @courseDate, @deadlineAt, @windowStart, @windowEnd, @active)`
+    );
+
+    for (const session of demoSessions) {
+      insertSession.run({
+        ...session,
+        active: session.active ? 1 : 0
+      });
+    }
+  }
+
+  getDefaultCampId() {
+    const row = this.db.prepare("SELECT id FROM camps ORDER BY start_date LIMIT 1").get() as
+      | { id: string }
+      | undefined;
+    return row?.id;
+  }
+
+  getCamp(campId: string): CampRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM camps WHERE id = ?").get(campId) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      groupId: String(row.group_id),
+      startDate: String(row.start_date),
+      endDate: String(row.end_date),
+      status: String(row.status)
+    };
+  }
+
+  getDefaultCamp() {
+    const campId = this.getDefaultCampId();
+    return campId ? this.getCamp(campId) : undefined;
+  }
+
+  getCampByGroupId(groupId: string): CampRecord | undefined {
+    const row = this.db.prepare("SELECT * FROM camps WHERE group_id = ? LIMIT 1").get(groupId) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      name: String(row.name),
+      groupId: String(row.group_id),
+      startDate: String(row.start_date),
+      endDate: String(row.end_date),
+      status: String(row.status)
+    };
+  }
+
+  updateCampGroupId(campId: string, groupId: string) {
+    this.db.prepare("UPDATE camps SET group_id = ? WHERE id = ?").run(groupId, campId);
+    return this.getCamp(campId);
+  }
+
+  getMember(memberId: string): MemberProfile | undefined {
+    const row = this.db.prepare("SELECT * FROM members WHERE id = ?").get(memberId) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      name: String(row.name),
+      department: String(row.department),
+      roleType: row.role_type as MemberProfile["roleType"],
+      isParticipant: asBoolean(Number(row.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board)),
+      status: row.status as MemberProfile["status"]
+    };
+  }
+
+  ensureMember(memberId: string, campIdOverride?: string) {
+    const existing = this.getMember(memberId);
+    if (existing) {
+      return existing;
+    }
+
+    const campId = campIdOverride ?? this.getDefaultCampId();
+    if (!campId) {
+      throw new Error("No camp has been seeded.");
+    }
+
+    const fallback: MemberProfile = {
+      id: memberId,
+      campId,
+      name: memberId,
+      department: "Unknown",
+      roleType: "observer",
+      isParticipant: false,
+      isExcludedFromBoard: true,
+      status: "active"
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO members
+        (id, camp_id, name, department, role_type, is_participant, is_excluded_from_board, status)
+        VALUES (@id, @campId, @name, @department, @roleType, @isParticipant, @isExcludedFromBoard, @status)`
+      )
+      .run({
+        ...fallback,
+        isParticipant: 0,
+        isExcludedFromBoard: 1
+      });
+
+    return fallback;
+  }
+
+  updateMember(
+    memberId: string,
+    patch: Partial<Pick<MemberProfile, "isParticipant" | "isExcludedFromBoard" | "roleType">>
+  ) {
+    const current = this.getMember(memberId);
+    if (!current) {
+      return undefined;
+    }
+
+    const next = {
+      ...current,
+      ...patch
+    };
+
+    this.db
+      .prepare(
+        `UPDATE members
+        SET role_type = @roleType,
+            is_participant = @isParticipant,
+            is_excluded_from_board = @isExcludedFromBoard
+        WHERE id = @id`
+      )
+      .run({
+        id: memberId,
+        roleType: next.roleType,
+        isParticipant: next.isParticipant ? 1 : 0,
+        isExcludedFromBoard: next.isExcludedFromBoard ? 1 : 0
+      });
+
+    this.recordAudit({
+      id: `audit:member:${memberId}:${Date.now()}`,
+      campId: next.campId,
+      entityType: "member",
+      entityId: memberId,
+      action: "member_updated",
+      actor: "operator",
+      payload: JSON.stringify(patch),
+      createdAt: nowIso()
+    });
+
+    return next;
+  }
+
+  listMembers(campId: string) {
+    const rows = this.db
+      .prepare("SELECT * FROM members WHERE camp_id = ? ORDER BY name")
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      name: String(row.name),
+      department: String(row.department),
+      roleType: row.role_type as MemberProfile["roleType"],
+      isParticipant: asBoolean(Number(row.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board)),
+      status: row.status as MemberProfile["status"]
+    }));
+  }
+
+  listSessions(campId: string): SessionDefinition[] {
+    const rows = this.db
+      .prepare("SELECT * FROM sessions WHERE camp_id = ? ORDER BY course_date")
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      title: String(row.title),
+      homeworkTag: String(row.homework_tag),
+      courseDate: String(row.course_date),
+      deadlineAt: String(row.deadline_at),
+      windowStart: String(row.window_start),
+      windowEnd: String(row.window_end),
+      cycleType: row.cycle_type as SessionDefinition["cycleType"],
+      active: asBoolean(Number(row.active))
+    }));
+  }
+
+  insertRawEvent(event: RawMessageEvent & { campId: string; parseStatus: string }) {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO raw_events
+        (id, camp_id, chat_id, member_id, session_id, message_id, raw_text, parsed_tags, attachment_count, attachment_types, event_time, event_url, parse_status)
+        VALUES (@id, @campId, @chatId, @memberId, @sessionId, @messageId, @rawText, @parsedTags, @attachmentCount, @attachmentTypes, @eventTime, @eventUrl, @parseStatus)`
+      )
+      .run({
+        ...event,
+        parsedTags: JSON.stringify(event.parsedTags),
+        attachmentTypes: JSON.stringify(event.attachmentTypes)
+      });
+  }
+
+  listRawEventsForWindow(
+    memberId: string,
+    sessionId: string,
+    windowStart: string,
+    windowEnd: string
+  ): RawMessageEvent[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM raw_events
+         WHERE member_id = ? AND session_id = ? AND event_time >= ? AND event_time <= ?
+         ORDER BY event_time`
+      )
+      .all(memberId, sessionId, windowStart, windowEnd) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      chatId: String(row.chat_id),
+      memberId: String(row.member_id),
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      messageId: String(row.message_id),
+      eventTime: String(row.event_time),
+      rawText: String(row.raw_text),
+      parsedTags: JSON.parse(String(row.parsed_tags)) as string[],
+      attachmentCount: Number(row.attachment_count),
+      attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      eventUrl: String(row.event_url)
+    }));
+  }
+
+  getRawEvent(eventId: string): (RawMessageEvent & { campId: string; parseStatus: string }) | undefined {
+    const row = this.db.prepare("SELECT * FROM raw_events WHERE id = ?").get(eventId) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      chatId: String(row.chat_id),
+      memberId: String(row.member_id),
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      messageId: String(row.message_id),
+      rawText: String(row.raw_text),
+      parsedTags: JSON.parse(String(row.parsed_tags)) as string[],
+      attachmentCount: Number(row.attachment_count),
+      attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      eventTime: String(row.event_time),
+      eventUrl: String(row.event_url),
+      parseStatus: String(row.parse_status)
+    };
+  }
+
+  saveCandidate(candidate: SubmissionCandidate) {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO submission_candidates
+        (id, camp_id, session_id, member_id, homework_tag, event_ids, combined_text, attachment_count, attachment_types, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
+        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventIds, @combinedText, @attachmentCount, @attachmentTypes, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
+      )
+      .run({
+        ...candidate,
+        eventIds: JSON.stringify(candidate.eventIds),
+        attachmentTypes: JSON.stringify(candidate.attachmentTypes)
+      });
+  }
+
+  getCandidate(candidateId: string): SubmissionCandidate | undefined {
+    const row = this.db
+      .prepare("SELECT * FROM submission_candidates WHERE id = ?")
+      .get(candidateId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      sessionId: String(row.session_id),
+      memberId: String(row.member_id),
+      homeworkTag: String(row.homework_tag),
+      eventIds: JSON.parse(String(row.event_ids)) as string[],
+      combinedText: String(row.combined_text),
+      attachmentCount: Number(row.attachment_count),
+      attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      firstEventTime: String(row.first_event_time),
+      latestEventTime: String(row.latest_event_time),
+      deadlineAt: String(row.deadline_at),
+      evaluationWindowEnd: String(row.evaluation_window_end)
+    };
+  }
+
+  saveScore(campId: string, score: ScoringResult) {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO scores
+        (id, camp_id, session_id, member_id, candidate_id, base_score, process_score, quality_score, community_bonus, total_score, score_reason, llm_reason, final_status, manual_override_flag, auto_base_score, auto_process_score, auto_quality_score, auto_community_bonus, review_note, reviewed_by, reviewed_at, llm_model, llm_input_excerpt)
+        VALUES (@id, @campId, @sessionId, @memberId, @candidateId, @baseScore, @processScore, @qualityScore, @communityBonus, @totalScore, @scoreReason, @llmReason, @finalStatus, @manualOverrideFlag, @autoBaseScore, @autoProcessScore, @autoQualityScore, @autoCommunityBonus, @reviewNote, @reviewedBy, @reviewedAt, @llmModel, @llmInputExcerpt)`
+      )
+      .run({
+        id: score.candidateId,
+        campId,
+        ...score,
+        manualOverrideFlag: score.manualOverrideFlag ? 1 : 0,
+        autoBaseScore: score.autoBaseScore ?? score.baseScore,
+        autoProcessScore: score.autoProcessScore ?? score.processScore,
+        autoQualityScore: score.autoQualityScore ?? score.qualityScore,
+        autoCommunityBonus: score.autoCommunityBonus ?? score.communityBonus,
+        reviewNote: score.reviewNote ?? "",
+        reviewedBy: score.reviewedBy ?? "",
+        reviewedAt: score.reviewedAt ?? "",
+        llmModel: score.llmModel ?? "",
+        llmInputExcerpt: score.llmInputExcerpt ?? ""
+      });
+  }
+
+  getScore(candidateId: string): ScoringResult | undefined {
+    const row = this.db.prepare("SELECT * FROM scores WHERE id = ?").get(candidateId) as
+      | Record<string, unknown>
+      | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      memberId: String(row.member_id),
+      sessionId: String(row.session_id),
+      candidateId: String(row.candidate_id),
+      baseScore: Number(row.base_score),
+      processScore: Number(row.process_score),
+      qualityScore: Number(row.quality_score),
+      communityBonus: Number(row.community_bonus),
+      totalScore: Number(row.total_score),
+      finalStatus: row.final_status as ScoringResult["finalStatus"],
+      scoreReason: String(row.score_reason),
+      llmReason: String(row.llm_reason),
+      llmModel: String(row.llm_model),
+      llmInputExcerpt: String(row.llm_input_excerpt),
+      manualOverrideFlag: asBoolean(Number(row.manual_override_flag)),
+      reviewNote: String(row.review_note),
+      reviewedBy: String(row.reviewed_by),
+      reviewedAt: String(row.reviewed_at),
+      autoBaseScore: Number(row.auto_base_score),
+      autoProcessScore: Number(row.auto_process_score),
+      autoQualityScore: Number(row.auto_quality_score),
+      autoCommunityBonus: Number(row.auto_community_bonus)
+    };
+  }
+
+  listScores(campId: string) {
+    return this.db
+      .prepare("SELECT member_id, session_id, total_score, community_bonus, final_status FROM scores WHERE camp_id = ?")
+      .all(campId) as Array<{
+      member_id: string;
+      session_id: string;
+      total_score: number;
+      community_bonus: number;
+      final_status: "valid" | "invalid" | "pending_review";
+    }>;
+  }
+
+  listOperatorSubmissions(campId: string): OperatorSubmissionEntry[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           c.id AS candidate_id,
+           c.member_id,
+           m.name AS member_name,
+           m.department,
+           c.session_id,
+           s.title AS session_title,
+           c.latest_event_time,
+           sc.total_score,
+           sc.final_status,
+           sc.manual_override_flag,
+           sc.review_note
+         FROM submission_candidates c
+         JOIN members m ON m.id = c.member_id
+         JOIN sessions s ON s.id = c.session_id
+         LEFT JOIN scores sc ON sc.candidate_id = c.id
+         WHERE c.camp_id = ?
+         ORDER BY c.latest_event_time DESC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      candidateId: String(row.candidate_id),
+      memberId: String(row.member_id),
+      memberName: String(row.member_name),
+      department: String(row.department),
+      sessionId: String(row.session_id),
+      sessionTitle: String(row.session_title),
+      latestEventTime: String(row.latest_event_time),
+      totalScore: Number(row.total_score ?? 0),
+      finalStatus: (row.final_status ?? "pending_review") as OperatorSubmissionEntry["finalStatus"],
+      manualOverrideFlag: asBoolean(Number(row.manual_override_flag ?? 0)),
+      reviewNote: String(row.review_note ?? "")
+    }));
+  }
+
+  overrideReview(candidateId: string, review: ReviewAction) {
+    const existing = this.getScore(candidateId);
+    const candidate = this.getCandidate(candidateId);
+    if (!existing || !candidate) {
+      return undefined;
+    }
+
+    const reviewedAt = nowIso();
+
+    if (review.action === "restore_status") {
+      this.db
+        .prepare("UPDATE members SET status = 'active' WHERE id = ?")
+        .run(existing.memberId);
+    } else {
+      const override =
+        review.action === "override_score"
+          ? (review.override ?? {
+              finalStatus: "pending_review" as const,
+              baseScore: 0,
+              processScore: 0,
+              qualityScore: 0,
+              communityBonus: 0
+            })
+          : {
+              finalStatus: "pending_review" as const,
+              baseScore: 0,
+              processScore: 0,
+              qualityScore: 0,
+              communityBonus: 0
+            };
+
+      this.db
+        .prepare(
+          `UPDATE scores
+           SET base_score = @baseScore,
+               process_score = @processScore,
+               quality_score = @qualityScore,
+               community_bonus = @communityBonus,
+               total_score = @totalScore,
+               final_status = @finalStatus,
+               manual_override_flag = 1,
+               review_note = @reviewNote,
+               reviewed_by = @reviewedBy,
+               reviewed_at = @reviewedAt
+           WHERE candidate_id = @candidateId`
+        )
+        .run({
+          candidateId,
+          baseScore: override.baseScore,
+          processScore: override.processScore,
+          qualityScore: override.qualityScore,
+          communityBonus: override.communityBonus,
+          totalScore:
+            override.baseScore +
+            override.processScore +
+            override.qualityScore +
+            override.communityBonus,
+          finalStatus: override.finalStatus,
+          reviewNote: review.note,
+          reviewedBy: review.reviewer,
+          reviewedAt
+        });
+    }
+
+    this.recordAudit({
+      id: `audit:review:${candidateId}:${Date.now()}`,
+      campId: candidate.campId,
+      entityType: "score",
+      entityId: candidateId,
+      action: review.action,
+      actor: review.reviewer,
+      payload: JSON.stringify(review),
+      createdAt: reviewedAt
+    });
+
+    this.syncMemberWarnings(candidate.campId, candidate.memberId);
+    return this.getScore(candidateId);
+  }
+
+  syncMemberWarnings(campId: string, memberId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT sc.session_id, s.course_date
+         FROM scores sc
+         JOIN sessions s ON s.id = sc.session_id
+         WHERE sc.camp_id = ? AND sc.member_id = ? AND sc.final_status = 'invalid'
+         ORDER BY s.course_date ASC`
+      )
+      .all(campId, memberId) as Array<{ session_id: string; course_date: string }>;
+
+    this.db.prepare("DELETE FROM warnings WHERE camp_id = ? AND member_id = ?").run(campId, memberId);
+
+    const warnings: WarningRecord[] = rows.map((row, index) => ({
+      id: `warning:${memberId}:${row.session_id}`,
+      campId,
+      memberId,
+      sessionId: row.session_id,
+      violationType: "invalid_submission",
+      level: resolveWarningLevel(index + 1),
+      createdAt: row.course_date,
+      resolvedFlag: false,
+      note: `invalid_submission_count=${index + 1}`
+    }));
+
+    const insertWarning = this.db.prepare(
+      `INSERT OR REPLACE INTO warnings
+      (id, camp_id, member_id, session_id, violation_type, level, created_at, resolved_flag, note)
+      VALUES (@id, @campId, @memberId, @sessionId, @violationType, @level, @createdAt, @resolvedFlag, @note)`
+    );
+
+    for (const warning of warnings) {
+      insertWarning.run({
+        ...warning,
+        resolvedFlag: warning.resolvedFlag ? 1 : 0
+      });
+    }
+
+    const nextStatus = nextMemberStatusFromWarnings(warnings);
+    this.db.prepare("UPDATE members SET status = ? WHERE id = ?").run(nextStatus, memberId);
+
+    if (warnings.length > 0) {
+      this.recordAudit({
+        id: `audit:warning:${memberId}:${Date.now()}`,
+        campId,
+        entityType: "warning",
+        entityId: memberId,
+        action: "warning_synced",
+        actor: "system",
+        payload: JSON.stringify(warnings),
+        createdAt: nowIso()
+      });
+    }
+
+    return warnings;
+  }
+
+  listWarnings(campId: string): WarningRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM warnings WHERE camp_id = ? ORDER BY created_at ASC")
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      violationType: row.violation_type as WarningRecord["violationType"],
+      level: row.level as WarningRecord["level"],
+      createdAt: String(row.created_at),
+      resolvedFlag: asBoolean(Number(row.resolved_flag)),
+      note: String(row.note)
+    }));
+  }
+
+  getRanking(campId: string) {
+    return buildBoardRanking({
+      members: this.listMembers(campId),
+      scores: this.listScores(campId).map((row) => ({
+        memberId: row.member_id,
+        sessionId: row.session_id,
+        totalScore: row.total_score,
+        communityBonus: row.community_bonus,
+        finalStatus: row.final_status
+      }))
+    });
+  }
+
+  getPublicBoard(campId: string) {
+    const entries = this.getRanking(campId);
+    return {
+      campId,
+      entries,
+      overview: buildBoardOverview(entries)
+    };
+  }
+
+  createSnapshot(campId: string, actor = "system") {
+    const board = this.getPublicBoard(campId);
+    const sessions = this.listSessions(campId);
+    const activeSession = sessions.at(-1);
+    const snapshot: BoardSnapshotRecord = {
+      id: `snapshot:${campId}:${Date.now()}`,
+      campId,
+      sessionId: activeSession?.id,
+      periodStart: activeSession?.windowStart ?? nowIso(),
+      periodEnd: activeSession?.windowEnd ?? nowIso(),
+      payload: {
+        entries: board.entries,
+        overview: board.overview
+      },
+      createdAt: nowIso()
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO board_snapshots
+        (id, camp_id, session_id, period_start, period_end, payload, created_at)
+        VALUES (@id, @campId, @sessionId, @periodStart, @periodEnd, @payload, @createdAt)`
+      )
+      .run({
+        ...snapshot,
+        payload: JSON.stringify(snapshot.payload)
+      });
+
+    this.recordAudit({
+      id: `audit:snapshot:${snapshot.id}`,
+      campId,
+      entityType: "snapshot",
+      entityId: snapshot.id,
+      action: "snapshot_created",
+      actor,
+      payload: JSON.stringify(snapshot.payload),
+      createdAt: snapshot.createdAt
+    });
+
+    return snapshot;
+  }
+
+  listSnapshots(campId: string): BoardSnapshotRecord[] {
+    const rows = this.db
+      .prepare("SELECT * FROM board_snapshots WHERE camp_id = ? ORDER BY created_at DESC")
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      periodStart: String(row.period_start),
+      periodEnd: String(row.period_end),
+      payload: JSON.parse(String(row.payload)) as BoardSnapshotRecord["payload"],
+      createdAt: String(row.created_at)
+    }));
+  }
+
+  createAnnouncementJob(input: {
+    campId: string;
+    type: AnnouncementType;
+    text: string;
+    triggeredBy: string;
+    status?: AnnouncementJob["status"];
+  }): AnnouncementJob {
+    const job: AnnouncementJob = {
+      id: `announcement:${input.type}:${Date.now()}`,
+      campId: input.campId,
+      type: input.type,
+      text: input.text,
+      status: input.status ?? "recorded",
+      triggeredBy: input.triggeredBy,
+      createdAt: nowIso()
+    };
+
+    this.db
+      .prepare(
+        `INSERT INTO announcement_jobs
+        (id, camp_id, type, text, status, triggered_by, created_at)
+        VALUES (@id, @campId, @type, @text, @status, @triggeredBy, @createdAt)`
+      )
+      .run(job);
+
+    this.recordAudit({
+      id: `audit:announcement:${job.id}`,
+      campId: input.campId,
+      entityType: "announcement",
+      entityId: job.id,
+      action: "announcement_recorded",
+      actor: input.triggeredBy,
+      payload: JSON.stringify(job),
+      createdAt: job.createdAt
+    });
+
+    return job;
+  }
+
+  recordAudit(event: AuditEvent) {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO audit_events
+        (id, camp_id, entity_type, entity_id, action, actor, payload, created_at)
+        VALUES (@id, @campId, @entityType, @entityId, @action, @actor, @payload, @createdAt)`
+      )
+      .run(event);
+  }
+}
