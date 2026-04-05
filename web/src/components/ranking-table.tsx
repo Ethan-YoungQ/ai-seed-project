@@ -17,7 +17,7 @@ export function RankingTable({
     <section className="panel panel--ranking">
       <div className="panel__header">
         <div>
-          <p className="panel__eyebrow">Biweekly ranking</p>
+          <p className="panel__eyebrow">双周榜单</p>
           <h2>{title}</h2>
         </div>
         <p className="panel__hint">{hint}</p>
@@ -33,7 +33,7 @@ export function RankingTable({
           <span>计入课次</span>
         </div>
         {entries.map((entry) => {
-          const gap = entry.rank === 1 ? "领跑" : `-${leaderScore - entry.totalScore}`;
+          const gap = entry.rank === 1 ? "领跑" : `落后 ${leaderScore - entry.totalScore}`;
           return (
             <div key={entry.memberId} className="ranking-table__row">
               <span className="ranking-table__rank">#{entry.rank}</span>

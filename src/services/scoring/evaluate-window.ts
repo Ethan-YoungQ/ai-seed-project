@@ -91,7 +91,7 @@ export async function evaluateMessageWindow(
     const pendingReview = buildPendingReviewScore(
       candidate,
       "pending_review_parse_failed",
-      "Document parsing failed; operator review is required before scoring."
+      "文档解析失败，需要人工复核后再评分。"
     );
     repository.saveScore(member.campId, pendingReview);
 

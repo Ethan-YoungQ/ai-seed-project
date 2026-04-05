@@ -9,6 +9,18 @@ interface MemberRosterProps {
 }
 
 export function MemberRoster({ entries, onUpdated }: MemberRosterProps) {
+  const roleLabels = {
+    student: "学员",
+    operator: "运营",
+    trainer: "讲师",
+    observer: "观察员"
+  } as const;
+  const statusLabels = {
+    active: "正常",
+    warned: "已提醒",
+    eliminated: "已淘汰"
+  } as const;
+
   async function toggleBoard(member: MemberEntry) {
     await updateMember(member.id, {
       isExcludedFromBoard: !member.isExcludedFromBoard
@@ -33,7 +45,7 @@ export function MemberRoster({ entries, onUpdated }: MemberRosterProps) {
     <section className="panel">
       <div className="panel__header">
         <div>
-          <p className="panel__eyebrow">Member controls</p>
+          <p className="panel__eyebrow">成员管理</p>
           <h2>成员白名单与排除</h2>
         </div>
         <p className="panel__hint">控制谁进入评估、谁从公共榜单隐藏</p>
@@ -45,7 +57,7 @@ export function MemberRoster({ entries, onUpdated }: MemberRosterProps) {
             <div>
               <p className="member-roster__name">{entry.name}</p>
               <p className="member-roster__meta">
-                {entry.department} · {entry.roleType} · {entry.status}
+                {entry.department} · {roleLabels[entry.roleType]} · {statusLabels[entry.status]}
               </p>
             </div>
             <div className="member-roster__actions">

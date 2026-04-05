@@ -34,12 +34,18 @@ export function renderAnnouncement(input: RenderAnnouncementInput) {
       }
 
       const latest = input.warnings.at(-1)!;
-      return `\u3010\u72b6\u6001\u53d8\u5316\u3011${latest.memberId} \u5f53\u524d\u7b49\u7ea7\uff1a${latest.level}`;
+      const levelLabels = {
+        reminder: "提醒",
+        warning: "警告",
+        elimination: "淘汰"
+      } as const;
+
+      return `【状态变化】成员 ${latest.memberId} 当前等级：${levelLabels[latest.level]}`;
     }
     case "submission_summary":
-      return "\u3010\u63d0\u4ea4\u6c47\u603b\u3011\u8bf7\u5728\u8fd0\u8425\u540e\u53f0\u67e5\u770b\u672c\u671f\u63d0\u4ea4\u660e\u7ec6\u3002";
+      return "【提交汇总】请查看本期提交明细。";
     case "deadline_reminder":
-      return "\u3010\u622a\u6b62\u63d0\u9192\u3011\u8bf7\u8fd8\u672a\u63d0\u4ea4\u7684\u540c\u5b66\u5728\u622a\u6b62\u524d\u5b8c\u6210\u6709\u6548\u4f5c\u4e1a\u3002";
+      return "【截止提醒】请尚未提交的同学在截止前完成有效作业。";
     default:
       return "\u6682\u65e0\u64ad\u62a5\u5185\u5bb9\u3002";
   }

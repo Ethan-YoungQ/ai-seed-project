@@ -58,7 +58,7 @@ export function App() {
       setWarnings(warningsData.entries);
       setSnapshots(snapshotsData.entries);
     } catch (loadError) {
-      setError(loadError instanceof Error ? loadError.message : "加载失败");
+      setError(loadError instanceof Error ? "当前榜单暂时无法加载，请稍后重试。" : "当前榜单暂时无法加载，请稍后重试。");
     } finally {
       setLoading(false);
     }
@@ -95,11 +95,11 @@ export function App() {
     return (
       <div className="shell shell--state">
         <div className="empty-state">
-          <p className="empty-state__eyebrow">Board unavailable</p>
+          <p className="empty-state__eyebrow">看板暂不可用</p>
           <h1>当前还没有评估数据</h1>
           <p>{error ?? "请先初始化演示数据。"}</p>
           <button className="solid-button" onClick={() => void loadDemoBoard()} type="button">
-            载入演示数据
+            加载演示数据
           </button>
         </div>
       </div>
@@ -114,10 +114,8 @@ export function App() {
 
       <section className="hero">
         <div className="hero__copy">
-          <p className="hero__eyebrow">
-            {publicMode ? "Public live board" : "Operator control room"}
-          </p>
-          <h1>{publicMode ? "训练营实时排名板" : "训练营运营后台"}</h1>
+          <p className="hero__eyebrow">{publicMode ? "公开只读看板" : "运营面板"}</p>
+          <h1>{publicMode ? "训练营实时榜单" : "训练营运营面板"}</h1>
           <p className="hero__lead">
             {publicMode
               ? "面向社群实时开放的双周评估看板，展示当前上榜成员、长期积分和历史榜单快照。"
@@ -126,28 +124,28 @@ export function App() {
         </div>
         <div className="hero__stats">
           <StatsCard
-            eyebrow="Participants"
+            eyebrow="成员数"
             title="当前上榜成员"
             value={`${board.overview.participantCount}`}
             detail="仅统计白名单参训成员"
             accent={<span>01</span>}
           />
           <StatsCard
-            eyebrow="Leader"
+            eyebrow="领跑者"
             title="当前领跑者"
             value={board.overview.leader?.memberName ?? "暂无"}
             detail={board.overview.leader ? `累计 ${board.overview.leader.totalScore} 分` : "等待首条有效提交"}
             accent={<span>02</span>}
           />
           <StatsCard
-            eyebrow="Average"
+            eyebrow="平均分"
             title="平均积分"
             value={`${board.overview.averageScore}`}
             detail="按当前可见成员计算"
             accent={<span>03</span>}
           />
           <StatsCard
-            eyebrow="Filtered"
+            eyebrow="已排除"
             title="已排除成员"
             value={`${excludedCount}`}
             detail="不会进入公开榜单与摘要播报"

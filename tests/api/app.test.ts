@@ -354,6 +354,19 @@ describe("phase-2 and phase-3 API", () => {
     expect(previewResponse.statusCode).toBe(200);
     expect(previewResponse.json().text).toContain("Alice");
 
+    const summaryResponse = await app.inject({
+      method: "POST",
+      url: "/api/announcements/preview",
+      payload: {
+        type: "submission_summary",
+        campId: "camp-demo"
+      }
+    });
+
+    expect(summaryResponse.statusCode).toBe(200);
+    expect(summaryResponse.json().text).toContain("提交汇总");
+    expect(summaryResponse.json().text).not.toContain("运营后台");
+
     const runResponse = await app.inject({
       method: "POST",
       url: "/api/announcements/run",

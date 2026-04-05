@@ -31,6 +31,7 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.qualityScore).toBeGreaterThan(0);
     expect(result.totalScore).toBeGreaterThanOrEqual(7);
     expect(result.scoreReason).toContain("evidence");
+    expect(result.llmReason).toContain("启发式评分");
   });
 
   it("returns invalid when the aggregate is missing a result statement", async () => {
@@ -44,6 +45,7 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.baseScore).toBe(0);
     expect(result.totalScore).toBe(0);
     expect(result.scoreReason).toContain("missing_result");
+    expect(result.llmReason).toBe("该提交未通过基础校验，已跳过自动评分。");
   });
 
   it("uses parsed document text as the scoring input for file-only submissions", async () => {

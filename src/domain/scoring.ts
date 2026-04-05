@@ -75,8 +75,7 @@ export async function scoreSubmissionCandidate(
       totalScore: 0,
       finalStatus: "invalid",
       scoreReason: reasons.join(","),
-      llmReason:
-        "Heuristic fallback skipped advanced scoring because the submission is invalid.",
+      llmReason: "该提交未通过基础校验，已跳过自动评分。",
       llmModel: "heuristic-fallback",
       llmInputExcerpt: sourceText.slice(0, 160),
       autoBaseScore: 0,
@@ -108,8 +107,7 @@ export async function scoreSubmissionCandidate(
     totalScore: 5 + Math.min(processScore, 3) + Math.min(qualityScore, 2),
     finalStatus: "valid",
     scoreReason: reasons.join(","),
-    llmReason:
-      "Heuristic fallback used prompt, iteration, reflection, and structure markers. Replace with a live LLM judge when credentials are configured.",
+    llmReason: "启发式评分依据过程、结果和结构线索完成；配置好在线评审后可切换为模型判定。",
     llmModel: "heuristic-fallback",
     llmInputExcerpt: sourceText.slice(0, 160),
     autoBaseScore: 5,

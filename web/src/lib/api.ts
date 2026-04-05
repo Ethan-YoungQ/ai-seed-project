@@ -10,7 +10,7 @@ import type {
 async function parseJson<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(message || "Request failed");
+    throw new Error(message || "请求失败");
   }
 
   return (await response.json()) as T;
