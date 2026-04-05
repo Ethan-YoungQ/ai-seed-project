@@ -21,6 +21,19 @@ export function aggregateSubmissionWindow(input: AggregateInput): SubmissionCand
     combinedText: sortedEvents.map((event) => event.rawText.trim()).join("\n"),
     attachmentCount: sortedEvents.reduce((sum, event) => sum + event.attachmentCount, 0),
     attachmentTypes: [...new Set(sortedEvents.flatMap((event) => event.attachmentTypes))],
+    documentText: sortedEvents
+      .map((event) => event.documentText?.trim() ?? "")
+      .filter(Boolean)
+      .join("\n\n"),
+    documentParseStatus: sortedEvents.some((event) => event.documentParseStatus === "failed")
+      ? "failed"
+      : sortedEvents.some((event) => event.documentParseStatus === "parsed")
+        ? "parsed"
+        : sortedEvents.some((event) => event.documentParseStatus === "unsupported")
+          ? "unsupported"
+          : sortedEvents.some((event) => event.documentParseStatus === "pending")
+            ? "pending"
+            : "not_applicable",
     firstEventTime: sortedEvents[0]?.eventTime ?? input.session.windowStart,
     latestEventTime: sortedEvents.at(-1)?.eventTime ?? input.session.windowStart,
     deadlineAt: input.session.deadlineAt,

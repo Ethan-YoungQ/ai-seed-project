@@ -45,6 +45,23 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.totalScore).toBe(0);
     expect(result.scoreReason).toContain("missing_result");
   });
+
+  it("uses parsed document text as the scoring input for file-only submissions", async () => {
+    const result = await scoreSubmissionCandidate({
+      ...candidate,
+      id: "candidate-03",
+      combinedText: "",
+      attachmentCount: 1,
+      attachmentTypes: ["file"],
+      documentText:
+        "我是先写了提示词，再根据输出做了两轮迭代。最终我产出了一份结构化总结，也学会了怎么拆解问题。",
+      documentParseStatus: "parsed"
+    });
+
+    expect(result.finalStatus).toBe("valid");
+    expect(result.baseScore).toBe(5);
+    expect(result.totalScore).toBeGreaterThanOrEqual(7);
+  });
 });
 
 describe("buildBoardRanking", () => {

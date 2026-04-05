@@ -67,4 +67,42 @@ describe("normalizeFeishuMessageEvent", () => {
       attachmentTypes: ["image"]
     });
   });
+
+  it("extracts file metadata from file messages and keeps document fields for later parsing", () => {
+    const normalized = normalizeFeishuMessageEvent({
+      event: {
+        sender: {
+          sender_type: "user",
+          sender_id: {
+            open_id: "user-alice"
+          }
+        },
+        message: {
+          message_id: "om_file_001",
+          chat_id: "chat-demo",
+          chat_type: "group",
+          create_time: "1775210400000",
+          message_type: "file",
+          content: JSON.stringify({
+            file_key: "file_v3_demo",
+            file_name: "final report.pdf"
+          })
+        }
+      }
+    });
+
+    expect(normalized).toMatchObject({
+      messageId: "om_file_001",
+      memberId: "user-alice",
+      chatId: "chat-demo",
+      messageType: "file",
+      fileKey: "file_v3_demo",
+      fileName: "final report.pdf",
+      fileExt: "pdf",
+      attachmentCount: 1,
+      attachmentTypes: ["file"],
+      documentText: "",
+      documentParseStatus: "pending"
+    });
+  });
 });

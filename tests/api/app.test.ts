@@ -1,9 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { createApp } from "../../src/app";
+import { NoopFeishuWsRuntime } from "../../src/services/feishu/ws-runtime";
 
 const validHomeworkText =
   "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4 \u6211\u662f\u5148\u5199 prompt\uff0c\u518d\u505a\u4e24\u8f6e\u8fed\u4ee3\u3002\u6700\u7ec8\u6211\u5b66\u4f1a\u4e86\u62c6\u89e3\u95ee\u9898\uff0c\u4e5f\u4ea7\u51fa\u4e86\u4e00\u9875\u7ed3\u6784\u5316\u603b\u7ed3\u3002";
+
+const disabledFeishuConfig = {
+  appId: "",
+  appSecret: "",
+  eventMode: "disabled" as const,
+  botChatId: "",
+  botReceiveIdType: "chat_id" as const,
+  base: {
+    enabled: false,
+    appToken: undefined,
+    tables: {}
+  }
+};
 
 function buildEvent(
   messageId: string,
@@ -39,11 +53,50 @@ function buildEvent(
   };
 }
 
+function buildFileEvent(
+  messageId: string,
+  openId: string,
+  createTime: string,
+  fileName: string,
+  chatId = "chat-demo",
+  chatType = "group",
+  senderType = "user"
+) {
+  return {
+    header: {
+      event_type: "im.message.receive_v1"
+    },
+    event: {
+      sender: {
+        sender_type: senderType,
+        sender_id: {
+          open_id: openId
+        }
+      },
+      message: {
+        message_id: messageId,
+        chat_id: chatId,
+        chat_type: chatType,
+        message_type: "file",
+        create_time: createTime,
+        content: JSON.stringify({
+          file_key: `file_${messageId}`,
+          file_name: fileName
+        })
+      }
+    }
+  };
+}
+
 describe("phase-2 and phase-3 API", () => {
   let app: Awaited<ReturnType<typeof createApp>>;
 
   beforeEach(async () => {
-    app = await createApp({ databaseUrl: ":memory:" });
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      feishuConfigOverride: disabledFeishuConfig
+    });
     await app.ready();
     await app.inject({
       method: "POST",
@@ -264,9 +317,18 @@ describe("phase-2 and phase-3 API", () => {
           }
         }
       },
+      wsRuntime: new NoopFeishuWsRuntime(),
       feishuApiClient: {
         validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
         sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        probeGroupMessageAccess: async () => ({ ok: true }),
+        getMessageFile: async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        }),
         createBaseRecord: async () => ({ recordId: "rec_001" }),
         searchBaseRecords: async () => [],
         updateBaseRecord: async () => ({ recordId: "rec_001" }),
@@ -299,7 +361,8 @@ describe("phase-2 and phase-3 API", () => {
       campBound: true,
       boundChatId: "chat-demo",
       baseEnabled: true,
-      baseReady: true
+      baseReady: true,
+      groupMessageReadAccess: true
     });
     expect(response.json().baseTablesConfigured).toMatchObject({
       members: true,
@@ -307,6 +370,11 @@ describe("phase-2 and phase-3 API", () => {
       scores: true,
       warnings: true,
       snapshots: true
+    });
+    expect(response.json().lastInboundEventAt).toBeNull();
+    expect(response.json().lastInboundReason).toBeNull();
+    expect(response.json().groupMessageReadProbe).toMatchObject({
+      ok: true
     });
   });
 
@@ -317,9 +385,11 @@ describe("phase-2 and phase-3 API", () => {
     app = await createApp({
       databaseUrl: ":memory:",
       feishuConfigOverride: {
+        ...disabledFeishuConfig,
         botChatId: "chat_test_group",
         botReceiveIdType: "chat_id"
       },
+      wsRuntime: new NoopFeishuWsRuntime(),
       feishuMessenger: {
         async sendTextMessage(input) {
           sent.push(input);
@@ -356,5 +426,70 @@ describe("phase-2 and phase-3 API", () => {
     });
     expect(sent).toHaveLength(1);
     expect(sent[0].text).toContain("Alice");
+  });
+
+  it("accepts a file submission without tags when the parsed document text is available", async () => {
+    await app.close();
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      documentTextExtractor: {
+        async extract() {
+          return {
+            text: "我是先写了提示词，再根据输出做了两轮迭代。最终我产出了一份结构化总结，也学会了怎么拆解问题。",
+            status: "parsed"
+          };
+        }
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" }),
+        getMessageFile: async () => ({
+          fileKey: "file_om_file_501",
+          fileName: "final report.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("fake-pdf")
+        })
+      }
+    });
+    await app.ready();
+    await app.inject({
+      method: "POST",
+      url: "/api/demo/seed",
+      payload: {}
+    });
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/feishu/events",
+      payload: buildFileEvent("om_file_501", "user-alice", "1775210400000", "final report.pdf")
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      accepted: true,
+      sessionId: "session-01",
+      finalStatus: "valid"
+    });
+
+    const submissions = await app.inject({
+      method: "GET",
+      url: "/api/operator/submissions?campId=camp-demo"
+    });
+
+    expect(submissions.json().entries).toHaveLength(1);
+    expect(submissions.json().entries[0]).toMatchObject({
+      candidateId: "session-01:user-alice",
+      finalStatus: "valid"
+    });
   });
 });

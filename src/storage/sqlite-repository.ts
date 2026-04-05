@@ -58,10 +58,18 @@ CREATE TABLE IF NOT EXISTS raw_events (
   member_id TEXT NOT NULL,
   session_id TEXT,
   message_id TEXT NOT NULL UNIQUE,
+  message_type TEXT NOT NULL DEFAULT '',
   raw_text TEXT NOT NULL,
   parsed_tags TEXT NOT NULL,
   attachment_count INTEGER NOT NULL DEFAULT 0,
   attachment_types TEXT NOT NULL,
+  file_key TEXT NOT NULL DEFAULT '',
+  file_name TEXT NOT NULL DEFAULT '',
+  file_ext TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT '',
+  document_text TEXT NOT NULL DEFAULT '',
+  document_parse_status TEXT NOT NULL DEFAULT 'not_applicable',
+  document_parse_reason TEXT NOT NULL DEFAULT '',
   event_time TEXT NOT NULL,
   event_url TEXT NOT NULL,
   parse_status TEXT NOT NULL DEFAULT 'raw'
@@ -76,6 +84,8 @@ CREATE TABLE IF NOT EXISTS submission_candidates (
   combined_text TEXT NOT NULL,
   attachment_count INTEGER NOT NULL DEFAULT 0,
   attachment_types TEXT NOT NULL,
+  document_text TEXT NOT NULL DEFAULT '',
+  document_parse_status TEXT NOT NULL DEFAULT 'not_applicable',
   first_event_time TEXT NOT NULL,
   latest_event_time TEXT NOT NULL,
   deadline_at TEXT NOT NULL,
@@ -184,6 +194,21 @@ export class SqliteRepository {
     ensureColumn(this.db, "scores", "llm_model", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "scores", "llm_input_excerpt", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "raw_events", "chat_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "message_type", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "file_key", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "file_name", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "file_ext", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "mime_type", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "document_text", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "document_parse_status", "TEXT NOT NULL DEFAULT 'not_applicable'");
+    ensureColumn(this.db, "raw_events", "document_parse_reason", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "document_text", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(
+      this.db,
+      "submission_candidates",
+      "document_parse_status",
+      "TEXT NOT NULL DEFAULT 'not_applicable'"
+    );
   }
 
   close() {
@@ -422,13 +447,21 @@ export class SqliteRepository {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO raw_events
-        (id, camp_id, chat_id, member_id, session_id, message_id, raw_text, parsed_tags, attachment_count, attachment_types, event_time, event_url, parse_status)
-        VALUES (@id, @campId, @chatId, @memberId, @sessionId, @messageId, @rawText, @parsedTags, @attachmentCount, @attachmentTypes, @eventTime, @eventUrl, @parseStatus)`
+        (id, camp_id, chat_id, member_id, session_id, message_id, message_type, raw_text, parsed_tags, attachment_count, attachment_types, file_key, file_name, file_ext, mime_type, document_text, document_parse_status, document_parse_reason, event_time, event_url, parse_status)
+        VALUES (@id, @campId, @chatId, @memberId, @sessionId, @messageId, @messageType, @rawText, @parsedTags, @attachmentCount, @attachmentTypes, @fileKey, @fileName, @fileExt, @mimeType, @documentText, @documentParseStatus, @documentParseReason, @eventTime, @eventUrl, @parseStatus)`
       )
       .run({
         ...event,
         parsedTags: JSON.stringify(event.parsedTags),
-        attachmentTypes: JSON.stringify(event.attachmentTypes)
+        attachmentTypes: JSON.stringify(event.attachmentTypes),
+        messageType: event.messageType ?? "",
+        fileKey: event.fileKey ?? "",
+        fileName: event.fileName ?? "",
+        fileExt: event.fileExt ?? "",
+        mimeType: event.mimeType ?? "",
+        documentText: event.documentText ?? "",
+        documentParseStatus: event.documentParseStatus ?? "not_applicable",
+        documentParseReason: event.documentParseReason ?? ""
       });
   }
 
@@ -452,11 +485,19 @@ export class SqliteRepository {
       memberId: String(row.member_id),
       sessionId: row.session_id ? String(row.session_id) : undefined,
       messageId: String(row.message_id),
+      messageType: String(row.message_type ?? ""),
       eventTime: String(row.event_time),
       rawText: String(row.raw_text),
       parsedTags: JSON.parse(String(row.parsed_tags)) as string[],
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      fileKey: String(row.file_key ?? "") || undefined,
+      fileName: String(row.file_name ?? "") || undefined,
+      fileExt: String(row.file_ext ?? "") || undefined,
+      mimeType: String(row.mime_type ?? "") || undefined,
+      documentText: String(row.document_text ?? ""),
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as RawMessageEvent["documentParseStatus"],
+      documentParseReason: String(row.document_parse_reason ?? "") || undefined,
       eventUrl: String(row.event_url)
     }));
   }
@@ -477,10 +518,18 @@ export class SqliteRepository {
       memberId: String(row.member_id),
       sessionId: row.session_id ? String(row.session_id) : undefined,
       messageId: String(row.message_id),
+      messageType: String(row.message_type ?? ""),
       rawText: String(row.raw_text),
       parsedTags: JSON.parse(String(row.parsed_tags)) as string[],
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      fileKey: String(row.file_key ?? "") || undefined,
+      fileName: String(row.file_name ?? "") || undefined,
+      fileExt: String(row.file_ext ?? "") || undefined,
+      mimeType: String(row.mime_type ?? "") || undefined,
+      documentText: String(row.document_text ?? ""),
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as RawMessageEvent["documentParseStatus"],
+      documentParseReason: String(row.document_parse_reason ?? "") || undefined,
       eventTime: String(row.event_time),
       eventUrl: String(row.event_url),
       parseStatus: String(row.parse_status)
@@ -491,13 +540,15 @@ export class SqliteRepository {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO submission_candidates
-        (id, camp_id, session_id, member_id, homework_tag, event_ids, combined_text, attachment_count, attachment_types, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
-        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventIds, @combinedText, @attachmentCount, @attachmentTypes, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
+        (id, camp_id, session_id, member_id, homework_tag, event_ids, combined_text, attachment_count, attachment_types, document_text, document_parse_status, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
+        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventIds, @combinedText, @attachmentCount, @attachmentTypes, @documentText, @documentParseStatus, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
       )
       .run({
         ...candidate,
         eventIds: JSON.stringify(candidate.eventIds),
-        attachmentTypes: JSON.stringify(candidate.attachmentTypes)
+        attachmentTypes: JSON.stringify(candidate.attachmentTypes),
+        documentText: candidate.documentText ?? "",
+        documentParseStatus: candidate.documentParseStatus ?? "not_applicable"
       });
   }
 
@@ -520,6 +571,8 @@ export class SqliteRepository {
       combinedText: String(row.combined_text),
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      documentText: String(row.document_text ?? ""),
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as SubmissionCandidate["documentParseStatus"],
       firstEventTime: String(row.first_event_time),
       latestEventTime: String(row.latest_event_time),
       deadlineAt: String(row.deadline_at),

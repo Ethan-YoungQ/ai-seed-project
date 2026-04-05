@@ -1,9 +1,13 @@
 import { aggregateSubmissionWindow } from "../../domain/submission-aggregation";
-import { scoreSubmissionCandidate } from "../../domain/scoring";
-import { resolveSessionForEvent } from "../../domain/session-windows";
+import { buildPendingReviewScore, scoreSubmissionCandidate } from "../../domain/scoring";
+import { resolveSessionMatch } from "../../domain/session-windows";
 import type { MemberProfile } from "../../domain/types";
 import type { NormalizedFeishuMessage } from "../feishu/normalize-message";
 import { SqliteRepository } from "../../storage/sqlite-repository";
+
+function isEligibleDocument(event: NormalizedFeishuMessage) {
+  return event.messageType === "file" && (event.fileExt === "pdf" || event.fileExt === "docx");
+}
 
 export async function evaluateMessageWindow(
   repository: SqliteRepository,
@@ -11,15 +15,26 @@ export async function evaluateMessageWindow(
   event: NormalizedFeishuMessage
 ) {
   const sessions = repository.listSessions(member.campId);
-  const session = resolveSessionForEvent(
+  const sessionMatch = resolveSessionMatch(
     {
       eventTime: event.eventTime,
-      parsedTags: event.parsedTags
+      parsedTags: event.parsedTags,
+      isEligibleDocument: isEligibleDocument(event)
     },
     sessions
   );
+  const session = sessionMatch.session;
 
   const eventId = `${event.memberId}:${event.messageId}`;
+  const parseStatus =
+    sessionMatch.reason === "ambiguous_window"
+      ? "pending_review_ambiguous_session"
+      : session
+        ? event.documentParseStatus === "failed"
+          ? "pending_review_parse_failed"
+          : "parsed"
+        : "ignored_no_active_session";
+
   repository.insertRawEvent({
     id: eventId,
     campId: member.campId,
@@ -27,19 +42,34 @@ export async function evaluateMessageWindow(
     memberId: event.memberId,
     sessionId: session?.id,
     messageId: event.messageId,
+    messageType: event.messageType,
     rawText: event.rawText,
     parsedTags: event.parsedTags,
     attachmentCount: event.attachmentCount,
     attachmentTypes: event.attachmentTypes,
+    fileKey: event.fileKey,
+    fileName: event.fileName,
+    fileExt: event.fileExt,
+    mimeType: event.mimeType,
+    documentText: event.documentText,
+    documentParseStatus: event.documentParseStatus,
+    documentParseReason: event.documentParseReason,
     eventTime: event.eventTime,
     eventUrl: event.eventUrl,
-    parseStatus: session ? "parsed" : "ignored"
+    parseStatus
   });
 
   if (!session) {
     return {
       accepted: false,
-      reason: "no_matching_session"
+      reason: sessionMatch.reason === "ambiguous_window" ? "pending_review_ambiguous_session" : "ignored_no_active_session"
+    };
+  }
+
+  if (event.messageType === "file" && event.documentParseStatus === "unsupported") {
+    return {
+      accepted: false,
+      reason: "unsupported_document"
     };
   }
 
@@ -56,6 +86,22 @@ export async function evaluateMessageWindow(
     events
   });
   repository.saveCandidate(candidate);
+
+  if (event.messageType === "file" && event.documentParseStatus === "failed") {
+    const pendingReview = buildPendingReviewScore(
+      candidate,
+      "pending_review_parse_failed",
+      "Document parsing failed; operator review is required before scoring."
+    );
+    repository.saveScore(member.campId, pendingReview);
+
+    return {
+      accepted: false,
+      reason: "pending_review_parse_failed",
+      sessionId: session.id,
+      candidateId: candidate.id
+    };
+  }
 
   const score = await scoreSubmissionCandidate(candidate);
   repository.saveScore(member.campId, score);

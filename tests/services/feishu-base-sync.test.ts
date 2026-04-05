@@ -23,6 +23,13 @@ describe("FeishuBaseSyncService", () => {
       {
         validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
         sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
         createBaseRecord: createRecord,
         searchBaseRecords: searchRecords,
         updateBaseRecord: updateRecord,
@@ -122,6 +129,13 @@ describe("FeishuBaseSyncService", () => {
       {
         validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
         sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
         createBaseRecord: createRecord,
         searchBaseRecords: searchRecords,
         updateBaseRecord: updateRecord,

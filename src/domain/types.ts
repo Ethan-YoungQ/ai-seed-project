@@ -4,6 +4,12 @@ export type RoleType = "student" | "operator" | "trainer" | "observer";
 export type FinalStatus = "valid" | "invalid" | "pending_review";
 export type WarningLevel = "reminder" | "warning" | "elimination";
 export type ReviewActionType = "override_score" | "mark_no_count" | "restore_status";
+export type DocumentParseStatus =
+  | "not_applicable"
+  | "pending"
+  | "parsed"
+  | "unsupported"
+  | "failed";
 export type AnnouncementType =
   | "deadline_reminder"
   | "submission_summary"
@@ -49,11 +55,19 @@ export interface RawMessageEvent {
   memberId: string;
   sessionId?: string;
   messageId: string;
+  messageType?: string;
   eventTime: string;
   rawText: string;
   parsedTags: string[];
   attachmentCount: number;
   attachmentTypes: string[];
+  fileKey?: string;
+  fileName?: string;
+  fileExt?: string;
+  mimeType?: string;
+  documentText?: string;
+  documentParseStatus?: DocumentParseStatus;
+  documentParseReason?: string;
   eventUrl: string;
 }
 
@@ -67,6 +81,8 @@ export interface SubmissionCandidate {
   combinedText: string;
   attachmentCount: number;
   attachmentTypes: string[];
+  documentText?: string;
+  documentParseStatus?: DocumentParseStatus;
   firstEventTime: string;
   latestEventTime: string;
   deadlineAt: string;

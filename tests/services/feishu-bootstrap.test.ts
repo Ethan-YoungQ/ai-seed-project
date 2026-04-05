@@ -17,6 +17,13 @@ describe("FeishuBootstrapService", () => {
       {
         validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
         sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
         createBaseRecord: vi.fn(async () => ({ recordId: "rec_001" })),
         searchBaseRecords: vi.fn(async () => []),
         updateBaseRecord: vi.fn(async () => ({ recordId: "rec_001" })),
@@ -71,6 +78,13 @@ describe("FeishuBootstrapService", () => {
       {
         validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
         sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
         createBaseRecord: vi.fn(async () => ({ recordId: "rec_001" })),
         searchBaseRecords: vi.fn(async () => []),
         updateBaseRecord: vi.fn(async () => ({ recordId: "rec_001" })),

@@ -42,4 +42,17 @@ describe("resolveSessionForEvent", () => {
 
     expect(resolved).toBeUndefined();
   });
+
+  it("matches a file submission inside the active window even when no homework tag is present", () => {
+    const resolved = resolveSessionForEvent(
+      {
+        eventTime: "2026-04-10T10:00:00.000Z",
+        parsedTags: [],
+        isEligibleDocument: true
+      },
+      sessions
+    );
+
+    expect(resolved?.id).toBe("session-01");
+  });
 });

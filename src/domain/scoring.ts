@@ -37,7 +37,10 @@ const structuredMarkers = [
 export async function scoreSubmissionCandidate(
   candidate: SubmissionCandidate
 ): Promise<ScoringResult> {
-  const text = candidate.combinedText.trim().toLowerCase();
+  const sourceText = [candidate.combinedText.trim(), candidate.documentText?.trim() ?? ""]
+    .filter(Boolean)
+    .join("\n\n");
+  const text = sourceText.toLowerCase();
   const reasons: string[] = [];
 
   const hasEvidence = candidate.attachmentCount > 0 || /https?:\/\//.test(text);
@@ -75,7 +78,7 @@ export async function scoreSubmissionCandidate(
       llmReason:
         "Heuristic fallback skipped advanced scoring because the submission is invalid.",
       llmModel: "heuristic-fallback",
-      llmInputExcerpt: candidate.combinedText.slice(0, 160),
+      llmInputExcerpt: sourceText.slice(0, 160),
       autoBaseScore: 0,
       autoProcessScore: 0,
       autoQualityScore: 0,
@@ -108,10 +111,40 @@ export async function scoreSubmissionCandidate(
     llmReason:
       "Heuristic fallback used prompt, iteration, reflection, and structure markers. Replace with a live LLM judge when credentials are configured.",
     llmModel: "heuristic-fallback",
-    llmInputExcerpt: candidate.combinedText.slice(0, 160),
+    llmInputExcerpt: sourceText.slice(0, 160),
     autoBaseScore: 5,
     autoProcessScore: Math.min(processScore, 3),
     autoQualityScore: Math.min(qualityScore, 2),
+    autoCommunityBonus: 0
+  };
+}
+
+export function buildPendingReviewScore(
+  candidate: SubmissionCandidate,
+  reason: string,
+  llmReason: string
+): ScoringResult {
+  const sourceText = [candidate.combinedText.trim(), candidate.documentText?.trim() ?? ""]
+    .filter(Boolean)
+    .join("\n\n");
+
+  return {
+    memberId: candidate.memberId,
+    sessionId: candidate.sessionId,
+    candidateId: candidate.id,
+    baseScore: 0,
+    processScore: 0,
+    qualityScore: 0,
+    communityBonus: 0,
+    totalScore: 0,
+    finalStatus: "pending_review",
+    scoreReason: reason,
+    llmReason,
+    llmModel: "document-parse-gate",
+    llmInputExcerpt: sourceText.slice(0, 160),
+    autoBaseScore: 0,
+    autoProcessScore: 0,
+    autoQualityScore: 0,
     autoCommunityBonus: 0
   };
 }
