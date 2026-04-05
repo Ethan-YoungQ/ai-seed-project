@@ -218,6 +218,14 @@ describe("phase-2 and phase-3 API", () => {
       payload: buildEvent("om_201", "user-alice", "1775210400000", invalidText)
     });
 
+    const beforeBoardResponse = await app.inject({
+      method: "GET",
+      url: "/api/public-board?campId=camp-demo"
+    });
+
+    expect(beforeBoardResponse.statusCode).toBe(200);
+    expect(beforeBoardResponse.json().entries).toHaveLength(0);
+
     const reviewResponse = await app.inject({
       method: "POST",
       url: "/api/reviews/session-01:user-alice",
@@ -247,6 +255,84 @@ describe("phase-2 and phase-3 API", () => {
       memberId: "user-alice",
       totalScore: 8
     });
+  });
+
+  it("supports mark_no_count and restore_status without leaking invalid scores into the board", async () => {
+    await app.inject({
+      method: "POST",
+      url: "/api/feishu/events",
+      payload: buildEvent("om_202", "user-alice", "1775210400000", validHomeworkText)
+    });
+
+    const beforeReviewBoard = await app.inject({
+      method: "GET",
+      url: "/api/public-board?campId=camp-demo"
+    });
+
+    expect(beforeReviewBoard.statusCode).toBe(200);
+    expect(beforeReviewBoard.json().entries).toHaveLength(1);
+
+    const noCountResponse = await app.inject({
+      method: "POST",
+      url: "/api/reviews/session-01:user-alice",
+      payload: {
+        action: "mark_no_count",
+        reviewer: "ops-demo",
+        note: "\u8be5\u6761\u63d0\u4ea4\u4e0d\u8ba1\u5165"
+      }
+    });
+
+    expect(noCountResponse.statusCode).toBe(200);
+
+    const afterNoCountBoard = await app.inject({
+      method: "GET",
+      url: "/api/public-board?campId=camp-demo"
+    });
+
+    expect(afterNoCountBoard.statusCode).toBe(200);
+    expect(afterNoCountBoard.json().entries).toHaveLength(0);
+
+    const warningsAfterNoCount = await app.inject({
+      method: "GET",
+      url: "/api/operator/warnings?campId=camp-demo"
+    });
+
+    expect(warningsAfterNoCount.statusCode).toBe(200);
+    expect(warningsAfterNoCount.json().entries.at(-1)).toMatchObject({
+      violationType: "invalid_submission",
+      resolvedFlag: false
+    });
+
+    const restoreResponse = await app.inject({
+      method: "POST",
+      url: "/api/reviews/session-01:user-alice",
+      payload: {
+        action: "restore_status",
+        reviewer: "ops-demo",
+        note: "\u6062\u590d\u72b6\u6001"
+      }
+    });
+
+    expect(restoreResponse.statusCode).toBe(200);
+
+    const warningsAfterRestore = await app.inject({
+      method: "GET",
+      url: "/api/operator/warnings?campId=camp-demo"
+    });
+
+    expect(warningsAfterRestore.statusCode).toBe(200);
+    expect(warningsAfterRestore.json().entries.at(-1)).toMatchObject({
+      violationType: "invalid_submission",
+      resolvedFlag: true
+    });
+
+    const afterRestoreBoard = await app.inject({
+      method: "GET",
+      url: "/api/public-board?campId=camp-demo"
+    });
+
+    expect(afterRestoreBoard.statusCode).toBe(200);
+    expect(afterRestoreBoard.json().entries).toHaveLength(0);
   });
 
   it("creates announcement previews and stores snapshots when announcements run", async () => {

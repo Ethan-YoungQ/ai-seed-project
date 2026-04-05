@@ -2,7 +2,12 @@ import Database from "better-sqlite3";
 
 import { demoCamp, demoMembers, demoSessions } from "../config/defaults";
 import { buildBoardRanking } from "../domain/ranking";
-import { nextMemberStatusFromWarnings, resolveWarningLevel } from "../domain/warnings";
+import {
+  buildWarningKey,
+  classifyWarningViolation,
+  nextMemberStatusFromWarnings,
+  resolveWarningLevel
+} from "../domain/warnings";
 import type {
   AnnouncementJob,
   AnnouncementType,
@@ -172,6 +177,16 @@ function ensureColumn(db: Database.Database, table: string, column: string, defi
   }
 
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+interface WarningSyncRow {
+  sessionId: string;
+  violationType: WarningRecord["violationType"];
+  createdAt: string;
+  note: string;
+  key: string;
+  resolved: boolean;
+  existing?: WarningRecord;
 }
 
 export class SqliteRepository {
@@ -689,6 +704,71 @@ export class SqliteRepository {
     }));
   }
 
+  private listScoreRowsForMember(campId: string, memberId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           sc.candidate_id,
+           sc.session_id,
+           sc.final_status,
+           sc.score_reason,
+           sc.reviewed_at,
+           c.latest_event_time,
+           s.course_date,
+           s.deadline_at
+         FROM scores sc
+         JOIN sessions s ON s.id = sc.session_id
+         LEFT JOIN submission_candidates c ON c.id = sc.candidate_id
+         WHERE sc.camp_id = ? AND sc.member_id = ?
+         ORDER BY s.course_date ASC`
+      )
+      .all(campId, memberId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      candidateId: String(row.candidate_id),
+      sessionId: String(row.session_id),
+      finalStatus: String(row.final_status) as ScoringResult["finalStatus"],
+      scoreReason: String(row.score_reason ?? ""),
+      reviewedAt: String(row.reviewed_at ?? ""),
+      latestEventTime: String(row.latest_event_time ?? ""),
+      courseDate: String(row.course_date),
+      deadlineAt: String(row.deadline_at)
+    }));
+  }
+
+  private resolveWarningsForSession(campId: string, memberId: string, sessionId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM warnings
+         WHERE camp_id = ? AND member_id = ? AND session_id = ? AND resolved_flag = 0`
+      )
+      .all(campId, memberId, sessionId) as Array<Record<string, unknown>>;
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    this.db
+      .prepare(
+        `UPDATE warnings
+         SET resolved_flag = 1
+         WHERE camp_id = ? AND member_id = ? AND session_id = ? AND resolved_flag = 0`
+      )
+      .run(campId, memberId, sessionId);
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      violationType: row.violation_type as WarningRecord["violationType"],
+      level: row.level as WarningRecord["level"],
+      createdAt: String(row.created_at),
+      resolvedFlag: true,
+      note: String(row.note)
+    }));
+  }
+
   overrideReview(candidateId: string, review: ReviewAction) {
     const existing = this.getScore(candidateId);
     const candidate = this.getCandidate(candidateId);
@@ -702,9 +782,18 @@ export class SqliteRepository {
       this.db
         .prepare("UPDATE members SET status = 'active' WHERE id = ?")
         .run(existing.memberId);
+      this.resolveWarningsForSession(candidate.campId, existing.memberId, existing.sessionId);
     } else {
       const override =
-        review.action === "override_score"
+        review.action === "mark_no_count"
+          ? {
+              finalStatus: "invalid" as const,
+              baseScore: 0,
+              processScore: 0,
+              qualityScore: 0,
+              communityBonus: 0
+            }
+          : review.action === "override_score"
           ? (review.override ?? {
               finalStatus: "pending_review" as const,
               baseScore: 0,
@@ -730,6 +819,7 @@ export class SqliteRepository {
                total_score = @totalScore,
                final_status = @finalStatus,
                manual_override_flag = 1,
+               score_reason = @scoreReason,
                review_note = @reviewNote,
                reviewed_by = @reviewedBy,
                reviewed_at = @reviewedAt
@@ -747,6 +837,10 @@ export class SqliteRepository {
             override.qualityScore +
             override.communityBonus,
           finalStatus: override.finalStatus,
+          scoreReason:
+            review.action === "mark_no_count"
+              ? "manual_no_count"
+              : existing.scoreReason,
           reviewNote: review.note,
           reviewedBy: review.reviewer,
           reviewedAt
@@ -769,60 +863,159 @@ export class SqliteRepository {
   }
 
   syncMemberWarnings(campId: string, memberId: string) {
-    const rows = this.db
-      .prepare(
-        `SELECT sc.session_id, s.course_date
-         FROM scores sc
-         JOIN sessions s ON s.id = sc.session_id
-         WHERE sc.camp_id = ? AND sc.member_id = ? AND sc.final_status = 'invalid'
-         ORDER BY s.course_date ASC`
-      )
-      .all(campId, memberId) as Array<{ session_id: string; course_date: string }>;
+    const now = Date.now();
+    const scoreRows = this.listScoreRowsForMember(campId, memberId);
+    const sessions = this.listSessions(campId);
+    const sessionById = new Map(sessions.map((session) => [session.id, session] as const));
+    const currentWarnings = this.listWarnings(campId).filter((warning) => warning.memberId === memberId);
+    const warningByKey = new Map(
+      currentWarnings.map((warning) => [buildWarningKey(memberId, warning.sessionId, warning.violationType), warning] as const)
+    );
 
-    this.db.prepare("DELETE FROM warnings WHERE camp_id = ? AND member_id = ?").run(campId, memberId);
+    const desiredFacts: WarningSyncRow[] = [];
+    const activeScoreSessionIds = new Set<string>();
 
-    const warnings: WarningRecord[] = rows.map((row, index) => ({
-      id: `warning:${memberId}:${row.session_id}`,
-      campId,
-      memberId,
-      sessionId: row.session_id,
-      violationType: "invalid_submission",
-      level: resolveWarningLevel(index + 1),
-      createdAt: row.course_date,
-      resolvedFlag: false,
-      note: `invalid_submission_count=${index + 1}`
-    }));
+    for (const scoreRow of scoreRows) {
+      activeScoreSessionIds.add(scoreRow.sessionId);
 
-    const insertWarning = this.db.prepare(
+      if (scoreRow.finalStatus !== "invalid") {
+        continue;
+      }
+
+      const violationType = classifyWarningViolation(scoreRow.scoreReason) ?? "invalid_submission";
+      const key = buildWarningKey(memberId, scoreRow.sessionId, violationType);
+      const existingWarning = warningByKey.get(key);
+
+      if (existingWarning?.resolvedFlag) {
+        continue;
+      }
+
+      const session = sessionById.get(scoreRow.sessionId);
+      desiredFacts.push({
+        sessionId: scoreRow.sessionId,
+        violationType,
+        createdAt:
+          scoreRow.latestEventTime ||
+          scoreRow.reviewedAt ||
+          session?.courseDate ||
+          nowIso(),
+        note: `${violationType}_count=0`,
+        key,
+        resolved: false,
+        existing: existingWarning
+      });
+    }
+
+    for (const session of sessions) {
+      if (new Date(session.deadlineAt).getTime() > now) {
+        continue;
+      }
+
+      if (activeScoreSessionIds.has(session.id)) {
+        continue;
+      }
+
+      const key = buildWarningKey(memberId, session.id, "absence");
+      const existingWarning = warningByKey.get(key);
+      if (existingWarning?.resolvedFlag) {
+        continue;
+      }
+
+      desiredFacts.push({
+        sessionId: session.id,
+        violationType: "absence",
+        createdAt: session.deadlineAt,
+        note: "absence_count=0",
+        key,
+        resolved: false,
+        existing: existingWarning
+      });
+    }
+
+    desiredFacts.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+    const updatedWarnings: WarningRecord[] = desiredFacts.map((fact, index) => {
+      const level = resolveWarningLevel(index + 1);
+      const warning =
+        fact.existing ??
+        ({
+          id: `warning:${memberId}:${fact.sessionId}:${fact.violationType}`,
+          campId,
+          memberId,
+          sessionId: fact.sessionId,
+          violationType: fact.violationType,
+          level,
+          createdAt: fact.createdAt,
+          resolvedFlag: false,
+          note: fact.note
+        } satisfies WarningRecord);
+
+      return {
+        ...warning,
+        level,
+        resolvedFlag: false,
+        note: `${fact.violationType}_count=${index + 1}`
+      };
+    });
+
+    const desiredActiveKeys = new Set(desiredFacts.map((fact) => fact.key));
+    const warningsToResolve = currentWarnings.filter(
+      (warning) => !warning.resolvedFlag && !desiredActiveKeys.has(buildWarningKey(memberId, warning.sessionId, warning.violationType))
+    );
+
+    const upsertWarning = this.db.prepare(
       `INSERT OR REPLACE INTO warnings
       (id, camp_id, member_id, session_id, violation_type, level, created_at, resolved_flag, note)
       VALUES (@id, @campId, @memberId, @sessionId, @violationType, @level, @createdAt, @resolvedFlag, @note)`
     );
 
-    for (const warning of warnings) {
-      insertWarning.run({
+    for (const warning of updatedWarnings) {
+      upsertWarning.run({
         ...warning,
-        resolvedFlag: warning.resolvedFlag ? 1 : 0
+        resolvedFlag: 0
       });
     }
 
-    const nextStatus = nextMemberStatusFromWarnings(warnings);
-    this.db.prepare("UPDATE members SET status = ? WHERE id = ?").run(nextStatus, memberId);
+    if (warningsToResolve.length > 0) {
+      const resolveWarning = this.db.prepare(
+        `UPDATE warnings
+         SET resolved_flag = 1
+         WHERE id = ?`
+      );
 
-    if (warnings.length > 0) {
+      for (const warning of warningsToResolve) {
+        resolveWarning.run(warning.id);
+      }
+    }
+
+    const memberWarnings = this.listWarnings(campId).filter(
+      (warning) => warning.memberId === memberId && !warning.resolvedFlag
+    );
+    const nextStatus = nextMemberStatusFromWarnings(memberWarnings);
+    const currentMember = this.getMember(memberId);
+    if (currentMember && currentMember.status !== nextStatus) {
+      this.db.prepare("UPDATE members SET status = ? WHERE id = ?").run(nextStatus, memberId);
+    }
+
+    const shouldAudit = updatedWarnings.length > 0 || warningsToResolve.length > 0 || currentMember?.status !== nextStatus;
+    if (shouldAudit) {
       this.recordAudit({
         id: `audit:warning:${memberId}:${Date.now()}`,
         campId,
         entityType: "warning",
         entityId: memberId,
-        action: "warning_synced",
+        action: "warning_state_synced",
         actor: "system",
-        payload: JSON.stringify(warnings),
+        payload: JSON.stringify({
+          activeWarnings: updatedWarnings,
+          resolvedWarnings: warningsToResolve,
+          nextStatus
+        }),
         createdAt: nowIso()
       });
     }
 
-    return warnings;
+    return updatedWarnings;
   }
 
   listWarnings(campId: string): WarningRecord[] {
@@ -846,13 +1039,15 @@ export class SqliteRepository {
   getRanking(campId: string) {
     return buildBoardRanking({
       members: this.listMembers(campId),
-      scores: this.listScores(campId).map((row) => ({
-        memberId: row.member_id,
-        sessionId: row.session_id,
-        totalScore: row.total_score,
-        communityBonus: row.community_bonus,
-        finalStatus: row.final_status
-      }))
+      scores: this.listScores(campId)
+        .filter((row) => row.final_status === "valid")
+        .map((row) => ({
+          memberId: row.member_id,
+          sessionId: row.session_id,
+          totalScore: row.total_score,
+          communityBonus: row.community_bonus,
+          finalStatus: row.final_status
+        }))
     });
   }
 
