@@ -2,10 +2,12 @@ import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 
 import type { DocumentParseStatus } from "../../domain/types";
+import { inferDocumentFileExt } from "./file-format";
 
 export interface DocumentExtractionInput {
   fileName?: string;
   fileExt?: string;
+  mimeType?: string;
   bytes: Buffer;
 }
 
@@ -25,7 +27,12 @@ function normalizeWhitespace(text: string) {
 
 export class LocalDocumentTextExtractor implements DocumentTextExtractor {
   async extract(input: DocumentExtractionInput): Promise<DocumentExtractionResult> {
-    const ext = input.fileExt?.toLowerCase();
+    const ext =
+      input.fileExt?.toLowerCase() ??
+      inferDocumentFileExt({
+        fileName: input.fileName,
+        mimeType: input.mimeType
+      })?.toLowerCase();
 
     if (ext !== "pdf" && ext !== "docx") {
       return {

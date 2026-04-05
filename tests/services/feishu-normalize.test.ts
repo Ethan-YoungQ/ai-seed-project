@@ -105,4 +105,35 @@ describe("normalizeFeishuMessageEvent", () => {
       documentParseStatus: "pending"
     });
   });
+
+  it("infers a file extension from MIME type when the file name is missing", () => {
+    const normalized = normalizeFeishuMessageEvent({
+      event: {
+        sender: {
+          sender_type: "user",
+          sender_id: {
+            open_id: "user-alice"
+          }
+        },
+        message: {
+          message_id: "om_file_002",
+          chat_id: "chat-demo",
+          chat_type: "group",
+          create_time: "1775210400000",
+          message_type: "file",
+          content: JSON.stringify({
+            file_key: "file_v3_demo",
+            mime_type: "application/pdf"
+          })
+        }
+      }
+    });
+
+    expect(normalized).toMatchObject({
+      messageId: "om_file_002",
+      fileKey: "file_v3_demo",
+      fileExt: "pdf",
+      documentParseStatus: "pending"
+    });
+  });
 });

@@ -1,5 +1,6 @@
 import { parseTags } from "../../domain/tag-parser";
 import type { DocumentParseStatus } from "../../domain/types";
+import { inferDocumentFileExt } from "../documents/file-format";
 
 export interface NormalizedFeishuMessage {
   messageId: string;
@@ -61,19 +62,6 @@ function readMessageContent(content: string): {
   }
 }
 
-function inferFileExt(fileName: string | undefined) {
-  if (!fileName) {
-    return undefined;
-  }
-
-  const parts = fileName.split(".");
-  if (parts.length < 2) {
-    return undefined;
-  }
-
-  return parts.at(-1)?.toLowerCase();
-}
-
 function initialDocumentParseStatus(messageType: string | undefined, fileExt: string | undefined): DocumentParseStatus {
   if (messageType !== "file") {
     return "not_applicable";
@@ -120,7 +108,10 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
   const rawText = parsedContent.text;
   const attachments = raw.event?.message?.attachments ?? [];
   const attachmentTypes = inferAttachmentTypes(messageType, attachments);
-  const fileExt = inferFileExt(parsedContent.fileName);
+  const fileExt = inferDocumentFileExt({
+    fileName: parsedContent.fileName,
+    mimeType: parsedContent.mimeType
+  });
 
   return {
     messageId,

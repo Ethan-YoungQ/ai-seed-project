@@ -378,6 +378,63 @@ describe("phase-2 and phase-3 API", () => {
     });
   });
 
+  it("surfaces document download failures in the Feishu status diagnostics", async () => {
+    await app.close();
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      feishuConfigOverride: {
+        ...disabledFeishuConfig,
+        botChatId: "chat-demo",
+        botReceiveIdType: "chat_id"
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        probeGroupMessageAccess: async () => ({ ok: true }),
+        getMessageFile: async () => {
+          throw new Error("Request failed with status code 400");
+        },
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" })
+      }
+    });
+    await app.ready();
+    await app.inject({
+      method: "POST",
+      url: "/api/demo/seed",
+      payload: {}
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/feishu/events",
+      payload: buildFileEvent("om_file_777", "user-alice", "1775210400000", "final report.pdf")
+    });
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/feishu/status"
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toMatchObject({
+      lastInboundReason: "pending_review_parse_failed",
+      lastNormalizedMessage: {
+        messageId: "om_file_777",
+        documentParseStatus: "failed",
+        documentTextLength: 0,
+        documentParseReason: "Request failed with status code 400"
+      }
+    });
+  });
+
   it("sends an announcement through the Feishu bot when a messenger is configured", async () => {
     const sent: Array<{ receiveId: string; receiveIdType: "chat_id" | "open_id" | "email" | "union_id"; text: string }> = [];
 

@@ -108,7 +108,11 @@ export async function createApp(options?: {
           messageType?: string;
           fileName?: string;
           fileExt?: string;
+          fileKey?: string;
+          mimeType?: string;
           documentParseStatus?: string;
+          documentParseReason?: string | null;
+          documentTextLength?: number;
         }
       | null;
   } = {
@@ -171,7 +175,11 @@ export async function createApp(options?: {
         messageType: enriched.messageType,
         fileName: enriched.fileName,
         fileExt: enriched.fileExt,
-        documentParseStatus: enriched.documentParseStatus
+        fileKey: enriched.fileKey,
+        mimeType: enriched.mimeType,
+        documentParseStatus: enriched.documentParseStatus,
+        documentParseReason: enriched.documentParseReason ?? null,
+        documentTextLength: enriched.documentText?.length ?? 0
       };
       const result = await ingestNormalizedMessage(enriched);
       inboundDiagnostics.lastInboundReason =

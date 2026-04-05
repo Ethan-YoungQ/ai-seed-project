@@ -1,6 +1,7 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 
 import type { FeishuConfig, FeishuReceiveIdType } from "./config";
+import { inferDocumentFileExt } from "../documents/file-format";
 
 export interface FeishuMessageSendInput {
   receiveId: string;
@@ -214,7 +215,10 @@ export class LarkFeishuApiClient implements FeishuApiClient {
     return {
       fileKey: input.fileKey,
       fileName,
-      fileExt: fileName?.split(".").at(-1)?.toLowerCase(),
+      fileExt: inferDocumentFileExt({
+        fileName,
+        mimeType
+      }),
       mimeType,
       bytes: Buffer.concat(chunks)
     };
