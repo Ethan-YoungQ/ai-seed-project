@@ -16,17 +16,17 @@ Use this checklist after each release or Feishu configuration change.
 | 1 | `GET /api/health` | Returns `{ "ok": true }`. |
 | 2 | `GET /api/feishu/status` | Credentials, bot binding, event mode, and Base readiness match the current tenant setup. |
 | 3 | `POST /api/feishu/send-test` with the configured chat ID | A test message appears in the real Feishu group. |
-| 4 | Send a real text submission in the group, such as `#HW01 #作业提交 ...` | The inbound event is accepted, scored, and written to SQLite. |
-| 5 | Re-check `GET /api/feishu/status` | `lastInboundEventAt` updates and `lastNormalizedMessage` reflects the submitted message. |
-| 6 | `GET /api/operator/submissions?campId=<camp-id>` | The candidate appears in the operator queue with the expected final status. |
-| 7 | `GET /api/public-board?campId=<camp-id>` | The public ranking board reflects the new score. |
-| 8 | `POST /api/announcements/run` | The announcement job is recorded, and the bot posts the summary if a bot chat is configured. |
-| 9 | Send a PDF or DOCX message only after file-download permission is enabled | File parsing completes and the document text is ingested. |
+| 4 | Send a real PDF or DOCX submission in the group | The inbound event is accepted, parsed, scored, and written to SQLite. |
+| 5 | Re-check `GET /api/feishu/status` | `lastInboundEventAt` updates and `lastNormalizedMessage.documentParseStatus=parsed`. |
+| 6 | `GET /api/operator/submissions?campId=<camp-id>` | The candidate appears in the operator queue with the expected final status and score. |
+| 7 | `GET /api/public-board?campId=<camp-id>` | The public ranking board reflects the new score for visible participants. |
+| 8 | `POST /api/announcements/run` | The announcement job is recorded, and the bot posts the summary. |
+| 9 | Check Feishu Base raw-events and scores tables | The new document submission is mirrored into Base. |
 
 ## Expected Pass/Fail Signals
 
 - `accepted: true` means the event entered scoring.
-- `finalStatus: valid` means the text submission passed the rule-first path.
+- `finalStatus: valid` means the submission passed the rule-first path.
 - `accepted: false` with `reason: unbound_chat` means the message came from a chat that is not bound to the active camp.
 - `documentParseStatus: failed` means the Feishu file could not be downloaded or parsed.
 
@@ -44,6 +44,6 @@ Use this checklist after each release or Feishu configuration change.
 Treat the release as blocked if any of the following are true:
 
 - Bot messages cannot be sent to the acceptance group.
-- The real group does not show incoming text submissions.
+- The real group does not show incoming document submissions.
 - `GET /api/feishu/status` reports credentials or Base as unready.
-- PDF/DOCX submissions fail before text extraction because the file-resource permission is still missing.
+- PDF/DOCX submissions fail before text extraction or remain stuck in `pending_review_parse_failed`.

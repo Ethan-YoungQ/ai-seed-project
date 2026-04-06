@@ -62,7 +62,10 @@ export async function evaluateMessageWindow(
   if (!session) {
     return {
       accepted: false,
-      reason: sessionMatch.reason === "ambiguous_window" ? "pending_review_ambiguous_session" : "ignored_no_active_session"
+      reason:
+        sessionMatch.reason === "ambiguous_window"
+          ? "pending_review_ambiguous_session"
+          : "ignored_no_active_session"
     };
   }
 

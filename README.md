@@ -1,14 +1,21 @@
 # Pfizer HBU AI Bootcamp Evaluator
 
-Phase-1 MVP for the Pfizer HBU AI bootcamp evaluation workflow.
+Production-oriented MVP for the Pfizer HBU AI bootcamp evaluation workflow.
 
 ## Scope
 
-- Feishu event ingest
+- Feishu real-time event ingest
 - Biweekly session window aggregation
 - Rule-first scoring with optional LLM assistance
-- SQLite fact storage
-- Operator-facing ranking dashboard
+- SQLite fact storage plus Feishu Base mirror
+- Public ranking board and operator review console
+- Bot announcements and board snapshots
+
+## Submission Model
+
+- The bootcamp now defaults to document-first submission.
+- Learners are expected to send PDF or Word documents in the Feishu group.
+- Homework tags remain supported for backward compatibility, but document uploads no longer require tags when there is a single active biweekly session window.
 
 ## Quick Start
 
@@ -22,6 +29,7 @@ Phase-1 MVP for the Pfizer HBU AI bootcamp evaluation workflow.
 - [Feishu setup](./docs/feishu-setup.md)
 - [Release runbook](./docs/release-runbook.md)
 - [Smoke test checklist](./docs/release-smoke-tests.md)
+- [Final acceptance on 2026-04-05](./docs/final-acceptance-2026-04-05.md)
 - [Feishu thread handoff for 2026-04-05](./docs/feishu-thread-handoff-2026-04-05.md)
 
 ## Scripts

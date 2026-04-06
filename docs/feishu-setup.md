@@ -2,6 +2,13 @@
 
 This project can run in local-only mode, but a real Feishu acceptance run needs the app credentials, event subscription, bot chat binding, and Base tables from the live tenant.
 
+## Submission Path
+
+- The current production path is document-first.
+- Learners submit PDF or Word documents in the Feishu group.
+- Tags are optional for document uploads.
+- The service matches untagged documents to the active biweekly session window.
+
 ## What To Configure
 
 1. Create a self-built Feishu app.
@@ -20,7 +27,7 @@ This project can run in local-only mode, but a real Feishu acceptance run needs 
 
 ## Environment Variables
 
-Use [`.env.example`](../.env.example) as the source of truth for the current variable set. The most important values for live Feishu are:
+Use [`.env.example`](../.env.example) as the source of truth for the current variable set.
 
 - `FEISHU_APP_ID`
 - `FEISHU_APP_SECRET`
@@ -40,6 +47,10 @@ Use [`.env.example`](../.env.example) as the source of truth for the current var
 - `GET /api/health` confirms the API process is alive.
 - `GET /api/feishu/status` reports whether credentials, bot chat binding, long connection mode, and Base tables are ready.
 - `POST /api/feishu/send-test` verifies the bot can send a message to the configured chat.
+- A new PDF or DOCX sent into the bound group should drive:
+  - `lastNormalizedMessage.messageType=file`
+  - `lastNormalizedMessage.documentParseStatus=parsed`
+  - `lastNormalizedMessage.documentTextLength > 0`
 
 ## Where To Go Next
 

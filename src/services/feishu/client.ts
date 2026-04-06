@@ -200,11 +200,22 @@ export class LarkFeishuApiClient implements FeishuApiClient {
       }
     }
 
-    const response = await this.client.im.file.get({
-      path: {
-        file_key: input.fileKey
-      }
-    });
+    const response =
+      this.client.im.messageResource?.get
+        ? await this.client.im.messageResource.get({
+            path: {
+              message_id: input.messageId,
+              file_key: input.fileKey
+            },
+            params: {
+              type: "file"
+            }
+          })
+        : await this.client.im.file.get({
+            path: {
+              file_key: input.fileKey
+            }
+          });
     const stream = response.getReadableStream();
     const chunks: Buffer[] = [];
 
