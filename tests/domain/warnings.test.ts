@@ -15,6 +15,8 @@ function buildCandidate(
     sessionId,
     memberId,
     homeworkTag: sessionId === "session-01" ? "#HW01" : sessionId === "session-02" ? "#HW02" : "#HW03",
+    eventId: `${sessionId}:${memberId}:evt-1`,
+    messageId: `${sessionId}:${memberId}:msg-1`,
     eventIds: [`${sessionId}:${memberId}:evt-1`],
     combinedText: "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4",
     attachmentCount: 1,

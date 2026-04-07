@@ -11,6 +11,8 @@ describe("scoreSubmissionCandidate", () => {
     sessionId: "session-01",
     memberId: "member-01",
     homeworkTag: "#HW01",
+    eventId: "evt-1",
+    messageId: "om_001",
     eventIds: ["evt-1", "evt-2"],
     combinedText:
       "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4 \u6211\u662f\u5148\u5199\u4e86\u4e00\u4e2a\u63d0\u793a\u8bcd\uff0c\u518d\u6839\u636e\u8f93\u51fa\u505a\u4e86\u4e24\u8f6e\u8fed\u4ee3\u3002\u6700\u7ec8\u6211\u4ea7\u51fa\u4e86\u4e00\u4efd\u7ed3\u6784\u5316\u603b\u7ed3\uff0c\u4e5f\u5b66\u4f1a\u4e86\u600e\u4e48\u628a\u95ee\u9898\u62c6\u89e3\u3002",

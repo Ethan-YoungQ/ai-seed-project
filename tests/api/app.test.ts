@@ -644,7 +644,7 @@ describe("phase-2 and phase-3 API", () => {
 
     expect(submissions.json().entries).toHaveLength(1);
     expect(submissions.json().entries[0]).toMatchObject({
-      candidateId: "session-01:user-alice",
+      candidateId: "session-01:user-alice:om_file_501",
       finalStatus: "valid"
     });
   });

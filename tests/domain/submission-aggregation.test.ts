@@ -28,7 +28,7 @@ describe("aggregateSubmissionWindow", () => {
     active: true
   };
 
-  it("merges all in-window homework events into one candidate", () => {
+  it("keeps legacy text/image homework flows as one synthetic attempt", () => {
     const events: RawMessageEvent[] = [
       {
         id: "evt-1",
@@ -58,13 +58,75 @@ describe("aggregateSubmissionWindow", () => {
       }
     ];
 
-    const aggregate = aggregateSubmissionWindow({ member, session, events });
+    const attempts = aggregateSubmissionWindow({ member, session, events });
 
-    expect(aggregate.memberId).toBe("member-01");
-    expect(aggregate.eventIds).toEqual(["evt-1", "evt-2"]);
-    expect(aggregate.attachmentCount).toBe(1);
-    expect(aggregate.combinedText).toContain("\u63d0\u793a\u8bcd\u62c6\u89e3\u95ee\u9898");
-    expect(aggregate.combinedText).toContain("\u6211\u5b66\u4f1a\u4e86");
-    expect(aggregate.latestEventTime).toBe("2026-04-10T08:05:00.000Z");
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]?.memberId).toBe("member-01");
+    expect(attempts[0]?.eventIds).toEqual(["evt-1", "evt-2"]);
+    expect(attempts[0]?.attachmentCount).toBe(1);
+    expect(attempts[0]?.combinedText).toContain("\u63d0\u793a\u8bcd\u62c6\u89e3\u95ee\u9898");
+    expect(attempts[0]?.combinedText).toContain("\u6211\u5b66\u4f1a\u4e86");
+    expect(attempts[0]?.latestEventTime).toBe("2026-04-10T08:05:00.000Z");
+  });
+
+  it("returns one attempt per document upload event", () => {
+    const events: RawMessageEvent[] = [
+      {
+        id: "evt-doc-1",
+        chatId: "chat-demo",
+        memberId: "member-01",
+        sessionId: "session-01",
+        messageId: "om_file_1",
+        messageType: "file",
+        eventTime: "2026-04-10T08:00:00.000Z",
+        rawText: "",
+        parsedTags: [],
+        attachmentCount: 1,
+        attachmentTypes: ["file"],
+        fileKey: "file_1",
+        fileName: "homework-1.pdf",
+        fileExt: "pdf",
+        mimeType: "application/pdf",
+        documentText: "绗竴娆℃彁浜?鎴戝厛鍐?prompt锛屽啀杩唬锛屾渶缁堝畬鎴愭€荤粨銆?",
+        documentParseStatus: "parsed",
+        eventUrl: "https://example.com/doc-1"
+      },
+      {
+        id: "evt-doc-2",
+        chatId: "chat-demo",
+        memberId: "member-01",
+        sessionId: "session-01",
+        messageId: "om_file_2",
+        messageType: "file",
+        eventTime: "2026-04-11T08:00:00.000Z",
+        rawText: "",
+        parsedTags: [],
+        attachmentCount: 1,
+        attachmentTypes: ["file"],
+        fileKey: "file_2",
+        fileName: "homework-2.docx",
+        fileExt: "docx",
+        mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        documentText: "绗簩娆℃彁浜?鎴戞洿鏂颁簡 prompt锛屾湁鏇寸粨鏋勫寲鐨勭粨鏋溿€?",
+        documentParseStatus: "parsed",
+        eventUrl: "https://example.com/doc-2"
+      }
+    ];
+
+    const attempts = aggregateSubmissionWindow({ member, session, events });
+
+    expect(attempts).toHaveLength(2);
+    expect(attempts[0]).toMatchObject({
+      id: "session-01:member-01:om_file_1",
+      messageId: "om_file_1",
+      eventId: "evt-doc-1",
+      fileKey: "file_1"
+    });
+    expect(attempts[1]).toMatchObject({
+      id: "session-01:member-01:om_file_2",
+      messageId: "om_file_2",
+      eventId: "evt-doc-2",
+      fileKey: "file_2"
+    });
   });
 });

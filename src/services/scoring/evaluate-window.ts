@@ -9,6 +9,8 @@ function isEligibleDocument(event: NormalizedFeishuMessage) {
   return event.messageType === "file" && (event.fileExt === "pdf" || event.fileExt === "docx");
 }
 
+const parseFailureReason = "鏂囨。瑙ｆ瀽澶辫触锛岄渶瑕佷汉宸ュ鏍稿悗鍐嶈瘎鍒嗐€?";
+
 export async function evaluateMessageWindow(
   repository: SqliteRepository,
   member: MemberProfile,
@@ -82,31 +84,42 @@ export async function evaluateMessageWindow(
     session.windowStart,
     session.windowEnd
   );
-
-  const candidate = aggregateSubmissionWindow({
+  const attempts = aggregateSubmissionWindow({
     member,
     session,
     events
   });
-  repository.saveCandidate(candidate);
+  const attempt = attempts.find((entry) => entry.messageId === event.messageId) ?? attempts.at(-1);
+
+  if (!attempt) {
+    return {
+      accepted: false,
+      reason: "ignored_no_active_session"
+    };
+  }
+
+  repository.saveAttempt(attempt);
 
   if (event.messageType === "file" && event.documentParseStatus === "failed") {
     const pendingReview = buildPendingReviewScore(
-      candidate,
+      attempt,
       "pending_review_parse_failed",
-      "文档解析失败，需要人工复核后再评分。"
+      parseFailureReason
     );
     repository.saveScore(member.campId, pendingReview);
+    const warnings = repository.syncMemberWarnings(member.campId, member.id);
 
     return {
       accepted: false,
       reason: "pending_review_parse_failed",
       sessionId: session.id,
-      candidateId: candidate.id
+      candidateId: attempt.id,
+      warningLevel: warnings.at(-1)?.level ?? null,
+      latestWarningId: warnings.at(-1)?.id ?? null
     };
   }
 
-  const score = await scoreSubmissionCandidate(candidate);
+  const score = await scoreSubmissionCandidate(attempt);
   repository.saveScore(member.campId, score);
   const warnings = repository.syncMemberWarnings(member.campId, member.id);
 
@@ -115,7 +128,7 @@ export async function evaluateMessageWindow(
     sessionId: session.id,
     finalStatus: score.finalStatus,
     totalScore: score.totalScore,
-    candidateId: candidate.id,
+    candidateId: attempt.id,
     warningLevel: warnings.at(-1)?.level ?? null,
     latestWarningId: warnings.at(-1)?.id ?? null
   };

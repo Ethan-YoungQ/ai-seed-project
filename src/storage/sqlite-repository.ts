@@ -19,8 +19,9 @@ import type {
   RawMessageEvent,
   ReviewAction,
   ScoringResult,
+  SessionResult,
   SessionDefinition,
-  SubmissionCandidate,
+  SubmissionAttempt,
   WarningRecord
 } from "../domain/types";
 import { buildBoardOverview } from "../services/board/overview";
@@ -85,7 +86,10 @@ CREATE TABLE IF NOT EXISTS submission_candidates (
   session_id TEXT NOT NULL,
   member_id TEXT NOT NULL,
   homework_tag TEXT NOT NULL,
+  event_id TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL DEFAULT '',
   event_ids TEXT NOT NULL,
+  file_key TEXT NOT NULL DEFAULT '',
   combined_text TEXT NOT NULL,
   attachment_count INTEGER NOT NULL DEFAULT 0,
   attachment_types TEXT NOT NULL,
@@ -95,6 +99,16 @@ CREATE TABLE IF NOT EXISTS submission_candidates (
   latest_event_time TEXT NOT NULL,
   deadline_at TEXT NOT NULL,
   evaluation_window_end TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_results (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  chosen_attempt_id TEXT,
+  final_status TEXT NOT NULL,
+  total_score INTEGER NOT NULL DEFAULT 0,
+  latest_submitted_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS scores (
   id TEXT PRIMARY KEY,
@@ -217,6 +231,9 @@ export class SqliteRepository {
     ensureColumn(this.db, "raw_events", "document_text", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "raw_events", "document_parse_status", "TEXT NOT NULL DEFAULT 'not_applicable'");
     ensureColumn(this.db, "raw_events", "document_parse_reason", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "event_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "message_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "file_key", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "submission_candidates", "document_text", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(
       this.db,
@@ -551,26 +568,31 @@ export class SqliteRepository {
     };
   }
 
-  saveCandidate(candidate: SubmissionCandidate) {
+  saveAttempt(attempt: SubmissionAttempt) {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO submission_candidates
-        (id, camp_id, session_id, member_id, homework_tag, event_ids, combined_text, attachment_count, attachment_types, document_text, document_parse_status, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
-        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventIds, @combinedText, @attachmentCount, @attachmentTypes, @documentText, @documentParseStatus, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
+        (id, camp_id, session_id, member_id, homework_tag, event_id, message_id, event_ids, file_key, combined_text, attachment_count, attachment_types, document_text, document_parse_status, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
+        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventId, @messageId, @eventIds, @fileKey, @combinedText, @attachmentCount, @attachmentTypes, @documentText, @documentParseStatus, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
       )
       .run({
-        ...candidate,
-        eventIds: JSON.stringify(candidate.eventIds),
-        attachmentTypes: JSON.stringify(candidate.attachmentTypes),
-        documentText: candidate.documentText ?? "",
-        documentParseStatus: candidate.documentParseStatus ?? "not_applicable"
+        ...attempt,
+        eventIds: JSON.stringify(attempt.eventIds),
+        fileKey: attempt.fileKey ?? "",
+        attachmentTypes: JSON.stringify(attempt.attachmentTypes),
+        documentText: attempt.documentText ?? "",
+        documentParseStatus: attempt.documentParseStatus ?? "not_applicable"
       });
   }
 
-  getCandidate(candidateId: string): SubmissionCandidate | undefined {
+  saveCandidate(candidate: SubmissionAttempt) {
+    this.saveAttempt(candidate);
+  }
+
+  getAttempt(attemptId: string): SubmissionAttempt | undefined {
     const row = this.db
       .prepare("SELECT * FROM submission_candidates WHERE id = ?")
-      .get(candidateId) as Record<string, unknown> | undefined;
+      .get(attemptId) as Record<string, unknown> | undefined;
 
     if (!row) {
       return undefined;
@@ -582,17 +604,24 @@ export class SqliteRepository {
       sessionId: String(row.session_id),
       memberId: String(row.member_id),
       homeworkTag: String(row.homework_tag),
+      eventId: String(row.event_id ?? ""),
+      messageId: String(row.message_id ?? ""),
       eventIds: JSON.parse(String(row.event_ids)) as string[],
+      fileKey: String(row.file_key ?? "") || undefined,
       combinedText: String(row.combined_text),
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
       documentText: String(row.document_text ?? ""),
-      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as SubmissionCandidate["documentParseStatus"],
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as SubmissionAttempt["documentParseStatus"],
       firstEventTime: String(row.first_event_time),
       latestEventTime: String(row.latest_event_time),
       deadlineAt: String(row.deadline_at),
       evaluationWindowEnd: String(row.evaluation_window_end)
     };
+  }
+
+  getCandidate(candidateId: string): SubmissionAttempt | undefined {
+    return this.getAttempt(candidateId);
   }
 
   saveScore(campId: string, score: ScoringResult) {
@@ -614,9 +643,11 @@ export class SqliteRepository {
         reviewNote: score.reviewNote ?? "",
         reviewedBy: score.reviewedBy ?? "",
         reviewedAt: score.reviewedAt ?? "",
-        llmModel: score.llmModel ?? "",
-        llmInputExcerpt: score.llmInputExcerpt ?? ""
-      });
+          llmModel: score.llmModel ?? "",
+          llmInputExcerpt: score.llmInputExcerpt ?? ""
+        });
+
+    this.recomputeSessionResult(campId, score.memberId, score.sessionId);
   }
 
   getScore(candidateId: string): ScoringResult | undefined {
@@ -665,6 +696,98 @@ export class SqliteRepository {
     }>;
   }
 
+  private listScoredAttemptsForSession(campId: string, memberId: string, sessionId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           sc.candidate_id,
+           sc.final_status,
+           sc.total_score,
+           c.latest_event_time
+         FROM scores sc
+         LEFT JOIN submission_candidates c ON c.id = sc.candidate_id
+         WHERE sc.camp_id = ? AND sc.member_id = ? AND sc.session_id = ?`
+      )
+      .all(campId, memberId, sessionId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      candidateId: String(row.candidate_id),
+      finalStatus: String(row.final_status) as ScoringResult["finalStatus"],
+      totalScore: Number(row.total_score ?? 0),
+      latestEventTime: String(row.latest_event_time ?? "")
+    }));
+  }
+
+  private recomputeSessionResult(campId: string, memberId: string, sessionId: string) {
+    const attempts = this.listScoredAttemptsForSession(campId, memberId, sessionId);
+    const sessionResultId = `${sessionId}:${memberId}`;
+
+    if (attempts.length === 0) {
+      this.db.prepare("DELETE FROM session_results WHERE id = ?").run(sessionResultId);
+      return undefined;
+    }
+
+    const validAttempts = attempts
+      .filter((attempt) => attempt.finalStatus === "valid")
+      .sort((left, right) => {
+        if (right.totalScore !== left.totalScore) {
+          return right.totalScore - left.totalScore;
+        }
+
+        return right.latestEventTime.localeCompare(left.latestEventTime);
+      });
+
+    const latestAttempt = [...attempts].sort((left, right) =>
+      right.latestEventTime.localeCompare(left.latestEventTime)
+    )[0]!;
+    const chosenAttempt = validAttempts[0] ?? latestAttempt;
+
+    const result: SessionResult = {
+      id: sessionResultId,
+      campId,
+      sessionId,
+      memberId,
+      chosenAttemptId: chosenAttempt.candidateId,
+      finalStatus: validAttempts.length > 0 ? "valid" : chosenAttempt.finalStatus,
+      totalScore: validAttempts.length > 0 ? chosenAttempt.totalScore : chosenAttempt.totalScore,
+      latestSubmittedAt: chosenAttempt.latestEventTime
+    };
+
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO session_results
+        (id, camp_id, session_id, member_id, chosen_attempt_id, final_status, total_score, latest_submitted_at)
+        VALUES (@id, @campId, @sessionId, @memberId, @chosenAttemptId, @finalStatus, @totalScore, @latestSubmittedAt)`
+      )
+      .run({
+        ...result,
+        chosenAttemptId: result.chosenAttemptId ?? null
+      });
+
+    return result;
+  }
+
+  private listSessionResults(campId: string): SessionResult[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, camp_id, session_id, member_id, chosen_attempt_id, final_status, total_score, latest_submitted_at
+         FROM session_results
+         WHERE camp_id = ?`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      sessionId: String(row.session_id),
+      memberId: String(row.member_id),
+      chosenAttemptId: row.chosen_attempt_id ? String(row.chosen_attempt_id) : undefined,
+      finalStatus: String(row.final_status) as SessionResult["finalStatus"],
+      totalScore: Number(row.total_score ?? 0),
+      latestSubmittedAt: String(row.latest_submitted_at)
+    }));
+  }
+
   listOperatorSubmissions(campId: string): OperatorSubmissionEntry[] {
     const rows = this.db
       .prepare(
@@ -708,18 +831,18 @@ export class SqliteRepository {
     const rows = this.db
       .prepare(
         `SELECT
-           sc.candidate_id,
-           sc.session_id,
-           sc.final_status,
+           sr.chosen_attempt_id AS candidate_id,
+           sr.session_id,
+           sr.final_status,
            sc.score_reason,
            sc.reviewed_at,
-           c.latest_event_time,
+           sr.latest_submitted_at AS latest_event_time,
            s.course_date,
            s.deadline_at
-         FROM scores sc
-         JOIN sessions s ON s.id = sc.session_id
-         LEFT JOIN submission_candidates c ON c.id = sc.candidate_id
-         WHERE sc.camp_id = ? AND sc.member_id = ?
+         FROM session_results sr
+         JOIN sessions s ON s.id = sr.session_id
+         LEFT JOIN scores sc ON sc.candidate_id = sr.chosen_attempt_id
+         WHERE sr.camp_id = ? AND sr.member_id = ?
          ORDER BY s.course_date ASC`
       )
       .all(campId, memberId) as Array<Record<string, unknown>>;
@@ -771,8 +894,8 @@ export class SqliteRepository {
 
   overrideReview(candidateId: string, review: ReviewAction) {
     const existing = this.getScore(candidateId);
-    const candidate = this.getCandidate(candidateId);
-    if (!existing || !candidate) {
+    const attempt = this.getAttempt(candidateId);
+    if (!existing || !attempt) {
       return undefined;
     }
 
@@ -782,7 +905,7 @@ export class SqliteRepository {
       this.db
         .prepare("UPDATE members SET status = 'active' WHERE id = ?")
         .run(existing.memberId);
-      this.resolveWarningsForSession(candidate.campId, existing.memberId, existing.sessionId);
+      this.resolveWarningsForSession(attempt.campId, existing.memberId, existing.sessionId);
     } else {
       const override =
         review.action === "mark_no_count"
@@ -849,7 +972,7 @@ export class SqliteRepository {
 
     this.recordAudit({
       id: `audit:review:${candidateId}:${Date.now()}`,
-      campId: candidate.campId,
+      campId: attempt.campId,
       entityType: "score",
       entityId: candidateId,
       action: review.action,
@@ -858,7 +981,8 @@ export class SqliteRepository {
       createdAt: reviewedAt
     });
 
-    this.syncMemberWarnings(candidate.campId, candidate.memberId);
+    this.recomputeSessionResult(attempt.campId, attempt.memberId, attempt.sessionId);
+    this.syncMemberWarnings(attempt.campId, attempt.memberId);
     return this.getScore(candidateId);
   }
 
@@ -1039,14 +1163,14 @@ export class SqliteRepository {
   getRanking(campId: string) {
     return buildBoardRanking({
       members: this.listMembers(campId),
-      scores: this.listScores(campId)
-        .filter((row) => row.final_status === "valid")
+      scores: this.listSessionResults(campId)
+        .filter((row) => row.finalStatus === "valid")
         .map((row) => ({
-          memberId: row.member_id,
-          sessionId: row.session_id,
-          totalScore: row.total_score,
-          communityBonus: row.community_bonus,
-          finalStatus: row.final_status
+          memberId: row.memberId,
+          sessionId: row.sessionId,
+          totalScore: row.totalScore,
+          communityBonus: 0,
+          finalStatus: row.finalStatus
         }))
     });
   }

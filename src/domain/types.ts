@@ -71,13 +71,16 @@ export interface RawMessageEvent {
   eventUrl: string;
 }
 
-export interface SubmissionCandidate {
+export interface SubmissionAttempt {
   id: string;
   campId: string;
   sessionId: string;
   memberId: string;
   homeworkTag: string;
+  eventId: string;
+  messageId: string;
   eventIds: string[];
+  fileKey?: string;
   combinedText: string;
   attachmentCount: number;
   attachmentTypes: string[];
@@ -88,6 +91,8 @@ export interface SubmissionCandidate {
   deadlineAt: string;
   evaluationWindowEnd: string;
 }
+
+export type SubmissionCandidate = SubmissionAttempt;
 
 export interface ScoringResult {
   memberId: string;
@@ -111,6 +116,17 @@ export interface ScoringResult {
   autoProcessScore?: number;
   autoQualityScore?: number;
   autoCommunityBonus?: number;
+}
+
+export interface SessionResult {
+  id: string;
+  campId: string;
+  sessionId: string;
+  memberId: string;
+  chosenAttemptId?: string;
+  finalStatus: FinalStatus;
+  totalScore: number;
+  latestSubmittedAt: string;
 }
 
 export interface RankingInputScore {

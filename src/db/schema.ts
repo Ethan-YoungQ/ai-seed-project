@@ -55,14 +55,30 @@ export const submissionCandidates = sqliteTable("submission_candidates", {
   sessionId: text("session_id").notNull(),
   memberId: text("member_id").notNull(),
   homeworkTag: text("homework_tag").notNull(),
+  eventId: text("event_id").notNull().default(""),
+  messageId: text("message_id").notNull().default(""),
   eventIds: text("event_ids").notNull(),
+  fileKey: text("file_key").notNull().default(""),
   combinedText: text("combined_text").notNull(),
   attachmentCount: integer("attachment_count").notNull().default(0),
   attachmentTypes: text("attachment_types").notNull(),
+  documentText: text("document_text").notNull().default(""),
+  documentParseStatus: text("document_parse_status").notNull().default("not_applicable"),
   firstEventTime: text("first_event_time").notNull(),
   latestEventTime: text("latest_event_time").notNull(),
   deadlineAt: text("deadline_at").notNull(),
   evaluationWindowEnd: text("evaluation_window_end").notNull()
+});
+
+export const sessionResults = sqliteTable("session_results", {
+  id: text("id").primaryKey(),
+  campId: text("camp_id").notNull(),
+  sessionId: text("session_id").notNull(),
+  memberId: text("member_id").notNull(),
+  chosenAttemptId: text("chosen_attempt_id"),
+  finalStatus: text("final_status").notNull(),
+  totalScore: integer("total_score").notNull().default(0),
+  latestSubmittedAt: text("latest_submitted_at").notNull()
 });
 
 export const scores = sqliteTable("scores", {

@@ -1,4 +1,4 @@
-import type { ScoringResult, SubmissionCandidate } from "./types";
+import type { ScoringResult, SubmissionAttempt } from "./types";
 
 const processMarkers = [
   "\u6211\u662f",
@@ -35,7 +35,7 @@ const structuredMarkers = [
 ];
 
 export async function scoreSubmissionCandidate(
-  candidate: SubmissionCandidate
+  candidate: SubmissionAttempt
 ): Promise<ScoringResult> {
   const sourceText = [candidate.combinedText.trim(), candidate.documentText?.trim() ?? ""]
     .filter(Boolean)
@@ -118,7 +118,7 @@ export async function scoreSubmissionCandidate(
 }
 
 export function buildPendingReviewScore(
-  candidate: SubmissionCandidate,
+  candidate: SubmissionAttempt,
   reason: string,
   llmReason: string
 ): ScoringResult {
