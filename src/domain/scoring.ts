@@ -1,45 +1,136 @@
-import type { ScoringResult, SubmissionAttempt } from "./types";
+import type { SubmissionAttempt } from "./types";
+import type { LlmProviderConfig } from "../services/llm/provider-config";
+import { readLlmProviderConfig } from "../services/llm/provider-config";
+import { scoreAttemptWithQwen, type QwenScoreResult } from "../services/llm/qwen-score";
+
+import type { ScoringResult } from "./types";
 
 const processMarkers = [
-  "\u6211\u662f",
-  "\u5148",
-  "\u7136\u540e",
-  "\u6b65\u9aa4",
-  "\u63d0\u793a\u8bcd",
+  "我是",
+  "先",
+  "然后",
+  "步骤",
+  "提示词",
   "prompt",
-  "\u8fed\u4ee3",
-  "\u5c1d\u8bd5",
-  "\u600e\u4e48\u505a"
+  "迭代",
+  "尝试",
+  "怎么做"
 ];
 
 const resultMarkers = [
-  "\u5b66\u5230\u4e86",
-  "\u5b66\u4f1a\u4e86",
-  "\u4ea7\u51fa",
-  "\u7ed3\u679c",
-  "\u603b\u7ed3",
-  "\u8f93\u51fa",
-  "\u5b8c\u6210",
-  "\u6700\u7ec8"
+  "学到了",
+  "学会了",
+  "产出",
+  "结果",
+  "总结",
+  "输出",
+  "完成",
+  "最终"
 ];
 
-const structuredMarkers = [
-  "\u603b\u7ed3",
-  "\u8f93\u51fa",
-  "\u6b65\u9aa4",
-  "1.",
-  "2.",
-  "\u4e00\u3001",
-  "\u4e8c\u3001",
-  "\u6700\u7ec8"
-];
+const structuredMarkers = ["总结", "输出", "步骤", "1.", "2.", "一、", "二、", "最终"];
 
-export async function scoreSubmissionCandidate(
-  candidate: SubmissionAttempt
-): Promise<ScoringResult> {
-  const sourceText = [candidate.combinedText.trim(), candidate.documentText?.trim() ?? ""]
+export interface ScoreSubmissionOptions {
+  config?: LlmProviderConfig;
+  llmScorer?: (attempt: SubmissionAttempt, config: LlmProviderConfig) => Promise<QwenScoreResult>;
+}
+
+function buildSourceText(candidate: SubmissionAttempt) {
+  return [candidate.combinedText.trim(), candidate.documentText?.trim() ?? ""]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function buildInvalidScore(candidate: SubmissionAttempt, sourceText: string, reasons: string[]): ScoringResult {
+  return {
+    memberId: candidate.memberId,
+    sessionId: candidate.sessionId,
+    candidateId: candidate.id,
+    baseScore: 0,
+    processScore: 0,
+    qualityScore: 0,
+    communityBonus: 0,
+    totalScore: 0,
+    finalStatus: "invalid",
+    scoreReason: reasons.join(","),
+    llmReason: "该提交未通过基础校验，已跳过自动评分。",
+    llmModel: "heuristic-fallback",
+    llmInputExcerpt: sourceText.slice(0, 160),
+    autoBaseScore: 0,
+    autoProcessScore: 0,
+    autoQualityScore: 0,
+    autoCommunityBonus: 0
+  };
+}
+
+function buildHeuristicValidScore(candidate: SubmissionAttempt, sourceText: string): ScoringResult {
+  const text = sourceText.toLowerCase();
+  const processScore = [
+    /prompt|提示词/.test(text),
+    /迭代|两轮|三轮|优化|调整/.test(text),
+    /学到了|学会了|反思|发现/.test(text)
+  ].filter(Boolean).length;
+
+  const qualityScore = [
+    structuredMarkers.some((marker) => text.includes(marker.toLowerCase())),
+    /产出|总结|模板|清单|方案|结果/.test(text)
+  ].filter(Boolean).length;
+
+  return {
+    memberId: candidate.memberId,
+    sessionId: candidate.sessionId,
+    candidateId: candidate.id,
+    baseScore: 5,
+    processScore: Math.min(processScore, 3),
+    qualityScore: Math.min(qualityScore, 2),
+    communityBonus: 0,
+    totalScore: 5 + Math.min(processScore, 3) + Math.min(qualityScore, 2),
+    finalStatus: "valid",
+    scoreReason: "evidence_present",
+    llmReason: "启发式评分依据过程、结果和结构线索完成。",
+    llmModel: "heuristic-fallback",
+    llmInputExcerpt: sourceText.slice(0, 160),
+    autoBaseScore: 5,
+    autoProcessScore: Math.min(processScore, 3),
+    autoQualityScore: Math.min(qualityScore, 2),
+    autoCommunityBonus: 0
+  };
+}
+
+function applyQwenScore(
+  candidate: SubmissionAttempt,
+  sourceText: string,
+  qwenScore: QwenScoreResult
+): ScoringResult {
+  const processScore = Math.max(0, Math.min(qwenScore.processScore, 3));
+  const qualityScore = Math.max(0, Math.min(qwenScore.qualityScore, 2));
+
+  return {
+    memberId: candidate.memberId,
+    sessionId: candidate.sessionId,
+    candidateId: candidate.id,
+    baseScore: 5,
+    processScore,
+    qualityScore,
+    communityBonus: 0,
+    totalScore: 5 + processScore + qualityScore,
+    finalStatus: "valid",
+    scoreReason: "evidence_present",
+    llmReason: qwenScore.reason,
+    llmModel: qwenScore.model,
+    llmInputExcerpt: qwenScore.inputExcerpt || sourceText.slice(0, 160),
+    autoBaseScore: 5,
+    autoProcessScore: processScore,
+    autoQualityScore: qualityScore,
+    autoCommunityBonus: 0
+  };
+}
+
+export async function scoreSubmissionCandidate(
+  candidate: SubmissionAttempt,
+  options: ScoreSubmissionOptions = {}
+): Promise<ScoringResult> {
+  const sourceText = buildSourceText(candidate);
   const text = sourceText.toLowerCase();
   const reasons: string[] = [];
 
@@ -64,57 +155,22 @@ export async function scoreSubmissionCandidate(
   }
 
   if (!hasEvidence || !hasProcess || !hasResult || !onTime) {
-    return {
-      memberId: candidate.memberId,
-      sessionId: candidate.sessionId,
-      candidateId: candidate.id,
-      baseScore: 0,
-      processScore: 0,
-      qualityScore: 0,
-      communityBonus: 0,
-      totalScore: 0,
-      finalStatus: "invalid",
-      scoreReason: reasons.join(","),
-      llmReason: "该提交未通过基础校验，已跳过自动评分。",
-      llmModel: "heuristic-fallback",
-      llmInputExcerpt: sourceText.slice(0, 160),
-      autoBaseScore: 0,
-      autoProcessScore: 0,
-      autoQualityScore: 0,
-      autoCommunityBonus: 0
-    };
+    return buildInvalidScore(candidate, sourceText, reasons);
   }
 
-  const processScore = [
-    /prompt|\u63d0\u793a\u8bcd/.test(text),
-    /\u8fed\u4ee3|\u4e24\u8f6e|\u4e09\u8f6e|\u4f18\u5316|\u8c03\u6574/.test(text),
-    /\u5b66\u5230\u4e86|\u5b66\u4f1a\u4e86|\u53cd\u601d|\u53d1\u73b0/.test(text)
-  ].filter(Boolean).length;
+  const config = options.config ?? readLlmProviderConfig(process.env);
+  const llmScorer = options.llmScorer ?? scoreAttemptWithQwen;
 
-  const qualityScore = [
-    structuredMarkers.some((marker) => text.includes(marker.toLowerCase())),
-    /\u4ea7\u51fa|\u603b\u7ed3|\u6a21\u677f|\u6e05\u5355|\u65b9\u6848|\u7ed3\u679c/.test(text)
-  ].filter(Boolean).length;
+  if (config.enabled) {
+    try {
+      const qwenScore = await llmScorer(candidate, config);
+      return applyQwenScore(candidate, sourceText, qwenScore);
+    } catch {
+      return buildHeuristicValidScore(candidate, sourceText);
+    }
+  }
 
-  return {
-    memberId: candidate.memberId,
-    sessionId: candidate.sessionId,
-    candidateId: candidate.id,
-    baseScore: 5,
-    processScore: Math.min(processScore, 3),
-    qualityScore: Math.min(qualityScore, 2),
-    communityBonus: 0,
-    totalScore: 5 + Math.min(processScore, 3) + Math.min(qualityScore, 2),
-    finalStatus: "valid",
-    scoreReason: reasons.join(","),
-    llmReason: "启发式评分依据过程、结果和结构线索完成；配置好在线评审后可切换为模型判定。",
-    llmModel: "heuristic-fallback",
-    llmInputExcerpt: sourceText.slice(0, 160),
-    autoBaseScore: 5,
-    autoProcessScore: Math.min(processScore, 3),
-    autoQualityScore: Math.min(qualityScore, 2),
-    autoCommunityBonus: 0
-  };
+  return buildHeuristicValidScore(candidate, sourceText);
 }
 
 export function buildPendingReviewScore(
@@ -122,9 +178,7 @@ export function buildPendingReviewScore(
   reason: string,
   llmReason: string
 ): ScoringResult {
-  const sourceText = [candidate.combinedText.trim(), candidate.documentText?.trim() ?? ""]
-    .filter(Boolean)
-    .join("\n\n");
+  const sourceText = buildSourceText(candidate);
 
   return {
     memberId: candidate.memberId,

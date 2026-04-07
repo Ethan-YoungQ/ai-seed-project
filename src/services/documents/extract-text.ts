@@ -2,6 +2,8 @@ import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 
 import type { DocumentParseStatus } from "../../domain/types";
+import { readLlmProviderConfig, type LlmProviderConfig } from "../llm/provider-config";
+import { extractTextWithQwenDoc } from "../llm/qwen-score";
 import { inferDocumentFileExt } from "./file-format";
 
 export interface DocumentExtractionInput {
@@ -25,7 +27,53 @@ function normalizeWhitespace(text: string) {
   return text.replace(/\r/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+export interface LocalDocumentTextExtractorOptions {
+  config?: LlmProviderConfig;
+  fetchImpl?: typeof fetch;
+  localPdfParser?: typeof pdfParse;
+  localDocxParser?: typeof mammoth.extractRawText;
+  llmFallback?: (input: DocumentExtractionInput) => Promise<DocumentExtractionResult | undefined>;
+}
+
 export class LocalDocumentTextExtractor implements DocumentTextExtractor {
+  constructor(private readonly options: LocalDocumentTextExtractorOptions = {}) {}
+
+  private async runLlmFallback(input: DocumentExtractionInput) {
+    if (this.options.llmFallback) {
+      return this.options.llmFallback(input);
+    }
+
+    const config = this.options.config ?? readLlmProviderConfig(process.env);
+    if (!config.enabled) {
+      return undefined;
+    }
+
+    try {
+      const result = await extractTextWithQwenDoc(
+        {
+          bytes: input.bytes,
+          fileName: input.fileName
+        },
+        config,
+        {
+          fetchImpl: this.options.fetchImpl
+        }
+      );
+
+      if (!result.text.trim()) {
+        return undefined;
+      }
+
+      return {
+        text: normalizeWhitespace(result.text),
+        status: "parsed",
+        reason: `llm_fallback:${result.model}`
+      } satisfies DocumentExtractionResult;
+    } catch {
+      return undefined;
+    }
+  }
+
   async extract(input: DocumentExtractionInput): Promise<DocumentExtractionResult> {
     const ext =
       input.fileExt?.toLowerCase() ??
@@ -44,22 +92,54 @@ export class LocalDocumentTextExtractor implements DocumentTextExtractor {
 
     try {
       if (ext === "pdf") {
-        const parsed = await pdfParse(input.bytes);
+        const parsed = await (this.options.localPdfParser ?? pdfParse)(input.bytes);
+        const text = normalizeWhitespace(parsed.text ?? "");
+        if (text) {
+          return {
+            text,
+            status: "parsed"
+          };
+        }
+
+        const fallback = await this.runLlmFallback(input);
+        if (fallback) {
+          return fallback;
+        }
+
         return {
-          text: normalizeWhitespace(parsed.text ?? ""),
+          text: "",
+          status: "failed",
+          reason: "empty_document_text"
+        };
+      }
+
+      const parsed = await (this.options.localDocxParser ?? mammoth.extractRawText)({
+        buffer: input.bytes
+      });
+      const text = normalizeWhitespace(parsed.value ?? "");
+      if (text) {
+        return {
+          text,
           status: "parsed"
         };
       }
 
-      const parsed = await mammoth.extractRawText({
-        buffer: input.bytes
-      });
+      const fallback = await this.runLlmFallback(input);
+      if (fallback) {
+        return fallback;
+      }
 
       return {
-        text: normalizeWhitespace(parsed.value ?? ""),
-        status: "parsed"
+        text: "",
+        status: "failed",
+        reason: "empty_document_text"
       };
     } catch (error) {
+      const fallback = await this.runLlmFallback(input);
+      if (fallback) {
+        return fallback;
+      }
+
       return {
         text: "",
         status: "failed",

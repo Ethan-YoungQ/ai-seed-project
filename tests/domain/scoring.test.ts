@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildBoardRanking } from "../../src/domain/ranking";
 import { scoreSubmissionCandidate } from "../../src/domain/scoring";
 import type { MemberProfile, SubmissionCandidate } from "../../src/domain/types";
+import type { LlmProviderConfig } from "../../src/services/llm/provider-config";
 
 describe("scoreSubmissionCandidate", () => {
   const candidate: SubmissionCandidate = {
@@ -65,6 +66,38 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.finalStatus).toBe("valid");
     expect(result.baseScore).toBe(5);
     expect(result.totalScore).toBeGreaterThanOrEqual(7);
+  });
+
+  it("uses the injected llm scorer when provider-neutral config is enabled", async () => {
+    const llmConfig: LlmProviderConfig = {
+      enabled: true,
+      provider: "aliyun",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "sk-demo",
+      textModel: "qwen3-flash",
+      fileModel: "qwen-doc-turbo",
+      timeoutMs: 15000,
+      maxInputChars: 6000,
+      concurrency: 3
+    };
+
+    const result = await scoreSubmissionCandidate(candidate, {
+      config: llmConfig,
+      llmScorer: async () => ({
+        processScore: 3,
+        qualityScore: 2,
+        reason: "Scored by qwen.",
+        model: "qwen3-flash",
+        inputExcerpt: candidate.combinedText.slice(0, 160)
+      })
+    });
+
+    expect(result.finalStatus).toBe("valid");
+    expect(result.processScore).toBe(3);
+    expect(result.qualityScore).toBe(2);
+    expect(result.totalScore).toBe(10);
+    expect(result.llmModel).toBe("qwen3-flash");
+    expect(result.llmReason).toBe("Scored by qwen.");
   });
 });
 
