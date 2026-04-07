@@ -128,6 +128,46 @@ describe("evaluateMessageWindow document attempts", () => {
     });
   });
 
+  it("keeps the latest pending review attempt when no valid attempt exists", async () => {
+    repository = new SqliteRepository(":memory:");
+    repository.seedDemo();
+    const member = demoMembers.find((entry) => entry.id === "user-alice");
+
+    if (!member) {
+      throw new Error("Demo member user-alice is missing.");
+    }
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage("om_file_401", "2026-04-10T08:00:00.000Z", "只有材料，没有过程。")
+    );
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage("om_file_402", "2026-04-11T08:00:00.000Z", "只有材料，没有结果。")
+    );
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      {
+        ...buildFileMessage("om_file_403", "2026-04-12T08:00:00.000Z", lowerValidDocumentText),
+        documentParseStatus: "failed",
+        documentParseReason: "parse failed"
+      }
+    );
+
+    const sessionResult = repository.getSessionResult("camp-demo", "user-alice", "session-01");
+    expect(sessionResult).toMatchObject({
+      chosenAttemptId: "session-01:user-alice:om_file_403",
+      finalStatus: "pending_review",
+      totalScore: 0,
+      latestSubmittedAt: "2026-04-12T08:00:00.000Z"
+    });
+  });
+
   it("chooses the latest valid attempt when valid attempts have the same score", async () => {
     repository = new SqliteRepository(":memory:");
     repository.seedDemo();
