@@ -7,7 +7,7 @@ The official user-facing path is:
 - Ranking and ops views in Feishu Base
 - Bot announcements and mirrored snapshots in Feishu
 
-The standalone web board and `/operator` routes are engineering surfaces only.
+The standalone web UI and `/operator` routes remain engineering surfaces and are not the phase-one sign-off target.
 
 ## What To Configure
 
