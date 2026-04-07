@@ -15,7 +15,17 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
-    "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts"
+    "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts",
+    "ops:bootstrap": "bash scripts/ops/bootstrap-server.sh",
+    "ops:deploy": "bash scripts/ops/deploy-app.sh",
+    "ops:check": "bash scripts/ops/check-health.sh",
+    "ops:backup": "bash scripts/ops/backup-db.sh",
+    "ops:windows:init": "powershell -ExecutionPolicy Bypass -File scripts/ops/windows-init.ps1",
+    "ops:windows:deploy": "powershell -ExecutionPolicy Bypass -File scripts/ops/windows-deploy.ps1",
+    "ops:windows:check": "powershell -ExecutionPolicy Bypass -File scripts/ops/windows-check.ps1",
+    "ops:mac:init": "bash scripts/ops/mac-init.command",
+    "ops:mac:deploy": "bash scripts/ops/mac-deploy.command",
+    "ops:mac:check": "bash scripts/ops/mac-check.command"
   },
   "dependencies": {
     "@fastify/cors": "^11.1.0",
