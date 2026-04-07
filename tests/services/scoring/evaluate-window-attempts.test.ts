@@ -38,6 +38,25 @@ function buildFileMessage(
   };
 }
 
+function buildTextMessage(messageId: string, eventTime: string, rawText: string): NormalizedFeishuMessage {
+  return {
+    messageId,
+    memberId: "user-alice",
+    chatId: "chat-demo",
+    chatType: "group",
+    senderType: "user",
+    messageType: "text",
+    eventTime,
+    rawText,
+    parsedTags: ["#HW01", "#\u4f5c\u4e1a\u63d0\u4ea4"],
+    attachmentCount: 0,
+    attachmentTypes: [],
+    documentText: "",
+    documentParseStatus: "not_applicable",
+    eventUrl: `feishu://message/${messageId}`
+  };
+}
+
 describe("evaluateMessageWindow document attempts", () => {
   let repository: SqliteRepository | undefined;
 
@@ -128,7 +147,7 @@ describe("evaluateMessageWindow document attempts", () => {
     });
   });
 
-  it("keeps the latest pending review attempt when no valid attempt exists", async () => {
+  it("keeps pending review when a later text follow-up is merged into a parse-failed attempt", async () => {
     repository = new SqliteRepository(":memory:");
     repository.seedDemo();
     const member = demoMembers.find((entry) => entry.id === "user-alice");
@@ -159,12 +178,32 @@ describe("evaluateMessageWindow document attempts", () => {
       }
     );
 
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildTextMessage(
+        "om_text_403_followup",
+        "2026-04-12T08:05:00.000Z",
+        "\u8fd9\u662f\u6211\u7684\u8fc7\u7a0b\u8bf4\u660e\uff0c\u6700\u7ec8\u7ed3\u679c\u662f\u5df2\u7ecf\u63d0\u4ea4\u6210\u529f\u3002"
+      )
+    );
+
     const sessionResult = repository.getSessionResult("camp-demo", "user-alice", "session-01");
     expect(sessionResult).toMatchObject({
       chosenAttemptId: "session-01:user-alice:om_file_403",
       finalStatus: "pending_review",
       totalScore: 0,
       latestSubmittedAt: "2026-04-12T08:00:00.000Z"
+    });
+
+    expect(repository.getAttempt("session-01:user-alice:om_file_403")).toMatchObject({
+      combinedText: expect.stringContaining("\u8fd9\u662f\u6211\u7684\u8fc7\u7a0b\u8bf4\u660e"),
+      latestEventTime: "2026-04-12T08:05:00.000Z"
+    });
+
+    expect(repository.getScore("session-01:user-alice:om_file_403")).toMatchObject({
+      finalStatus: "pending_review",
+      llmReason: "\u6587\u6863\u89e3\u6790\u5931\u8d25\uff0c\u5df2\u8f6c\u5165\u4eba\u5de5\u590d\u6838"
     });
   });
 
@@ -203,6 +242,45 @@ describe("evaluateMessageWindow document attempts", () => {
       finalStatus: "valid",
       totalScore: 8,
       latestSubmittedAt: "2026-04-11T08:00:00.000Z"
+    });
+  });
+
+  it("keeps a valid attempt valid when a later text follow-up arrives", async () => {
+    repository = new SqliteRepository(":memory:");
+    repository.seedDemo();
+    const member = demoMembers.find((entry) => entry.id === "user-alice");
+
+    if (!member) {
+      throw new Error("Demo member user-alice is missing.");
+    }
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage("om_file_501", "2026-04-10T08:00:00.000Z", higherValidDocumentText)
+    );
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildTextMessage(
+        "om_text_501_followup",
+        "2026-04-12T08:05:00.000Z",
+        "\u8fd9\u662f\u6211\u8865\u5145\u7684\u8fc7\u7a0b\u8bf4\u660e\uff0c\u540e\u7eed\u8fd8\u4f1a\u5171\u4eab\u66f4\u591a\u8ba8\u8bba\u8fc7\u7a0b\u3002"
+      )
+    );
+
+    const sessionResult = repository.getSessionResult("camp-demo", "user-alice", "session-01");
+    expect(sessionResult).toMatchObject({
+      chosenAttemptId: "session-01:user-alice:om_file_501",
+      finalStatus: "valid",
+      totalScore: 10,
+      latestSubmittedAt: "2026-04-10T08:00:00.000Z"
+    });
+
+    expect(repository.getAttempt("session-01:user-alice:om_file_501")).toMatchObject({
+      combinedText: expect.stringContaining("\u8fd9\u662f\u6211\u8865\u5145\u7684\u8fc7\u7a0b\u8bf4\u660e"),
+      latestEventTime: "2026-04-12T08:05:00.000Z"
     });
   });
 });

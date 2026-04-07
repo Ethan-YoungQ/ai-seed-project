@@ -210,6 +210,7 @@ export class SqliteRepository {
     this.db = new Database(databaseUrl);
     this.db.exec(tableDefinitions);
     this.ensureCompatibility();
+    this.backfillSessionResults();
   }
 
   private ensureCompatibility() {
@@ -241,6 +242,20 @@ export class SqliteRepository {
       "document_parse_status",
       "TEXT NOT NULL DEFAULT 'not_applicable'"
     );
+  }
+
+  private backfillSessionResults() {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT camp_id, member_id, session_id
+         FROM scores
+         WHERE session_id IS NOT NULL`
+      )
+      .all() as Array<{ camp_id: string; member_id: string; session_id: string }>;
+
+    for (const row of rows) {
+      this.recomputeSessionResult(row.camp_id, row.member_id, row.session_id);
+    }
   }
 
   close() {

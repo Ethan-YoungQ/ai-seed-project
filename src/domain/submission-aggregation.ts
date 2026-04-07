@@ -14,6 +14,22 @@ function buildAttemptId(sessionId: string, memberId: string, messageId: string) 
   return `${sessionId}:${memberId}:${messageId}`;
 }
 
+function appendAttemptMessage(attempt: SubmissionAttempt, event: RawMessageEvent) {
+  const text = event.rawText.trim();
+
+  if (text) {
+    attempt.combinedText = attempt.combinedText ? `${attempt.combinedText}\n\n${text}` : text;
+  }
+
+  attempt.eventIds = [...attempt.eventIds, event.id];
+  if (event.eventTime.localeCompare(attempt.firstEventTime) < 0) {
+    attempt.firstEventTime = event.eventTime;
+  }
+  if (event.eventTime.localeCompare(attempt.latestEventTime) > 0) {
+    attempt.latestEventTime = event.eventTime;
+  }
+}
+
 function buildDocumentAttempt(
   member: MemberProfile,
   session: SessionDefinition,
@@ -46,6 +62,28 @@ export function aggregateSubmissionWindow(input: AggregateInput): SubmissionAtte
     left.eventTime.localeCompare(right.eventTime)
   );
 
-  const documentEvents = sortedEvents.filter(isDocumentAttempt);
-  return documentEvents.map((event) => buildDocumentAttempt(input.member, input.session, event));
+  const attempts: SubmissionAttempt[] = [];
+  let pendingMessages: RawMessageEvent[] = [];
+
+  for (const event of sortedEvents) {
+    if (isDocumentAttempt(event)) {
+      const attempt = buildDocumentAttempt(input.member, input.session, event);
+      for (const pendingMessage of pendingMessages) {
+        appendAttemptMessage(attempt, pendingMessage);
+      }
+      pendingMessages = [];
+      attempts.push(attempt);
+      continue;
+    }
+
+    const currentAttempt = attempts.at(-1);
+    if (currentAttempt) {
+      appendAttemptMessage(currentAttempt, event);
+      continue;
+    }
+
+    pendingMessages.push(event);
+  }
+
+  return attempts;
 }

@@ -9,7 +9,7 @@ function isEligibleDocument(event: NormalizedFeishuMessage) {
   return event.messageType === "file" && (event.fileExt === "pdf" || event.fileExt === "docx");
 }
 
-const parseFailureReason = "鏂囨。瑙ｆ瀽澶辫触锛岄渶瑕佷汉宸ュ鏍稿悗鍐嶈瘎鍒嗐€?";
+const parseFailureReason = "文档解析失败，已转入人工复核";
 
 export async function evaluateMessageWindow(
   repository: SqliteRepository,
@@ -89,7 +89,9 @@ export async function evaluateMessageWindow(
     session,
     events
   });
-  const attempt = attempts.find((entry) => entry.messageId === event.messageId) ?? attempts.at(-1);
+  const attempt = isEligibleDocument(event)
+    ? attempts.find((entry) => entry.messageId === event.messageId)
+    : attempts.at(-1);
 
   if (!attempt) {
     return {
@@ -99,6 +101,15 @@ export async function evaluateMessageWindow(
   }
 
   repository.saveAttempt(attempt);
+
+  if (!isEligibleDocument(event)) {
+    return {
+      accepted: false,
+      reason: "ignored_non_document_message",
+      sessionId: session.id,
+      candidateId: attempt.id
+    };
+  }
 
   if (event.messageType === "file" && event.documentParseStatus === "failed") {
     const pendingReview = buildPendingReviewScore(

@@ -123,4 +123,55 @@ describe("aggregateSubmissionWindow", () => {
       fileKey: "file_2"
     });
   });
+
+  it("folds related text follow-ups into the nearest document attempt", () => {
+    const events: RawMessageEvent[] = [
+      {
+        id: "evt-doc-1",
+        chatId: "chat-demo",
+        memberId: "member-01",
+        sessionId: "session-01",
+        messageId: "om_file_1",
+        messageType: "file",
+        eventTime: "2026-04-10T08:00:00.000Z",
+        rawText: "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4 \u6211\u5148\u4e0a\u4f20\u6587\u4ef6\u3002",
+        parsedTags: ["#HW01", "#\u4f5c\u4e1a\u63d0\u4ea4"],
+        attachmentCount: 1,
+        attachmentTypes: ["file"],
+        fileKey: "file_1",
+        fileName: "homework-1.pdf",
+        fileExt: "pdf",
+        mimeType: "application/pdf",
+        documentText: "\u63d0\u793a\u8bcd\u3001\u7ed3\u679c\u3001\u603b\u7ed3",
+        documentParseStatus: "parsed",
+        eventUrl: "https://example.com/doc-1"
+      },
+      {
+        id: "evt-text-1",
+        chatId: "chat-demo",
+        memberId: "member-01",
+        sessionId: "session-01",
+        messageId: "om_text_1",
+        messageType: "text",
+        eventTime: "2026-04-10T08:05:00.000Z",
+        rawText: "\u8fd9\u662f\u6211\u8865\u5145\u7684\u8fc7\u7a0b\u8bf4\u660e\uff0c\u6700\u7ec8\u7ed3\u679c\u662f\u901a\u8fc7\u7ed3\u6784\u5316\u603b\u7ed3\u51fa\u6765\u7684\u3002",
+        parsedTags: ["#HW01"],
+        attachmentCount: 0,
+        attachmentTypes: [],
+        eventUrl: "https://example.com/text-1"
+      }
+    ];
+
+    const attempts = aggregateSubmissionWindow({ member, session, events });
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      id: "session-01:member-01:om_file_1",
+      messageId: "om_file_1",
+      latestEventTime: "2026-04-10T08:05:00.000Z"
+    });
+    expect(attempts[0].combinedText).toContain("\u6211\u5148\u4e0a\u4f20\u6587\u4ef6");
+    expect(attempts[0].combinedText).toContain("\u8fd9\u662f\u6211\u8865\u5145\u7684\u8fc7\u7a0b\u8bf4\u660e");
+    expect(attempts[0].eventIds).toEqual(["evt-doc-1", "evt-text-1"]);
+  });
 });
