@@ -247,9 +247,6 @@ describe("phase-2 and phase-3 API", () => {
   });
 
   it("escalates warning levels to elimination after three invalid submissions", async () => {
-    const invalidText =
-      "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4 \u6211\u662f\u5148\u5c1d\u8bd5\u4e86\u4e00\u4e0b\u63d0\u793a\u8bcd\u3002";
-
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
@@ -279,9 +276,6 @@ describe("phase-2 and phase-3 API", () => {
   });
 
   it("lets operators override a candidate and restores the member to the public board", async () => {
-    const invalidText =
-      "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4 \u6211\u662f\u5148\u5c1d\u8bd5\u4e86\u4e00\u4e0b\u63d0\u793a\u8bcd\u3002";
-
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
@@ -474,8 +468,8 @@ describe("phase-2 and phase-3 API", () => {
     });
 
     expect(summaryResponse.statusCode).toBe(200);
-    expect(summaryResponse.json().text).toContain("提交汇总");
-    expect(summaryResponse.json().text).not.toContain("运营后台");
+    expect(summaryResponse.json().text).toContain("\u63d0\u4ea4\u6c47\u603b");
+    expect(summaryResponse.json().text).not.toContain("\u8fd0\u8425\u540e\u53f0");
 
     const runResponse = await app.inject({
       method: "POST",
@@ -580,10 +574,90 @@ describe("phase-2 and phase-3 API", () => {
       warnings: true,
       snapshots: true
     });
+    expect(response.json().phaseOne).toMatchObject({
+      homeTemplates: {
+        learner: "docs/feishu/learner-homepage-copy.md",
+        operator: "docs/feishu/operator-homepage-copy.md"
+      },
+      entryContract: {
+        learnerHomeUrl: null,
+        operatorHomeUrl: null,
+        leaderboardUrl: null
+      },
+      linksConfigured: {
+        learnerHomeUrl: false,
+        operatorHomeUrl: false,
+        leaderboardUrl: false
+      }
+    });
     expect(response.json().lastInboundEventAt).toBeNull();
     expect(response.json().lastInboundReason).toBeNull();
     expect(response.json().groupMessageReadProbe).toMatchObject({
       ok: true
+    });
+  });
+
+  it("updates the public board display name from the synced Feishu member profile", async () => {
+    await app.close();
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      feishuConfigOverride: disabledFeishuConfig,
+      documentTextExtractor: {
+        async extract() {
+          return {
+            text: validHomeworkText,
+            status: "parsed"
+          };
+        }
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        getMemberProfile: async () => ({
+          userId: "user-alice",
+          displayName: "Alice Chen",
+          avatarUrl: "https://cdn.example.com/avatar/alice.png"
+        }),
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" }),
+        getMessageFile: async () => ({
+          fileKey: "file_om_profile_001",
+          fileName: "final report.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("fake-pdf")
+        })
+      }
+    });
+    await app.ready();
+    await app.inject({
+      method: "POST",
+      url: "/api/demo/seed",
+      payload: {}
+    });
+
+    await app.inject({
+      method: "POST",
+      url: "/api/feishu/events",
+      payload: buildFileEvent("om_profile_001", "user-alice", "1775210400000", "final report.pdf")
+    });
+
+    const boardResponse = await app.inject({
+      method: "GET",
+      url: "/api/public-board?campId=camp-demo"
+    });
+
+    expect(boardResponse.statusCode).toBe(200);
+    expect(boardResponse.json().entries[0]).toMatchObject({
+      memberId: "user-alice",
+      memberName: "Alice Chen"
     });
   });
 
@@ -729,7 +803,7 @@ describe("phase-2 and phase-3 API", () => {
       documentTextExtractor: {
         async extract() {
           return {
-            text: "我是先写了提示词，再根据输出做了两轮迭代。最终我产出了一份结构化总结，也学会了怎么拆解问题。",
+            text: validHomeworkText,
             status: "parsed"
           };
         }

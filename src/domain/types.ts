@@ -42,6 +42,8 @@ export interface MemberProfile {
   id: string;
   campId: string;
   name: string;
+  displayName?: string;
+  avatarUrl?: string;
   department: string;
   roleType: RoleType;
   isParticipant: boolean;

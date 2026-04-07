@@ -66,7 +66,25 @@ describe("FeishuBootstrapService", () => {
       warnings: "tbl_warnings",
       snapshots: "tbl_snapshots"
     });
+    expect(result.phaseOne).toMatchObject({
+      homeTemplates: {
+        learner: "docs/feishu/learner-homepage-copy.md",
+        operator: "docs/feishu/operator-homepage-copy.md"
+      },
+      entryContract: {
+        learnerHomeUrl: "",
+        operatorHomeUrl: "",
+        leaderboardUrl: ""
+      }
+    });
     expect(result.env.FEISHU_BOT_CHAT_ID).toBe("chat-test-001");
+    expect(result.env).toMatchObject({
+      FEISHU_LEARNER_HOME_URL: "",
+      FEISHU_OPERATOR_HOME_URL: "",
+      FEISHU_LEADERBOARD_URL: "",
+      FEISHU_LEARNER_HOME_DOC_TOKEN: "",
+      FEISHU_OPERATOR_HOME_DOC_TOKEN: ""
+    });
     expect(repository.getCamp("camp-demo")).toMatchObject({
       groupId: "chat-test-001"
     });

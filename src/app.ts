@@ -77,6 +77,10 @@ export async function createApp(options?: {
   const feishuConfig = withResolvedFeishuConfig({
     ...baseConfig,
     ...options?.feishuConfigOverride,
+    phaseOne: {
+      ...baseConfig.phaseOne,
+      ...options?.feishuConfigOverride?.phaseOne
+    },
     base: {
       ...baseConfig.base,
       ...options?.feishuConfigOverride?.base,
@@ -91,7 +95,7 @@ export async function createApp(options?: {
   const baseSync =
     options?.baseSyncService ??
     (feishuApiClient
-      ? new FeishuBaseSyncService(feishuConfig.base, feishuApiClient)
+      ? new FeishuBaseSyncService(feishuConfig.base, feishuApiClient, repository)
       : new NoopBaseSyncService());
   const feishuMessenger =
     options?.feishuMessenger ??
@@ -289,6 +293,11 @@ export async function createApp(options?: {
     const baseTablesConfigured = Object.fromEntries(
       Object.entries(feishuConfig.base.tables).map(([key, value]) => [key, Boolean(value)])
     );
+    const phaseOneLinks = {
+      learnerHomeUrl: feishuConfig.phaseOne?.learnerHomeUrl ?? null,
+      operatorHomeUrl: feishuConfig.phaseOne?.operatorHomeUrl ?? null,
+      leaderboardUrl: feishuConfig.phaseOne?.leaderboardUrl ?? null
+    };
     const baseReady =
       feishuConfig.base.enabled &&
       Boolean(feishuConfig.base.appToken) &&
@@ -335,6 +344,18 @@ export async function createApp(options?: {
       baseTablesConfigured,
       baseReady,
       baseTables: feishuConfig.base.tables,
+      phaseOne: {
+        homeTemplates: {
+          learner: "docs/feishu/learner-homepage-copy.md",
+          operator: "docs/feishu/operator-homepage-copy.md"
+        },
+        entryContract: phaseOneLinks,
+        linksConfigured: {
+          learnerHomeUrl: Boolean(phaseOneLinks.learnerHomeUrl),
+          operatorHomeUrl: Boolean(phaseOneLinks.operatorHomeUrl),
+          leaderboardUrl: Boolean(phaseOneLinks.leaderboardUrl)
+        }
+      },
       groupMessageReadAccess: groupMessageReadProbe?.ok ?? null,
       groupMessageReadProbe,
       lastInboundEventAt: inboundDiagnostics.lastInboundEventAt,

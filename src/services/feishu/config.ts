@@ -9,6 +9,12 @@ export interface FeishuBaseTablesConfig {
   snapshots?: string;
 }
 
+export interface FeishuPhaseOneConfig {
+  learnerHomeUrl?: string;
+  operatorHomeUrl?: string;
+  leaderboardUrl?: string;
+}
+
 export interface FeishuConfig {
   enabled: boolean;
   appId?: string;
@@ -18,6 +24,7 @@ export interface FeishuConfig {
   eventMode: FeishuEventMode;
   botChatId?: string;
   botReceiveIdType: FeishuReceiveIdType;
+  phaseOne: FeishuPhaseOneConfig;
   base: {
     enabled: boolean;
     appToken?: string;
@@ -62,6 +69,11 @@ export function readFeishuConfig(env: NodeJS.ProcessEnv = process.env): FeishuCo
     eventMode: readEventMode(env.FEISHU_EVENT_MODE),
     botChatId: env.FEISHU_BOT_CHAT_ID?.trim() || undefined,
     botReceiveIdType: readReceiveIdType(env.FEISHU_BOT_RECEIVE_ID_TYPE),
+    phaseOne: {
+      learnerHomeUrl: env.FEISHU_LEARNER_HOME_URL?.trim() || undefined,
+      operatorHomeUrl: env.FEISHU_OPERATOR_HOME_URL?.trim() || undefined,
+      leaderboardUrl: env.FEISHU_LEADERBOARD_URL?.trim() || undefined
+    },
     base: {
       enabled: readBoolean(env.FEISHU_BASE_ENABLED, false),
       appToken: env.FEISHU_BASE_APP_TOKEN?.trim() || undefined,
@@ -83,6 +95,17 @@ export function isFeishuReady(config: FeishuConfig) {
 export function withResolvedFeishuConfig(config: Omit<FeishuConfig, "enabled"> & { enabled?: boolean }): FeishuConfig {
   return {
     ...config,
+    phaseOne: {
+      learnerHomeUrl: config.phaseOne?.learnerHomeUrl,
+      operatorHomeUrl: config.phaseOne?.operatorHomeUrl,
+      leaderboardUrl: config.phaseOne?.leaderboardUrl
+    },
+    base: {
+      ...config.base,
+      tables: {
+        ...config.base.tables
+      }
+    },
     enabled: Boolean(config.appId && config.appSecret)
   };
 }

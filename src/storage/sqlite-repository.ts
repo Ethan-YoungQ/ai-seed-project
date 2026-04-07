@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS members (
   id TEXT PRIMARY KEY,
   camp_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT NOT NULL DEFAULT '',
   department TEXT NOT NULL,
   role_type TEXT NOT NULL,
   is_participant INTEGER NOT NULL DEFAULT 1,
@@ -232,6 +234,8 @@ export class SqliteRepository {
     ensureColumn(this.db, "raw_events", "document_text", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "raw_events", "document_parse_status", "TEXT NOT NULL DEFAULT 'not_applicable'");
     ensureColumn(this.db, "raw_events", "document_parse_reason", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "members", "display_name", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "members", "avatar_url", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "submission_candidates", "event_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "submission_candidates", "message_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "submission_candidates", "file_key", "TEXT NOT NULL DEFAULT ''");
@@ -366,6 +370,8 @@ export class SqliteRepository {
       id: String(row.id),
       campId: String(row.camp_id),
       name: String(row.name),
+      displayName: String(row.display_name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
       department: String(row.department),
       roleType: row.role_type as MemberProfile["roleType"],
       isParticipant: asBoolean(Number(row.is_participant)),
@@ -389,6 +395,8 @@ export class SqliteRepository {
       id: memberId,
       campId,
       name: memberId,
+      displayName: "",
+      avatarUrl: "",
       department: "Unknown",
       roleType: "observer",
       isParticipant: false,
@@ -399,8 +407,8 @@ export class SqliteRepository {
     this.db
       .prepare(
         `INSERT INTO members
-        (id, camp_id, name, department, role_type, is_participant, is_excluded_from_board, status)
-        VALUES (@id, @campId, @name, @department, @roleType, @isParticipant, @isExcludedFromBoard, @status)`
+        (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
+        VALUES (@id, @campId, @name, @displayName, @avatarUrl, @department, @roleType, @isParticipant, @isExcludedFromBoard, @status)`
       )
       .run({
         ...fallback,
@@ -413,7 +421,9 @@ export class SqliteRepository {
 
   updateMember(
     memberId: string,
-    patch: Partial<Pick<MemberProfile, "isParticipant" | "isExcludedFromBoard" | "roleType">>
+    patch: Partial<
+      Pick<MemberProfile, "isParticipant" | "isExcludedFromBoard" | "roleType" | "displayName" | "avatarUrl">
+    >
   ) {
     const current = this.getMember(memberId);
     if (!current) {
@@ -425,20 +435,24 @@ export class SqliteRepository {
       ...patch
     };
 
-    this.db
-      .prepare(
-        `UPDATE members
-        SET role_type = @roleType,
-            is_participant = @isParticipant,
-            is_excluded_from_board = @isExcludedFromBoard
-        WHERE id = @id`
-      )
-      .run({
-        id: memberId,
-        roleType: next.roleType,
-        isParticipant: next.isParticipant ? 1 : 0,
-        isExcludedFromBoard: next.isExcludedFromBoard ? 1 : 0
-      });
+      this.db
+        .prepare(
+          `UPDATE members
+          SET role_type = @roleType,
+              display_name = @displayName,
+              avatar_url = @avatarUrl,
+              is_participant = @isParticipant,
+              is_excluded_from_board = @isExcludedFromBoard
+          WHERE id = @id`
+        )
+        .run({
+          id: memberId,
+          roleType: next.roleType,
+          displayName: next.displayName ?? "",
+          avatarUrl: next.avatarUrl ?? "",
+          isParticipant: next.isParticipant ? 1 : 0,
+          isExcludedFromBoard: next.isExcludedFromBoard ? 1 : 0
+        });
 
     this.recordAudit({
       id: `audit:member:${memberId}:${Date.now()}`,
@@ -463,6 +477,8 @@ export class SqliteRepository {
       id: String(row.id),
       campId: String(row.camp_id),
       name: String(row.name),
+      displayName: String(row.display_name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
       department: String(row.department),
       roleType: row.role_type as MemberProfile["roleType"],
       isParticipant: asBoolean(Number(row.is_participant)),

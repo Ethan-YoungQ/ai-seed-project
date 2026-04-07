@@ -57,6 +57,17 @@ export interface FeishuBaseTableCreateInput {
   fields?: Array<{ fieldName: string; type: number }>;
 }
 
+export interface FeishuMemberProfileInput {
+  userId: string;
+  userIdType?: "open_id" | "user_id" | "union_id";
+}
+
+export interface FeishuMemberProfile {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string;
+}
+
 export interface FeishuApiClient {
   validateCredentials(): Promise<{ tenantKey?: string }>;
   sendTextMessage(input: FeishuMessageSendInput): Promise<{ messageId?: string }>;
@@ -74,6 +85,7 @@ export interface FeishuApiClient {
     mimeType?: string;
     bytes: Buffer;
   }>;
+  getMemberProfile?(input: FeishuMemberProfileInput): Promise<FeishuMemberProfile>;
   createBaseRecord(input: FeishuBaseRecordInput): Promise<{ recordId?: string }>;
   searchBaseRecords(input: FeishuBaseRecordSearchInput): Promise<Array<{ recordId: string; fields?: Record<string, unknown> }>>;
   updateBaseRecord(input: FeishuBaseRecordUpdateInput): Promise<{ recordId?: string }>;
@@ -176,6 +188,25 @@ export class LarkFeishuApiClient implements FeishuApiClient {
             : undefined
       };
     }
+  }
+
+  async getMemberProfile(input: FeishuMemberProfileInput) {
+    const response = await this.client.contact.user.get({
+      path: {
+        user_id: input.userId
+      },
+      params: {
+        user_id_type: input.userIdType ?? "open_id"
+      }
+    });
+
+    const user = response?.data?.user;
+    const avatar = user?.avatar;
+    return {
+      userId: String(user?.open_id ?? user?.user_id ?? input.userId),
+      displayName: String(user?.nickname ?? user?.name ?? input.userId),
+      avatarUrl: avatar?.avatar_240 ?? avatar?.avatar_origin ?? undefined
+    };
   }
 
   async getMessageFile(input: FeishuMessageFileInput) {

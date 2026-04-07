@@ -5,6 +5,7 @@ import type {
   ScoringResult,
   WarningRecord
 } from "../../domain/types";
+import type { SqliteRepository } from "../../storage/sqlite-repository";
 import type { FeishuApiClient } from "./client";
 import type { FeishuBaseTablesConfig } from "./config";
 
@@ -41,15 +42,10 @@ export interface BaseSyncService {
 
 export class NoopBaseSyncService implements BaseSyncService {
   async syncMember() {}
-
   async syncRawEvent() {}
-
   async syncScore() {}
-
   async syncReview() {}
-
   async syncWarning() {}
-
   async syncSnapshot() {}
 }
 
@@ -60,7 +56,8 @@ export class FeishuBaseSyncService implements BaseSyncService {
       appToken?: string;
       tables: FeishuBaseTablesConfig;
     },
-    private readonly apiClient: FeishuApiClient
+    private readonly apiClient: FeishuApiClient,
+    private readonly repository?: SqliteRepository
   ) {}
 
   private async write(tableId: string | undefined, fields: Record<string, unknown>) {
@@ -105,10 +102,42 @@ export class FeishuBaseSyncService implements BaseSyncService {
     });
   }
 
+  private async resolveMemberProfile(member: MemberProfile) {
+    if (!this.apiClient.getMemberProfile) {
+      return {
+        displayName: member.displayName ?? member.name,
+        avatarUrl: member.avatarUrl
+      };
+    }
+
+    try {
+      return await this.apiClient.getMemberProfile({
+        userId: member.id,
+        userIdType: "open_id"
+      });
+    } catch {
+      return {
+        displayName: member.displayName ?? member.name,
+        avatarUrl: member.avatarUrl
+      };
+    }
+  }
+
   async syncMember(member: MemberProfile) {
+    const profile = await this.resolveMemberProfile(member);
+    const displayName = profile.displayName?.trim() || member.displayName?.trim() || member.name;
+    const avatarUrl = profile.avatarUrl ?? member.avatarUrl ?? "";
+
+    this.repository?.updateMember(member.id, {
+      displayName,
+      avatarUrl
+    });
+
     await this.write(this.config.tables.members, {
       member_id: member.id,
       camp_id: member.campId,
+      display_name: displayName,
+      avatar_url: avatarUrl,
       name: member.name,
       department: member.department,
       role_type: member.roleType,
@@ -141,7 +170,7 @@ export class FeishuBaseSyncService implements BaseSyncService {
       candidate_id: input.score.candidateId,
       camp_id: input.campId,
       member_id: input.score.memberId,
-      member_name: input.member.name,
+      member_name: input.member.displayName?.trim() || input.member.name,
       session_id: input.score.sessionId,
       final_status: input.score.finalStatus,
       base_score: input.score.baseScore,
