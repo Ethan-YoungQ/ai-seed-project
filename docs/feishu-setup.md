@@ -4,7 +4,7 @@ Phase one uses a Feishu-native delivery surface with an Aliyun always-on backend
 The official user-facing path is:
 
 - Learner entry in Feishu knowledge base / document homepage
-- Ranking and result views in Feishu Base
+- Ranking and ops views in Feishu Base
 - Bot announcements and mirrored snapshots in Feishu
 
 The standalone web board and `/operator` routes are engineering surfaces only.
