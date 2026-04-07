@@ -1,51 +1,54 @@
 # Feishu Setup
 
-This project can run in local-only mode, but a real Feishu acceptance run needs the app credentials, event subscription, bot chat binding, and Base tables from the live tenant.
+Phase one uses a Feishu-native delivery surface with an Aliyun always-on backend.
+The official user-facing path is:
 
-## Submission Path
+- Learner entry in Feishu knowledge base / document homepage
+- Ranking and result views in Feishu Base
+- Bot announcements and mirrored snapshots in Feishu
 
-- The current production path is document-first.
-- Learners submit PDF or Word documents in the Feishu group.
-- Tags are optional for document uploads.
-- The service matches untagged documents to the active biweekly session window.
+The standalone web board and `/operator` routes are engineering surfaces only.
 
 ## What To Configure
 
 1. Create a self-built Feishu app.
 2. Enable the bot capability.
 3. Subscribe to `im.message.receive_v1`.
-4. Fill in `FEISHU_APP_ID`, `FEISHU_APP_SECRET`, `FEISHU_VERIFICATION_TOKEN`, and `FEISHU_ENCRYPT_KEY` in `.env`.
-5. Set `FEISHU_EVENT_MODE=long_connection` for the live integration.
-6. Grant the app the capabilities it actually uses:
-   - message send
-   - group message list/read
-   - chat search and chat create
-   - file download for message attachments
-   - Base create, table create, and record read/write
-7. Add the bot to the real acceptance group and write that chat ID to `FEISHU_BOT_CHAT_ID`.
-8. Create the Feishu Base app and put the generated app token and table IDs into the `FEISHU_BASE_*` variables.
-
-## Environment Variables
+4. Fill in the Feishu credentials in `.env`:
+   - `FEISHU_APP_ID`
+   - `FEISHU_APP_SECRET`
+   - `FEISHU_EVENT_MODE=long_connection`
+   - `FEISHU_VERIFICATION_TOKEN`
+   - `FEISHU_ENCRYPT_KEY`
+5. Bind the bot to the live acceptance group and set:
+   - `FEISHU_BOT_CHAT_ID`
+   - `FEISHU_BOT_RECEIVE_ID_TYPE=chat_id`
+6. Create the Feishu Base app and write the token plus table IDs into:
+   - `FEISHU_BASE_APP_TOKEN`
+   - `FEISHU_BASE_MEMBERS_TABLE`
+   - `FEISHU_BASE_RAW_EVENTS_TABLE`
+   - `FEISHU_BASE_SCORES_TABLE`
+   - `FEISHU_BASE_WARNINGS_TABLE`
+   - `FEISHU_BASE_SNAPSHOTS_TABLE`
+7. Keep the provider-neutral LLM contract in place:
+   - `LLM_ENABLED=true`
+   - `LLM_PROVIDER=aliyun`
+   - `LLM_BASE_URL`
+   - `LLM_API_KEY`
+   - `LLM_TEXT_MODEL=qwen3-flash`
+   - `LLM_FILE_MODEL=qwen-doc`
+   - `LLM_TIMEOUT_MS`
+   - `LLM_MAX_INPUT_CHARS`
+   - `LLM_CONCURRENCY`
 
 Use [`.env.example`](../.env.example) as the source of truth for the current variable set.
 
-- `FEISHU_APP_ID`
-- `FEISHU_APP_SECRET`
-- `FEISHU_EVENT_MODE=long_connection`
-- `FEISHU_BOT_CHAT_ID`
-- `FEISHU_BASE_ENABLED=true`
-- `FEISHU_BASE_APP_TOKEN`
-- `FEISHU_BASE_MEMBERS_TABLE`
-- `FEISHU_BASE_RAW_EVENTS_TABLE`
-- `FEISHU_BASE_SCORES_TABLE`
-- `FEISHU_BASE_WARNINGS_TABLE`
-- `FEISHU_BASE_SNAPSHOTS_TABLE`
-
 ## Local Checks
 
-- `npm run dev` starts the API and web app together.
+- `npm run dev` starts the API and the web preview server together for engineering use.
 - `GET /api/health` confirms the API process is alive.
-- `GET /api/feishu/status` reports whether credentials, bot chat binding, long connection mode, and Base tables are ready.
+- `GET /api/feishu/status` reports whether credentials, bot chat binding, long connection mode,
+  Base tables, and inbound diagnostics are ready.
 - `POST /api/feishu/send-test` verifies the bot can send a message to the configured chat.
 - A new PDF or DOCX sent into the bound group should drive:
   - `lastNormalizedMessage.messageType=file`
@@ -56,4 +59,4 @@ Use [`.env.example`](../.env.example) as the source of truth for the current var
 
 - [Release runbook](./release-runbook.md)
 - [Smoke test checklist](./release-smoke-tests.md)
-- [Thread handoff from 2026-04-05](./feishu-thread-handoff-2026-04-05.md)
+- [Next-thread handoff](./handoffs/2026-04-06-next-thread-handoff.md)

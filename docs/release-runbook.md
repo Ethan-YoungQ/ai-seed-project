@@ -2,13 +2,17 @@
 
 ## Goal
 
-Bring the project from a fresh checkout to a real Feishu acceptance run with a live group, a live Base, and a reproducible smoke-test path.
+Bring the project from a fresh checkout to the Feishu-native phase-one release path:
+Feishu knowledge base / document homepage for learners, Feishu Base for ranking and ops,
+and an Aliyun always-on backend for scoring and sync.
 
 ## Current State
 
-- The repo supports local API and web startup.
-- The Feishu integration path is wired through long connection mode, bot message send, group message ingest, file download, document parsing, and Base sync.
-- The current production submission path is document-first: learners send PDF or DOCX files in the group, and tags are optional when there is a single active biweekly session window.
+- The backend runs locally with Fastify and SQLite.
+- Feishu inbound ingest, file download, document parsing, bot send, and Base sync are wired.
+- The phase-one official delivery surfaces are Feishu native surfaces and Base views.
+- The standalone web board and `/operator` routes are available for engineering diagnostics,
+  but they are not the formal phase-one acceptance target.
 
 ## Commands
 
@@ -23,7 +27,8 @@ Bring the project from a fresh checkout to a real Feishu acceptance run with a l
 
 ## Environment Variables
 
-Start from [`.env.example`](../.env.example) and fill in the real Feishu values before connecting the live tenant.
+Start from [`.env.example`](../.env.example) and fill in the live Feishu values before
+connecting the tenant.
 
 ### Required For Live Feishu
 
@@ -45,20 +50,19 @@ Start from [`.env.example`](../.env.example) and fill in the real Feishu values 
 - `FEISHU_BASE_WARNINGS_TABLE`
 - `FEISHU_BASE_SNAPSHOTS_TABLE`
 
-## Feishu Console Setup
+### Required For Provider-Neutral LLM Routing
 
-1. Create a self-built Feishu app and enable the bot capability.
-2. Subscribe to `im.message.receive_v1`.
-3. Grant the permissions used by the code paths in this repo:
-   - message send
-   - group message list/read
-   - chat search and chat create
-   - file download for message attachments
-   - Base create, table create, and record read/write
-4. Add the bot to the acceptance group that will be used for live testing.
-5. Create the Feishu Base app and capture the app token plus table IDs.
+- `LLM_ENABLED=true`
+- `LLM_PROVIDER=aliyun`
+- `LLM_BASE_URL`
+- `LLM_API_KEY`
+- `LLM_TEXT_MODEL=qwen3-flash`
+- `LLM_FILE_MODEL=qwen-doc`
+- `LLM_TIMEOUT_MS`
+- `LLM_MAX_INPUT_CHARS`
+- `LLM_CONCURRENCY`
 
-## Recommended Bring-Up Order
+## Bring-Up Order
 
 1. Fill `.env` from `.env.example`.
 2. Run `npm install`.
@@ -71,29 +75,27 @@ Start from [`.env.example`](../.env.example) and fill in the real Feishu values 
 
 ## Real Group Acceptance Flow
 
-1. Open the real Feishu acceptance group.
+1. Open the live Feishu acceptance group and the Feishu native entry surfaces.
 2. Send a test bot message with `POST /api/feishu/send-test`.
 3. Verify the bot message appears in the group.
-4. Send a real PDF or DOCX submission in the group. Tags are optional for the current document-first workflow.
+4. Send a real PDF or DOCX submission in the group. Tags are optional in phase one.
 5. Check `GET /api/feishu/status` and confirm:
    - `lastInboundEventAt` updates
    - `lastNormalizedMessage.messageType=file`
    - `lastNormalizedMessage.documentParseStatus=parsed`
    - `lastNormalizedMessage.documentTextLength > 0`
-6. Check `GET /api/operator/submissions?campId=<camp-id>` and confirm the candidate is scored.
-7. Check `GET /api/public-board?campId=<camp-id>` and confirm the score is visible for members who are participants and not excluded from the board.
-8. Trigger an announcement with `POST /api/announcements/run`.
-9. Confirm the announcement job is recorded and the bot posts the summary into the group.
-10. Confirm the new raw event and score are mirrored into Feishu Base.
+6. Check the Feishu Base raw-events and scores tables and confirm the document submission is mirrored.
+7. Trigger an announcement with `POST /api/announcements/run`.
+8. Confirm the announcement job is recorded and the bot posts the summary into the group.
 
 ## Failure Entry Points
 
+- `GET /api/health`
 - `GET /api/feishu/status`
-- `GET /api/operator/submissions`
-- `GET /api/public-board`
 - `src/app.ts`
 - `src/services/feishu/client.ts`
 - `src/services/documents/extract-text.ts`
+- `src/services/feishu/base-sync.ts`
 
 ## Exit Criteria
 
@@ -101,7 +103,8 @@ The release is ready for sign-off when:
 
 - `npm run build` passes.
 - `npm test` passes.
-- `GET /api/feishu/status` shows valid credentials, long connection mode, bot chat binding, and Base readiness.
+- `GET /api/feishu/status` shows valid credentials, long connection mode, bot chat binding,
+  and Base readiness.
 - A live Feishu bot test message succeeds.
 - A live PDF or DOCX submission in the real group is parsed, scored, and persisted.
 - Base mirrors the raw event and score for that live document submission.
