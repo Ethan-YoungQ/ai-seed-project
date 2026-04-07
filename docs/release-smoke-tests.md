@@ -19,7 +19,7 @@ Use this checklist after each release or Feishu configuration change.
 | 4 | Send a real PDF or DOCX submission in the group | The inbound event is accepted, parsed, scored, and written to SQLite. |
 | 5 | Re-check `GET /api/feishu/status` | `lastInboundEventAt` updates and `lastNormalizedMessage.documentParseStatus=parsed`. |
 | 6 | Check the Feishu Base raw-events and scores tables | The new document submission is mirrored into Base. |
-| 7 | Open the manually configured learner/operator Feishu homepage docs or Base entry links | Confirm the links are reachable and point at the live release data. This is a manual check; the current runtime does not provision these entries. |
+| 7 | Open the configured learner/operator Feishu knowledge-base or document homepage links and Base entry links | Confirm the links are reachable and point at the live release data. This is a manual check; the standalone web UI is not part of the phase-one sign-off target. |
 | 8 | `POST /api/announcements/run` | The announcement job is recorded, and the bot posts the summary. |
 | 9 | After the real domestic-model API key is configured, send one normal PDF, one normal DOCX, and one parse-failure document | Normal documents score through `qwen3-flash`; parse fallback routes through `qwen-doc`; attempts and final session results land in SQLite and Base. |
 

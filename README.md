@@ -5,13 +5,13 @@ Production-oriented MVP for the Feishu-native phase-one delivery flow.
 ## Scope
 
 - Learner entry in Feishu knowledge base / document homepage
-- Ranking and results in Feishu Base dashboards and views
+- Ranking and ops views in Feishu Base dashboards and views
 - Ops and admin workflows in Feishu Base views plus mirrored diagnostics
-- Aliyun lightweight application server for the always-on backend
+- Aliyun always-on backend as the only always-on runtime
 - Bot announcements and Feishu Base snapshots for operational visibility
 
 Phase one is formally delivered as **Feishu native delivery surface + Aliyun always-on backend**.
-The standalone web board and `/operator` routes remain engineering surfaces and are not the
+The standalone web UI and `/operator` routes remain engineering surfaces and are not the
 phase-one sign-off target.
 
 ## Submission Model

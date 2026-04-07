@@ -32,11 +32,14 @@ The standalone web board and `/operator` routes are engineering surfaces only.
    - `FEISHU_BASE_SNAPSHOTS_TABLE`
 7. Reserve the phase-one learner and operator homepage entry placeholders for later Feishu homepage rollout:
    - `FEISHU_LEARNER_HOME_DOC_TOKEN`
-   - `FEISHU_LEARNER_HOME_DOC_URL`
+   - `FEISHU_LEARNER_HOME_URL`
    - `FEISHU_OPERATOR_HOME_DOC_TOKEN`
-   - `FEISHU_OPERATOR_HOME_DOC_URL`
-   These are documentation/configuration placeholders for the later homepage rollout and are not
-   consumed by `readFeishuConfig()` today.
+   - `FEISHU_OPERATOR_HOME_URL`
+   - `FEISHU_LEADERBOARD_URL`
+   These links are consumed by `readFeishuConfig()` and surface in `/api/feishu/status`.
+   For backward compatibility, the runtime still accepts the legacy
+   `FEISHU_LEARNER_HOME_DOC_URL` and `FEISHU_OPERATOR_HOME_DOC_URL` keys, but new environments
+   should use the `*_HOME_URL` names shown above.
 8. Set the provider-neutral LLM contract in `.env`:
    - `LLM_ENABLED=true`
    - `LLM_PROVIDER=aliyun`

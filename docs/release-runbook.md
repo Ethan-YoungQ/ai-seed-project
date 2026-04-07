@@ -53,12 +53,14 @@ connecting the tenant.
 ### Reserved For Feishu Native Entry Surfaces
 
 - `FEISHU_LEARNER_HOME_DOC_TOKEN`
-- `FEISHU_LEARNER_HOME_DOC_URL`
+- `FEISHU_LEARNER_HOME_URL`
 - `FEISHU_OPERATOR_HOME_DOC_TOKEN`
-- `FEISHU_OPERATOR_HOME_DOC_URL`
-- These are placeholders for the later Feishu homepage rollout and are not consumed by
-  `readFeishuConfig()` today. They record the manual homepage rollout inputs, not an automated
-  runtime integration.
+- `FEISHU_OPERATOR_HOME_URL`
+- `FEISHU_LEADERBOARD_URL`
+- These links are consumed by `readFeishuConfig()` and appear in `GET /api/feishu/status`.
+- The runtime still accepts the legacy `FEISHU_LEARNER_HOME_DOC_URL` and
+  `FEISHU_OPERATOR_HOME_DOC_URL` keys for backward compatibility, but new releases should only
+  publish the `*_HOME_URL` names above.
 
 ### Reserved For Provider-Neutral LLM Routing
 
