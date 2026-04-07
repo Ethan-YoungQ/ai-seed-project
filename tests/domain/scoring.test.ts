@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { buildBoardRanking } from "../../src/domain/ranking";
 import { scoreSubmissionCandidate } from "../../src/domain/scoring";
@@ -75,7 +75,7 @@ describe("scoreSubmissionCandidate", () => {
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
       apiKey: "sk-demo",
       textModel: "qwen3-flash",
-      fileModel: "qwen-doc-turbo",
+      fileModel: "qwen-doc",
       timeoutMs: 15000,
       maxInputChars: 6000,
       concurrency: 3
@@ -98,6 +98,34 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.totalScore).toBe(10);
     expect(result.llmModel).toBe("qwen3-flash");
     expect(result.llmReason).toBe("Scored by qwen.");
+  });
+
+  it("falls back to heuristic scoring when the llm scorer fails", async () => {
+    const llmConfig: LlmProviderConfig = {
+      enabled: true,
+      provider: "aliyun",
+      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      apiKey: "sk-demo",
+      textModel: "qwen3-flash",
+      fileModel: "qwen-doc",
+      timeoutMs: 15000,
+      maxInputChars: 6000,
+      concurrency: 3
+    };
+
+    const llmScorer = vi.fn(async () => {
+      throw new Error("llm_timeout");
+    });
+
+    const result = await scoreSubmissionCandidate(candidate, {
+      config: llmConfig,
+      llmScorer
+    });
+
+    expect(llmScorer).toHaveBeenCalledOnce();
+    expect(result.finalStatus).toBe("valid");
+    expect(result.llmModel).toBe("heuristic-fallback");
+    expect(result.totalScore).toBeGreaterThanOrEqual(5);
   });
 });
 

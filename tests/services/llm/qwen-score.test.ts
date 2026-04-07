@@ -10,7 +10,7 @@ const config: LlmProviderConfig = {
   baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
   apiKey: "sk-demo",
   textModel: "qwen3-flash",
-  fileModel: "qwen-doc-turbo",
+  fileModel: "qwen-doc",
   timeoutMs: 15000,
   maxInputChars: 6000,
   concurrency: 3
@@ -93,7 +93,7 @@ describe("qwen routing", () => {
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
-            model: "qwen-doc-turbo",
+            model: "qwen-doc",
             choices: [
               {
                 message: {
@@ -121,7 +121,7 @@ describe("qwen routing", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(result).toMatchObject({
       fileId: "file-fe-001",
-      model: "qwen-doc-turbo",
+      model: "qwen-doc",
       text: "Extracted plain text from the document."
     });
   });

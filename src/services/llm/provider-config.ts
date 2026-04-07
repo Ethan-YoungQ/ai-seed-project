@@ -28,7 +28,7 @@ function readInteger(value: string | undefined, fallback: number) {
 }
 
 function readProvider(value: string | undefined): LlmProvider {
-  return value === "aliyun" ? "aliyun" : "openai_compatible";
+  return value === "openai_compatible" ? "openai_compatible" : "aliyun";
 }
 
 function resolveBaseUrl(provider: LlmProvider, value: string | undefined) {
@@ -56,7 +56,7 @@ export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): Llm
     baseUrl,
     apiKey,
     textModel: env.LLM_TEXT_MODEL?.trim() || "qwen3-flash",
-    fileModel: env.LLM_FILE_MODEL?.trim() || "qwen-doc-turbo",
+    fileModel: env.LLM_FILE_MODEL?.trim() || "qwen-doc",
     timeoutMs: readInteger(env.LLM_TIMEOUT_MS, 15000),
     maxInputChars: readInteger(env.LLM_MAX_INPUT_CHARS, 6000),
     concurrency: readInteger(env.LLM_CONCURRENCY, 3)
