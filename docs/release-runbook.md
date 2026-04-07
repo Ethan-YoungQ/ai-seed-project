@@ -50,14 +50,15 @@ connecting the tenant.
 - `FEISHU_BASE_WARNINGS_TABLE`
 - `FEISHU_BASE_SNAPSHOTS_TABLE`
 
-### Required For Feishu Native Entry Surfaces
+### Reserved For Feishu Native Entry Surfaces
 
 - `FEISHU_LEARNER_HOME_DOC_TOKEN`
 - `FEISHU_LEARNER_HOME_DOC_URL`
 - `FEISHU_OPERATOR_HOME_DOC_TOKEN`
 - `FEISHU_OPERATOR_HOME_DOC_URL`
+- These are placeholders for the later Feishu homepage rollout and are not consumed by the current runtime.
 
-### Required For Provider-Neutral LLM Routing
+### Reserved For Provider-Neutral LLM Routing
 
 - `LLM_ENABLED=true`
 - `LLM_PROVIDER=aliyun`
@@ -68,6 +69,7 @@ connecting the tenant.
 - `LLM_TIMEOUT_MS`
 - `LLM_MAX_INPUT_CHARS`
 - `LLM_CONCURRENCY`
+- These keys freeze the phase-one config contract for later runtime integration and are not yet read by scoring.
 
 ## Bring-Up Order
 

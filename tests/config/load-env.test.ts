@@ -45,42 +45,45 @@ describe("loadLocalEnv", () => {
     );
 
     const expectedKeys = [
+      "APP_ENV",
+      "DATABASE_URL",
       "FEISHU_APP_ID",
       "FEISHU_APP_SECRET",
-      "FEISHU_EVENT_MODE",
-      "FEISHU_VERIFICATION_TOKEN",
-      "FEISHU_ENCRYPT_KEY",
-      "FEISHU_BOT_CHAT_ID",
-      "FEISHU_BOT_RECEIVE_ID_TYPE",
-      "FEISHU_BASE_ENABLED",
       "FEISHU_BASE_APP_TOKEN",
+      "FEISHU_BASE_ENABLED",
       "FEISHU_BASE_MEMBERS_TABLE",
+      "FEISHU_BASE_NAME",
       "FEISHU_BASE_RAW_EVENTS_TABLE",
       "FEISHU_BASE_SCORES_TABLE",
-      "FEISHU_BASE_WARNINGS_TABLE",
       "FEISHU_BASE_SNAPSHOTS_TABLE",
+      "FEISHU_BASE_WARNINGS_TABLE",
+      "FEISHU_BOT_CHAT_ID",
+      "FEISHU_BOT_RECEIVE_ID_TYPE",
+      "FEISHU_ENCRYPT_KEY",
+      "FEISHU_EVENT_MODE",
+      "FEISHU_LEARNER_HOME_DOC_TOKEN",
+      "FEISHU_LEARNER_HOME_DOC_URL",
+      "FEISHU_OPERATOR_HOME_DOC_TOKEN",
+      "FEISHU_OPERATOR_HOME_DOC_URL",
       "FEISHU_TEST_CAMP_ID",
       "FEISHU_TEST_CHAT_ID",
+      "FEISHU_TEST_CHAT_MEMBER_OPEN_IDS",
       "FEISHU_TEST_CHAT_NAME",
       "FEISHU_TEST_CHAT_OWNER_OPEN_ID",
-      "FEISHU_TEST_CHAT_MEMBER_OPEN_IDS",
-      "FEISHU_BASE_NAME",
-      "FEISHU_LEARNER_HOME_DOC_TOKEN",
-      "FEISHU_OPERATOR_HOME_DOC_TOKEN",
-      "LLM_ENABLED",
-      "LLM_PROVIDER",
-      "LLM_BASE_URL",
+      "FEISHU_VERIFICATION_TOKEN",
       "LLM_API_KEY",
-      "LLM_TEXT_MODEL",
+      "LLM_BASE_URL",
+      "LLM_CONCURRENCY",
+      "LLM_ENABLED",
       "LLM_FILE_MODEL",
-      "LLM_TIMEOUT_MS",
       "LLM_MAX_INPUT_CHARS",
-      "LLM_CONCURRENCY"
+      "LLM_PROVIDER",
+      "LLM_TEXT_MODEL",
+      "LLM_TIMEOUT_MS",
+      "PORT"
     ];
 
-    for (const key of expectedKeys) {
-      expect(keys.has(key)).toBe(true);
-    }
+    expect(Array.from(keys).sort()).toEqual([...expectedKeys].sort());
 
     expect(Array.from(keys).some((key) => key.startsWith("OPENAI_"))).toBe(false);
   });

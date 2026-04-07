@@ -8,7 +8,10 @@
 - 阿里云常驻后端
 - SQLite 作为事实源
 - Feishu Base 作为展示层和运维协作层
-- 评分链路使用 provider-neutral `LLM_*` 配置
+
+一期的正式配置契约已经切到 provider-neutral `LLM_*`，但它仍然只是**为后续 Task 3 的运行时接入预留**，当前评分链路还没有消费这些键。
+
+同样，`FEISHU_LEARNER_HOME_DOC_*` 和 `FEISHU_OPERATOR_HOME_DOC_*` 只是**为后续飞书首页落地预留的一期配置占位**，不是当前运行时已经生效的入口。
 
 一期不再把独立 Web 看板和 `/operator` 当作正式交付面。它们可以保留为工程调试入口，但不能再写进正式对外说明里。
 
@@ -33,10 +36,11 @@
 
 ## 这次已经确认的契约
 
-- `.env.example` 需要使用 `LLM_*`，不再使用 `OPENAI_*`
+- `.env.example` 使用 `LLM_*`，不再使用 `OPENAI_*`
 - `FEISHU_EVENT_MODE` 的一期目标是 `long_connection`
 - `FEISHU_BOT_CHAT_ID`、`FEISHU_VERIFICATION_TOKEN`、`FEISHU_ENCRYPT_KEY` 都属于一期配置
 - `FEISHU_BASE_*` 是一期正式交付面的一部分
+- `FEISHU_LEARNER_HOME_DOC_*` 和 `FEISHU_OPERATOR_HOME_DOC_*` 只是预留占位，不是当前运行时消费项
 - smoke test 和 release runbook 只应该把飞书原生路径当作正式验收目标
 
 ## 下一线程要避免的误区
@@ -44,7 +48,8 @@
 - 不要把独立 Web 看板写回正式 scope
 - 不要把 `/operator` 重新描述成一期用户面
 - 不要把 `OPENAI_*` 当成默认 LLM 路线
-- 不要把 Base 说成“只是一份镜像表”
+- 不要把 `LLM_*` 写成当前已经生效的评分运行态
+- 不要把飞书首页占位变量写成当前 runtime 已经读取
 
 ## 推荐参考
 
