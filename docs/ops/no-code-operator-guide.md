@@ -22,11 +22,13 @@
 
 - Windows：双击 `scripts/ops/windows-init.ps1`
 - macOS：双击 `scripts/ops/mac-init.command`
+- 这一步会先打包当前仓库版本，再上传到服务器完成首次初始化。
 
 ### 一键部署
 
 - Windows：双击 `scripts/ops/windows-deploy.ps1`
 - macOS：双击 `scripts/ops/mac-deploy.command`
+- 这一步会先上传当前仓库 `HEAD`，再触发远端构建与重启。
 
 ### 一键检查
 
@@ -45,6 +47,7 @@
 - 站点目录
 - 模型 API Key
 - 飞书应用配置
+- 本地可用的 `git`、`ssh`、`scp`
 
 ## 常见动作
 

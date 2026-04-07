@@ -5,15 +5,16 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/ai-seed-project
+WorkingDirectory=__APP_DIR__
 Environment=NODE_ENV=production
 Environment=PORT=3000
-Environment=DATABASE_URL=/opt/ai-seed-project/data/app.db
-ExecStart=/usr/bin/node /opt/ai-seed-project/dist/server.js
+Environment=DATABASE_URL=__DATABASE_URL__
+EnvironmentFile=-__APP_DIR__/.env
+ExecStart=__NODE_BIN__ __APP_DIR__/dist/server.js
 Restart=always
 RestartSec=5
-User=ai-seed
-Group=ai-seed
+User=__RUN_USER__
+Group=__RUN_GROUP__
 
 [Install]
 WantedBy=multi-user.target

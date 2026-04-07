@@ -35,6 +35,43 @@ describe("no-code entry smoke", () => {
     expect(packageJson.scripts?.["ops:backup"]).toBe("bash scripts/ops/backup-db.sh");
   });
 
+  it("keeps the systemd unit templated for no-code deployment", () => {
+    const serviceUnit = readFileSync("deploy/systemd/ai-seed-project.service", "utf8");
+    expect(serviceUnit).toContain("WorkingDirectory=__APP_DIR__");
+    expect(serviceUnit).toContain("ExecStart=__NODE_BIN__ __APP_DIR__/dist/server.js");
+    expect(serviceUnit).toContain("Environment=DATABASE_URL=__DATABASE_URL__");
+    expect(serviceUnit).toContain("User=__RUN_USER__");
+    expect(serviceUnit).toContain("Group=__RUN_GROUP__");
+  });
+
+  it("renders the bootstrap script responsible for service-user setup", () => {
+    const script = readFileSync("scripts/ops/bootstrap-server.sh", "utf8");
+    expect(script).toContain("RUN_USER");
+    expect(script).toContain("render_service_file");
+    expect(script).toContain("ensure_service_user");
+    expect(script).toContain("escape_sed_replacement");
+    expect(script).toContain("mktemp");
+    expect(script).toContain("sudo env RUN_USER=\"$RUN_USER\"");
+    expect(script).toContain("FALLBACK_SERVICE_FILE");
+    expect(script).toContain("install -Dm644");
+    expect(script).toContain("$FALLBACK_SERVICE_FILE");
+    expect(script).toContain("$SERVICE_FILE");
+  });
+
+  it("uses local one-click wrappers to upload the current repo before remote execution", () => {
+    const windowsInit = readFileSync("scripts/ops/windows-init.ps1", "utf8");
+    const windowsDeploy = readFileSync("scripts/ops/windows-deploy.ps1", "utf8");
+    const macInit = readFileSync("scripts/ops/mac-init.command", "utf8");
+    const macDeploy = readFileSync("scripts/ops/mac-deploy.command", "utf8");
+
+    for (const script of [windowsInit, windowsDeploy, macInit, macDeploy]) {
+      expect(script).toContain("git");
+      expect(script).toContain("archive");
+      expect(script).toContain("scp");
+      expect(script).toContain("tar -xf");
+    }
+  });
+
   it("documents Aliyun MCP as preferred and scripts as fallback", () => {
     const runbook = readFileSync("docs/ops/aliyun-mcp-runbook.md", "utf8");
     expect(runbook).toContain("优先走 Aliyun MCP");
