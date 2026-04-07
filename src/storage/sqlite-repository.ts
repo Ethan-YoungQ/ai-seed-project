@@ -718,6 +718,32 @@ export class SqliteRepository {
     }));
   }
 
+  getSessionResult(campId: string, memberId: string, sessionId: string) {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, session_id, member_id, chosen_attempt_id, final_status, total_score, latest_submitted_at
+         FROM session_results
+         WHERE camp_id = ? AND member_id = ? AND session_id = ?
+         LIMIT 1`
+      )
+      .get(campId, memberId, sessionId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      sessionId: String(row.session_id),
+      memberId: String(row.member_id),
+      chosenAttemptId: row.chosen_attempt_id ? String(row.chosen_attempt_id) : undefined,
+      finalStatus: String(row.final_status) as SessionResult["finalStatus"],
+      totalScore: Number(row.total_score ?? 0),
+      latestSubmittedAt: String(row.latest_submitted_at)
+    } satisfies SessionResult;
+  }
+
   private recomputeSessionResult(campId: string, memberId: string, sessionId: string) {
     const attempts = this.listScoredAttemptsForSession(campId, memberId, sessionId);
     const sessionResultId = `${sessionId}:${memberId}`;

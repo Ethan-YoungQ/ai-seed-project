@@ -92,6 +92,7 @@ export interface SubmissionAttempt {
   evaluationWindowEnd: string;
 }
 
+// One scored attempt corresponds to one supported file submission event.
 export type SubmissionCandidate = SubmissionAttempt;
 
 export interface ScoringResult {

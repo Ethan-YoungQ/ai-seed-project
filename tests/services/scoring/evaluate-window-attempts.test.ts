@@ -88,5 +88,43 @@ describe("evaluateMessageWindow document attempts", () => {
       memberId: "user-alice",
       totalScore: 10
     });
+
+    const sessionResult = repository.getSessionResult("camp-demo", "user-alice", "session-01");
+    expect(sessionResult).toMatchObject({
+      chosenAttemptId: "session-01:user-alice:om_file_102",
+      finalStatus: "valid",
+      totalScore: 10,
+      latestSubmittedAt: "2026-04-11T08:00:00.000Z"
+    });
+  });
+
+  it("keeps the latest non-valid attempt when no valid attempt exists", async () => {
+    repository = new SqliteRepository(":memory:");
+    repository.seedDemo();
+    const member = demoMembers.find((entry) => entry.id === "user-alice");
+
+    if (!member) {
+      throw new Error("Demo member user-alice is missing.");
+    }
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage("om_file_201", "2026-04-10T08:00:00.000Z", "只有材料，没有过程。")
+    );
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage("om_file_202", "2026-04-11T08:00:00.000Z", "只有材料，没有结果。")
+    );
+
+    const sessionResult = repository.getSessionResult("camp-demo", "user-alice", "session-01");
+    expect(sessionResult).toMatchObject({
+      chosenAttemptId: "session-01:user-alice:om_file_202",
+      finalStatus: "invalid",
+      totalScore: 0,
+      latestSubmittedAt: "2026-04-11T08:00:00.000Z"
+    });
   });
 });

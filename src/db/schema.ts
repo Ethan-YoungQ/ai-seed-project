@@ -40,10 +40,18 @@ export const rawEvents = sqliteTable("raw_events", {
   memberId: text("member_id").notNull(),
   sessionId: text("session_id"),
   messageId: text("message_id").notNull().unique(),
+  messageType: text("message_type").notNull().default(""),
   rawText: text("raw_text").notNull(),
   parsedTags: text("parsed_tags").notNull(),
   attachmentCount: integer("attachment_count").notNull().default(0),
   attachmentTypes: text("attachment_types").notNull(),
+  fileKey: text("file_key").notNull().default(""),
+  fileName: text("file_name").notNull().default(""),
+  fileExt: text("file_ext").notNull().default(""),
+  mimeType: text("mime_type").notNull().default(""),
+  documentText: text("document_text").notNull().default(""),
+  documentParseStatus: text("document_parse_status").notNull().default("not_applicable"),
+  documentParseReason: text("document_parse_reason").notNull().default(""),
   eventTime: text("event_time").notNull(),
   eventUrl: text("event_url").notNull(),
   parseStatus: text("parse_status").notNull().default("raw")
@@ -95,7 +103,16 @@ export const scores = sqliteTable("scores", {
   scoreReason: text("score_reason").notNull(),
   llmReason: text("llm_reason").notNull(),
   finalStatus: text("final_status").notNull(),
-  manualOverrideFlag: integer("manual_override_flag", { mode: "boolean" }).notNull().default(false)
+  manualOverrideFlag: integer("manual_override_flag", { mode: "boolean" }).notNull().default(false),
+  autoBaseScore: integer("auto_base_score").notNull().default(0),
+  autoProcessScore: integer("auto_process_score").notNull().default(0),
+  autoQualityScore: integer("auto_quality_score").notNull().default(0),
+  autoCommunityBonus: integer("auto_community_bonus").notNull().default(0),
+  reviewNote: text("review_note").notNull().default(""),
+  reviewedBy: text("reviewed_by").notNull().default(""),
+  reviewedAt: text("reviewed_at").notNull().default(""),
+  llmModel: text("llm_model").notNull().default(""),
+  llmInputExcerpt: text("llm_input_excerpt").notNull().default("")
 });
 
 export const warnings = sqliteTable("warnings", {
