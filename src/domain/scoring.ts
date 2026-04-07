@@ -63,7 +63,11 @@ function buildInvalidScore(candidate: SubmissionAttempt, sourceText: string, rea
   };
 }
 
-function buildHeuristicValidScore(candidate: SubmissionAttempt, sourceText: string): ScoringResult {
+function buildHeuristicValidScore(
+  candidate: SubmissionAttempt,
+  sourceText: string,
+  llmReason = "启发式评分依据过程、结果和结构线索完成。"
+): ScoringResult {
   const text = sourceText.toLowerCase();
   const processScore = [
     /prompt|提示词/.test(text),
@@ -87,7 +91,7 @@ function buildHeuristicValidScore(candidate: SubmissionAttempt, sourceText: stri
     totalScore: 5 + Math.min(processScore, 3) + Math.min(qualityScore, 2),
     finalStatus: "valid",
     scoreReason: "evidence_present",
-    llmReason: "启发式评分依据过程、结果和结构线索完成。",
+    llmReason,
     llmModel: "heuristic-fallback",
     llmInputExcerpt: sourceText.slice(0, 160),
     autoBaseScore: 5,
@@ -165,8 +169,17 @@ export async function scoreSubmissionCandidate(
     try {
       const qwenScore = await llmScorer(candidate, config);
       return applyQwenScore(candidate, sourceText, qwenScore);
-    } catch {
-      return buildHeuristicValidScore(candidate, sourceText);
+    } catch (error) {
+      const fallbackReason =
+        error instanceof Error && error.message.trim()
+          ? error.message.trim()
+          : "unknown_llm_error";
+
+      return buildHeuristicValidScore(
+        candidate,
+        sourceText,
+        `llm_fallback:${fallbackReason}; 启发式评分依据过程、结果和结构线索完成。`
+      );
     }
   }
 

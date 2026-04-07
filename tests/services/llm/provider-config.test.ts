@@ -36,4 +36,15 @@ describe("readLlmProviderConfig", () => {
     expect(config.provider).toBe("openai_compatible");
     expect(config.baseUrl).toBe("https://example.com/v1");
   });
+
+  it("does not silently switch an old env to aliyun when provider is omitted", () => {
+    const config = readLlmProviderConfig({
+      LLM_ENABLED: "true",
+      LLM_API_KEY: "sk-demo"
+    });
+
+    expect(config.provider).toBe("openai_compatible");
+    expect(config.baseUrl).toBe("");
+    expect(config.enabled).toBe(false);
+  });
 });

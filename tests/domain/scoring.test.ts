@@ -125,6 +125,7 @@ describe("scoreSubmissionCandidate", () => {
     expect(llmScorer).toHaveBeenCalledOnce();
     expect(result.finalStatus).toBe("valid");
     expect(result.llmModel).toBe("heuristic-fallback");
+    expect(result.llmReason).toContain("llm_fallback");
     expect(result.totalScore).toBeGreaterThanOrEqual(5);
   });
 });

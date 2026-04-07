@@ -28,7 +28,7 @@ function readInteger(value: string | undefined, fallback: number) {
 }
 
 function readProvider(value: string | undefined): LlmProvider {
-  return value === "openai_compatible" ? "openai_compatible" : "aliyun";
+  return value === "aliyun" ? "aliyun" : "openai_compatible";
 }
 
 function resolveBaseUrl(provider: LlmProvider, value: string | undefined) {
