@@ -110,10 +110,50 @@ describe("phase-2 and phase-3 API", () => {
   });
 
   it("ingests a Feishu event and returns a valid scored submission with UTF-8 rules", async () => {
+    await app.close();
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      feishuConfigOverride: disabledFeishuConfig,
+      documentTextExtractor: {
+        async extract() {
+          return {
+            text: validHomeworkText,
+            status: "parsed"
+          };
+        }
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" }),
+        getMessageFile: async () => ({
+          fileKey: "file_om_001",
+          fileName: "final report.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("fake-pdf")
+        })
+      }
+    });
+    await app.ready();
+    await app.inject({
+      method: "POST",
+      url: "/api/demo/seed",
+      payload: {}
+    });
+
     const response = await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_001", "user-alice", "1775210400000", validHomeworkText)
+      payload: buildFileEvent("om_001", "user-alice", "1775210400000", "final report.pdf")
     });
 
     expect(response.statusCode).toBe(200);
@@ -146,10 +186,50 @@ describe("phase-2 and phase-3 API", () => {
   });
 
   it("returns operator submissions for review after scoring", async () => {
+    await app.close();
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      feishuConfigOverride: disabledFeishuConfig,
+      documentTextExtractor: {
+        async extract() {
+          return {
+            text: validHomeworkText,
+            status: "parsed"
+          };
+        }
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" }),
+        getMessageFile: async () => ({
+          fileKey: "file_om_002",
+          fileName: "final report.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("fake-pdf")
+        })
+      }
+    });
+    await app.ready();
+    await app.inject({
+      method: "POST",
+      url: "/api/demo/seed",
+      payload: {}
+    });
+
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_002", "user-alice", "1775210400000", validHomeworkText)
+      payload: buildFileEvent("om_002", "user-alice", "1775210400000", "final report.pdf")
     });
 
     const response = await app.inject({
@@ -160,7 +240,7 @@ describe("phase-2 and phase-3 API", () => {
     expect(response.statusCode).toBe(200);
     expect(response.json().entries).toHaveLength(1);
     expect(response.json().entries[0]).toMatchObject({
-      candidateId: "session-01:user-alice",
+      candidateId: "session-01:user-alice:om_002",
       memberId: "user-alice",
       finalStatus: "valid"
     });
@@ -173,27 +253,17 @@ describe("phase-2 and phase-3 API", () => {
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_101", "user-alice", "1775210400000", invalidText)
+      payload: buildFileEvent("om_101", "user-alice", "1775210400000", "draft-1.pdf")
     });
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent(
-        "om_102",
-        "user-alice",
-        "1776420000000",
-        invalidText.replace("#HW01", "#HW02")
-      )
+      payload: buildFileEvent("om_102", "user-alice", "1776420000000", "draft-2.pdf")
     });
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent(
-        "om_103",
-        "user-alice",
-        "1777629600000",
-        invalidText.replace("#HW01", "#HW03")
-      )
+      payload: buildFileEvent("om_103", "user-alice", "1777629600000", "draft-3.pdf")
     });
 
     const warningsResponse = await app.inject({
@@ -215,7 +285,7 @@ describe("phase-2 and phase-3 API", () => {
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_201", "user-alice", "1775210400000", invalidText)
+      payload: buildFileEvent("om_201", "user-alice", "1775210400000", "draft-override.pdf")
     });
 
     const beforeBoardResponse = await app.inject({
@@ -228,7 +298,7 @@ describe("phase-2 and phase-3 API", () => {
 
     const reviewResponse = await app.inject({
       method: "POST",
-      url: "/api/reviews/session-01:user-alice",
+      url: "/api/reviews/session-01:user-alice:om_201",
       payload: {
         action: "override_score",
         reviewer: "ops-demo",
@@ -261,7 +331,7 @@ describe("phase-2 and phase-3 API", () => {
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_202", "user-alice", "1775210400000", validHomeworkText)
+      payload: buildFileEvent("om_202", "user-alice", "1775210400000", "draft-nocount.pdf")
     });
 
     const beforeReviewBoard = await app.inject({
@@ -270,11 +340,11 @@ describe("phase-2 and phase-3 API", () => {
     });
 
     expect(beforeReviewBoard.statusCode).toBe(200);
-    expect(beforeReviewBoard.json().entries).toHaveLength(1);
+    expect(beforeReviewBoard.json().entries).toHaveLength(0);
 
     const noCountResponse = await app.inject({
       method: "POST",
-      url: "/api/reviews/session-01:user-alice",
+      url: "/api/reviews/session-01:user-alice:om_202",
       payload: {
         action: "mark_no_count",
         reviewer: "ops-demo",
@@ -305,7 +375,7 @@ describe("phase-2 and phase-3 API", () => {
 
     const restoreResponse = await app.inject({
       method: "POST",
-      url: "/api/reviews/session-01:user-alice",
+      url: "/api/reviews/session-01:user-alice:om_202",
       payload: {
         action: "restore_status",
         reviewer: "ops-demo",
@@ -336,10 +406,50 @@ describe("phase-2 and phase-3 API", () => {
   });
 
   it("creates announcement previews and stores snapshots when announcements run", async () => {
+    await app.close();
+    app = await createApp({
+      databaseUrl: ":memory:",
+      wsRuntime: new NoopFeishuWsRuntime(),
+      feishuConfigOverride: disabledFeishuConfig,
+      documentTextExtractor: {
+        async extract() {
+          return {
+            text: validHomeworkText,
+            status: "parsed"
+          };
+        }
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" }),
+        getMessageFile: async () => ({
+          fileKey: "file_om_301",
+          fileName: "final report.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("fake-pdf")
+        })
+      }
+    });
+    await app.ready();
+    await app.inject({
+      method: "POST",
+      url: "/api/demo/seed",
+      payload: {}
+    });
+
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_301", "user-alice", "1775210400000", validHomeworkText)
+      payload: buildFileEvent("om_301", "user-alice", "1775210400000", "final report.pdf")
     });
 
     const previewResponse = await app.inject({
@@ -546,6 +656,33 @@ describe("phase-2 and phase-3 API", () => {
         botReceiveIdType: "chat_id"
       },
       wsRuntime: new NoopFeishuWsRuntime(),
+      documentTextExtractor: {
+        async extract() {
+          return {
+            text: validHomeworkText,
+            status: "parsed"
+          };
+        }
+      },
+      feishuApiClient: {
+        validateCredentials: async () => ({ tenantKey: "tenant-demo" }),
+        sendTextMessage: async () => ({ messageId: "om_bot_001" }),
+        createBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchBaseRecords: async () => [],
+        updateBaseRecord: async () => ({ recordId: "rec_001" }),
+        searchChats: async () => [],
+        createChat: async () => ({ chatId: "chat-demo" }),
+        createBaseApp: async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" }),
+        renameBaseTable: async () => undefined,
+        createBaseTable: async () => ({ tableId: "tbl_generated" }),
+        getMessageFile: async () => ({
+          fileKey: "file_om_401",
+          fileName: "final report.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("fake-pdf")
+        })
+      },
       feishuMessenger: {
         async sendTextMessage(input) {
           sent.push(input);
@@ -563,7 +700,7 @@ describe("phase-2 and phase-3 API", () => {
     await app.inject({
       method: "POST",
       url: "/api/feishu/events",
-      payload: buildEvent("om_401", "user-alice", "1775210400000", validHomeworkText)
+      payload: buildFileEvent("om_401", "user-alice", "1775210400000", "final report.pdf")
     });
 
     const response = await app.inject({
