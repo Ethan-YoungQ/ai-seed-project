@@ -56,7 +56,9 @@ connecting the tenant.
 - `FEISHU_LEARNER_HOME_DOC_URL`
 - `FEISHU_OPERATOR_HOME_DOC_TOKEN`
 - `FEISHU_OPERATOR_HOME_DOC_URL`
-- These are placeholders for the later Feishu homepage rollout and are not consumed by the current runtime.
+- These are placeholders for the later Feishu homepage rollout and are not consumed by
+  `readFeishuConfig()` today. They record the manual homepage rollout inputs, not an automated
+  runtime integration.
 
 ### Reserved For Provider-Neutral LLM Routing
 
@@ -69,7 +71,8 @@ connecting the tenant.
 - `LLM_TIMEOUT_MS`
 - `LLM_MAX_INPUT_CHARS`
 - `LLM_CONCURRENCY`
-- These keys freeze the phase-one config contract for later runtime integration and are not yet read by scoring.
+- The scoring runtime already reads these keys; when enabled it uses compatible model scoring
+  and falls back to heuristic scoring if the LLM path is disabled or fails.
 
 ## Bring-Up Order
 

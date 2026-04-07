@@ -35,7 +35,9 @@ The standalone web board and `/operator` routes are engineering surfaces only.
    - `FEISHU_LEARNER_HOME_DOC_URL`
    - `FEISHU_OPERATOR_HOME_DOC_TOKEN`
    - `FEISHU_OPERATOR_HOME_DOC_URL`
-8. Freeze the provider-neutral LLM contract in `.env` for later runtime integration:
+   These are documentation/configuration placeholders for the later homepage rollout and are not
+   consumed by `readFeishuConfig()` today.
+8. Set the provider-neutral LLM contract in `.env`:
    - `LLM_ENABLED=true`
    - `LLM_PROVIDER=aliyun`
    - `LLM_BASE_URL`
@@ -45,6 +47,8 @@ The standalone web board and `/operator` routes are engineering surfaces only.
    - `LLM_TIMEOUT_MS`
    - `LLM_MAX_INPUT_CHARS`
    - `LLM_CONCURRENCY`
+   The scoring runtime already reads these keys; when enabled it uses compatible model scoring
+   and falls back to heuristic scoring if the LLM path is disabled or fails.
 
 Use [`.env.example`](../.env.example) as the source of truth for the current variable set.
 

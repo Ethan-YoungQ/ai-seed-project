@@ -19,8 +19,8 @@ phase-one sign-off target.
 - Learners submit PDF or Word documents in the Feishu group.
 - Tags remain supported for backward compatibility, but document uploads do not depend on them
   when there is a single active biweekly session window.
-- The phase-one configuration contract has already moved to provider-neutral `LLM_*` keys so
-  later runtime integration can pick it up without reworking the environment schema.
+- The runtime already reads provider-neutral `LLM_*` keys; when enabled, it uses compatible
+  model scoring and falls back to heuristic scoring if the LLM path is disabled or fails.
 
 ## Quick Start
 

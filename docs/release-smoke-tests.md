@@ -19,7 +19,7 @@ Use this checklist after each release or Feishu configuration change.
 | 4 | Send a real PDF or DOCX submission in the group | The inbound event is accepted, parsed, scored, and written to SQLite. |
 | 5 | Re-check `GET /api/feishu/status` | `lastInboundEventAt` updates and `lastNormalizedMessage.documentParseStatus=parsed`. |
 | 6 | Check the Feishu Base raw-events and scores tables | The new document submission is mirrored into Base. |
-| 7 | Open the learner and ops Feishu native entry surfaces | The Feishu-native delivery face is reachable and points at the live release data. |
+| 7 | Open the manually configured learner/operator Feishu homepage docs or Base entry links | Confirm the links are reachable and point at the live release data. This is a manual check; the current runtime does not provision these entries. |
 | 8 | `POST /api/announcements/run` | The announcement job is recorded, and the bot posts the summary. |
 
 ## Expected Pass/Fail Signals
