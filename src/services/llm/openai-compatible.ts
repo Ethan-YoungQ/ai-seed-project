@@ -86,7 +86,8 @@ export function createOpenAiCompatibleClient(
     purpose?: string;
   }): Promise<UploadedFile> {
     const form = new FormData();
-    form.append("file", new Blob([input.bytes]), input.fileName);
+    const byteBuffer = Uint8Array.from(input.bytes).buffer;
+    form.append("file", new Blob([byteBuffer]), input.fileName);
     form.append("purpose", input.purpose ?? "file-extract");
 
     const response = await fetchImpl(joinUrl(config.baseUrl, "/files"), {

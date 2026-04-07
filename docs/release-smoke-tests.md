@@ -5,7 +5,7 @@ Use this checklist after each release or Feishu configuration change.
 ## Preconditions
 
 - `.env` is populated from [`.env.example`](../.env.example).
-- The service starts with `npm run dev`.
+- The API starts with `npm run dev:api`.
 - The live Feishu group contains the bot.
 - The Feishu Base app and table IDs are present if Base sync is enabled.
 
@@ -21,6 +21,7 @@ Use this checklist after each release or Feishu configuration change.
 | 6 | Check the Feishu Base raw-events and scores tables | The new document submission is mirrored into Base. |
 | 7 | Open the manually configured learner/operator Feishu homepage docs or Base entry links | Confirm the links are reachable and point at the live release data. This is a manual check; the current runtime does not provision these entries. |
 | 8 | `POST /api/announcements/run` | The announcement job is recorded, and the bot posts the summary. |
+| 9 | After the real domestic-model API key is configured, send one normal PDF, one normal DOCX, and one parse-failure document | Normal documents score through `qwen3-flash`; parse fallback routes through `qwen-doc`; attempts and final session results land in SQLite and Base. |
 
 ## Expected Pass/Fail Signals
 
@@ -28,6 +29,7 @@ Use this checklist after each release or Feishu configuration change.
 - `finalStatus: valid` means the submission passed the rule-first path.
 - `accepted: false` with `reason: unbound_chat` means the message came from a chat that is not bound to the active camp.
 - `documentParseStatus: failed` means the Feishu file could not be downloaded or parsed.
+- `enabled=false` plus `eventMode="disabled"` is acceptable only for local blank-env verification, not for live release acceptance.
 
 ## Failure Entry Points
 
@@ -46,4 +48,5 @@ Treat the release as blocked if any of the following are true:
 - The live group does not show incoming document submissions.
 - `GET /api/feishu/status` reports credentials or Base as unready.
 - PDF/DOCX submissions fail before text extraction or remain stuck in `pending_review_parse_failed`.
+- The domestic-model smoke does not route parsed documents to `qwen3-flash` or fallback documents to `qwen-doc`.
 - The Feishu Base raw-events and scores tables do not reflect the latest submission.

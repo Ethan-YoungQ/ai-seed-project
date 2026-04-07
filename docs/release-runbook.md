@@ -79,11 +79,28 @@ connecting the tenant.
 1. Fill `.env` from `.env.example`.
 2. Run `npm install`.
 3. Seed local demo data with `npm run seed:demo`.
-4. Start the app with `npm run dev`.
+4. Start the API with `npm run dev:api`.
 5. Confirm `GET /api/health`.
 6. Confirm `GET /api/feishu/status`.
 7. Run `npm run bootstrap:feishu` if you need the repo to create the test chat and Base schema.
 8. Restart the app after writing the bootstrap output back into `.env`.
+
+## Local Verification Baseline
+
+The current phase-one baseline has already been verified locally with:
+
+- `npm test`
+- `npm run build`
+- `npm run seed:demo`
+- `GET /api/health`
+- `GET /api/feishu/status`
+
+On a blank local `.env`, `/api/feishu/status` is expected to return `200` with:
+
+- `enabled=false`
+- `eventMode="disabled"`
+- `baseEnabled=false`
+- phase-one link fields present but not configured
 
 ## Real Group Acceptance Flow
 
@@ -99,6 +116,28 @@ connecting the tenant.
 6. Check the Feishu Base raw-events and scores tables and confirm the document submission is mirrored.
 7. Trigger an announcement with `POST /api/announcements/run`.
 8. Confirm the announcement job is recorded and the bot posts the summary into the group.
+
+## Live Domestic-Model Smoke
+
+Run this only after the real domestic-model API key is available.
+
+1. Fill the provider-neutral runtime keys:
+   - `LLM_ENABLED=true`
+   - `LLM_PROVIDER=aliyun`
+   - `LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+   - `LLM_API_KEY=<real_key>`
+   - `LLM_TEXT_MODEL=qwen3-flash`
+   - `LLM_FILE_MODEL=qwen-doc`
+2. Restart the API.
+3. Submit:
+   - one normal PDF
+   - one normal DOCX
+   - one parse-failure style document
+4. Verify:
+   - normal documents score through `qwen3-flash`
+   - parse-failure fallback goes through `qwen-doc`
+   - SQLite and Base both receive the attempt and final session result
+   - learner/operator one-click links still point to the live release surfaces
 
 ## Failure Entry Points
 
@@ -119,4 +158,5 @@ The release is ready for sign-off when:
   and Base readiness.
 - A live Feishu bot test message succeeds.
 - A live PDF or DOCX submission in the real group is parsed, scored, and persisted.
+- The domestic-model smoke passes with the configured `LLM_*` provider-neutral keys.
 - Base mirrors the raw event and score for that live document submission.
