@@ -193,7 +193,7 @@ describe("evaluateMessageWindow document attempts", () => {
       chosenAttemptId: "session-01:user-alice:om_file_403",
       finalStatus: "pending_review",
       totalScore: 0,
-      latestSubmittedAt: "2026-04-12T08:00:00.000Z"
+      latestSubmittedAt: "2026-04-12T08:05:00.000Z"
     });
 
     expect(repository.getAttempt("session-01:user-alice:om_file_403")).toMatchObject({
@@ -275,7 +275,7 @@ describe("evaluateMessageWindow document attempts", () => {
       chosenAttemptId: "session-01:user-alice:om_file_501",
       finalStatus: "valid",
       totalScore: 10,
-      latestSubmittedAt: "2026-04-10T08:00:00.000Z"
+      latestSubmittedAt: "2026-04-12T08:05:00.000Z"
     });
 
     expect(repository.getAttempt("session-01:user-alice:om_file_501")).toMatchObject({

@@ -598,6 +598,8 @@ export class SqliteRepository {
         documentText: attempt.documentText ?? "",
         documentParseStatus: attempt.documentParseStatus ?? "not_applicable"
       });
+
+    this.recomputeSessionResult(attempt.campId, attempt.memberId, attempt.sessionId);
   }
 
   saveCandidate(candidate: SubmissionAttempt) {

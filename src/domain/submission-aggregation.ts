@@ -63,15 +63,10 @@ export function aggregateSubmissionWindow(input: AggregateInput): SubmissionAtte
   );
 
   const attempts: SubmissionAttempt[] = [];
-  let pendingMessages: RawMessageEvent[] = [];
 
   for (const event of sortedEvents) {
     if (isDocumentAttempt(event)) {
       const attempt = buildDocumentAttempt(input.member, input.session, event);
-      for (const pendingMessage of pendingMessages) {
-        appendAttemptMessage(attempt, pendingMessage);
-      }
-      pendingMessages = [];
       attempts.push(attempt);
       continue;
     }
@@ -79,10 +74,7 @@ export function aggregateSubmissionWindow(input: AggregateInput): SubmissionAtte
     const currentAttempt = attempts.at(-1);
     if (currentAttempt) {
       appendAttemptMessage(currentAttempt, event);
-      continue;
     }
-
-    pendingMessages.push(event);
   }
 
   return attempts;

@@ -27,7 +27,7 @@ describe("SqliteRepository compatibility migration", () => {
     tempDir = undefined;
   });
 
-  it("backfills session results from existing scores and submission candidates", () => {
+  it("backfills session results from existing scores and patches legacy columns", () => {
     const temp = createTempDatabasePath();
     tempDir = temp.dir;
 
@@ -63,21 +63,30 @@ describe("SqliteRepository compatibility migration", () => {
         window_end TEXT NOT NULL,
         active INTEGER NOT NULL DEFAULT 1
       );
+      CREATE TABLE raw_events (
+        id TEXT PRIMARY KEY,
+        camp_id TEXT NOT NULL,
+        member_id TEXT NOT NULL,
+        session_id TEXT,
+        message_id TEXT NOT NULL UNIQUE,
+        raw_text TEXT NOT NULL,
+        parsed_tags TEXT NOT NULL,
+        attachment_count INTEGER NOT NULL DEFAULT 0,
+        attachment_types TEXT NOT NULL,
+        event_time TEXT NOT NULL,
+        event_url TEXT NOT NULL,
+        parse_status TEXT NOT NULL DEFAULT 'raw'
+      );
       CREATE TABLE submission_candidates (
         id TEXT PRIMARY KEY,
         camp_id TEXT NOT NULL,
         session_id TEXT NOT NULL,
         member_id TEXT NOT NULL,
         homework_tag TEXT NOT NULL,
-        event_id TEXT NOT NULL DEFAULT '',
-        message_id TEXT NOT NULL DEFAULT '',
         event_ids TEXT NOT NULL,
-        file_key TEXT NOT NULL DEFAULT '',
         combined_text TEXT NOT NULL,
         attachment_count INTEGER NOT NULL DEFAULT 0,
         attachment_types TEXT NOT NULL,
-        document_text TEXT NOT NULL DEFAULT '',
-        document_parse_status TEXT NOT NULL DEFAULT 'not_applicable',
         first_event_time TEXT NOT NULL,
         latest_event_time TEXT NOT NULL,
         deadline_at TEXT NOT NULL,
@@ -138,23 +147,18 @@ describe("SqliteRepository compatibility migration", () => {
 
     legacyDb.prepare(
       `INSERT INTO submission_candidates
-       (id, camp_id, session_id, member_id, homework_tag, event_id, message_id, event_ids, file_key, combined_text, attachment_count, attachment_types, document_text, document_parse_status, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (id, camp_id, session_id, member_id, homework_tag, event_ids, combined_text, attachment_count, attachment_types, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
     ).run(
       "session-01:user-alice:om_file_900",
       "camp-demo",
       "session-01",
       "user-alice",
       "#HW01",
-      "evt-legacy-900",
-      "om_file_900",
       JSON.stringify(["evt-legacy-900"]),
-      "file_900",
-      "#HW01 #作业提交",
+      "#HW01 #浣滀笟鎻愪氦",
       1,
       JSON.stringify(["file"]),
-      "我先写了 prompt，再产出总结。",
-      "parsed",
       "2026-04-10T08:00:00.000Z",
       "2026-04-10T08:00:00.000Z",
       "2026-04-17T08:59:59.000Z",
@@ -206,5 +210,22 @@ describe("SqliteRepository compatibility migration", () => {
       memberId: "user-alice",
       totalScore: 8
     });
+
+    const inspectionDb = new Database(temp.file);
+
+    const submissionColumns = inspectionDb
+      .prepare("PRAGMA table_info(submission_candidates)")
+      .all() as Array<{ name: string }>;
+    expect(submissionColumns.some((column) => column.name === "event_id")).toBe(true);
+    expect(submissionColumns.some((column) => column.name === "message_id")).toBe(true);
+    expect(submissionColumns.some((column) => column.name === "file_key")).toBe(true);
+    expect(submissionColumns.some((column) => column.name === "document_text")).toBe(true);
+
+    const rawEventColumns = inspectionDb.prepare("PRAGMA table_info(raw_events)").all() as Array<{ name: string }>;
+    expect(rawEventColumns.some((column) => column.name === "chat_id")).toBe(true);
+    expect(rawEventColumns.some((column) => column.name === "file_key")).toBe(true);
+    expect(rawEventColumns.some((column) => column.name === "document_text")).toBe(true);
+
+    inspectionDb.close();
   });
 });

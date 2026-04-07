@@ -174,4 +174,53 @@ describe("aggregateSubmissionWindow", () => {
     expect(attempts[0].combinedText).toContain("\u8fd9\u662f\u6211\u8865\u5145\u7684\u8fc7\u7a0b\u8bf4\u660e");
     expect(attempts[0].eventIds).toEqual(["evt-doc-1", "evt-text-1"]);
   });
+
+  it("does not fold pre-document chatter into the first document attempt", () => {
+    const events: RawMessageEvent[] = [
+      {
+        id: "evt-text-before",
+        chatId: "chat-demo",
+        memberId: "member-01",
+        sessionId: "session-01",
+        messageId: "om_text_before",
+        messageType: "text",
+        eventTime: "2026-04-10T07:55:00.000Z",
+        rawText: "\u8fd9\u662f\u4e00\u53e5\u65e0\u5173\u95f2\u804a\uff0c\u4e0d\u5e94\u8be5\u5f71\u54cd\u63d0\u4ea4\u3002",
+        parsedTags: ["#HW01"],
+        attachmentCount: 0,
+        attachmentTypes: [],
+        eventUrl: "https://example.com/text-before"
+      },
+      {
+        id: "evt-doc-invalid",
+        chatId: "chat-demo",
+        memberId: "member-01",
+        sessionId: "session-01",
+        messageId: "om_file_invalid",
+        messageType: "file",
+        eventTime: "2026-04-10T08:00:00.000Z",
+        rawText: "#HW01 #\u4f5c\u4e1a\u63d0\u4ea4 \u6211\u53ea\u4e0a\u4f20\u4e86\u4e00\u4efd\u6587\u4ef6\u3002",
+        parsedTags: ["#HW01", "#\u4f5c\u4e1a\u63d0\u4ea4"],
+        attachmentCount: 1,
+        attachmentTypes: ["file"],
+        fileKey: "file_invalid",
+        fileName: "homework-invalid.pdf",
+        fileExt: "pdf",
+        mimeType: "application/pdf",
+        documentText: "\u53ea\u6709\u6750\u6599\uff0c\u6ca1\u6709\u8fc7\u7a0b\u3002",
+        documentParseStatus: "parsed",
+        eventUrl: "https://example.com/doc-invalid"
+      }
+    ];
+
+    const attempts = aggregateSubmissionWindow({ member, session, events });
+
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0]).toMatchObject({
+      id: "session-01:member-01:om_file_invalid",
+      messageId: "om_file_invalid"
+    });
+    expect(attempts[0].combinedText).not.toContain("\u8fd9\u662f\u4e00\u53e5\u65e0\u5173\u95f2\u804a");
+    expect(attempts[0].eventIds).toEqual(["evt-doc-invalid"]);
+  });
 });
