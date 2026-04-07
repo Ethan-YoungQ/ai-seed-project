@@ -30,7 +30,12 @@ The standalone web board and `/operator` routes are engineering surfaces only.
    - `FEISHU_BASE_SCORES_TABLE`
    - `FEISHU_BASE_WARNINGS_TABLE`
    - `FEISHU_BASE_SNAPSHOTS_TABLE`
-7. Keep the provider-neutral LLM contract in place:
+7. Set the phase-one learner and operator homepage entry placeholders:
+   - `FEISHU_LEARNER_HOME_DOC_TOKEN`
+   - `FEISHU_LEARNER_HOME_DOC_URL`
+   - `FEISHU_OPERATOR_HOME_DOC_TOKEN`
+   - `FEISHU_OPERATOR_HOME_DOC_URL`
+8. Keep the provider-neutral LLM contract in place:
    - `LLM_ENABLED=true`
    - `LLM_PROVIDER=aliyun`
    - `LLM_BASE_URL`

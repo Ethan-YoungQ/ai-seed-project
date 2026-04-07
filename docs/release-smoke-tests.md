@@ -14,7 +14,7 @@ Use this checklist after each release or Feishu configuration change.
 | Step | Action | Expected Result |
 | --- | --- | --- |
 | 1 | `GET /api/health` | Returns `{ "ok": true }`. |
-| 2 | `GET /api/feishu/status` | Credentials, bot binding, event mode, LLM contract, and Base readiness match the current tenant setup. |
+| 2 | `GET /api/feishu/status` | Credentials, bot binding, event mode, and Base readiness match the current tenant setup. |
 | 3 | `POST /api/feishu/send-test` with the configured chat ID | A test message appears in the live Feishu group. |
 | 4 | Send a real PDF or DOCX submission in the group | The inbound event is accepted, parsed, scored, and written to SQLite. |
 | 5 | Re-check `GET /api/feishu/status` | `lastInboundEventAt` updates and `lastNormalizedMessage.documentParseStatus=parsed`. |

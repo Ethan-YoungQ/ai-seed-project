@@ -50,6 +50,13 @@ connecting the tenant.
 - `FEISHU_BASE_WARNINGS_TABLE`
 - `FEISHU_BASE_SNAPSHOTS_TABLE`
 
+### Required For Feishu Native Entry Surfaces
+
+- `FEISHU_LEARNER_HOME_DOC_TOKEN`
+- `FEISHU_LEARNER_HOME_DOC_URL`
+- `FEISHU_OPERATOR_HOME_DOC_TOKEN`
+- `FEISHU_OPERATOR_HOME_DOC_URL`
+
 ### Required For Provider-Neutral LLM Routing
 
 - `LLM_ENABLED=true`
