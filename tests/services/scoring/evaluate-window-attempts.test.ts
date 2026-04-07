@@ -127,4 +127,42 @@ describe("evaluateMessageWindow document attempts", () => {
       latestSubmittedAt: "2026-04-11T08:00:00.000Z"
     });
   });
+
+  it("chooses the latest valid attempt when valid attempts have the same score", async () => {
+    repository = new SqliteRepository(":memory:");
+    repository.seedDemo();
+    const member = demoMembers.find((entry) => entry.id === "user-alice");
+
+    if (!member) {
+      throw new Error("Demo member user-alice is missing.");
+    }
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage(
+        "om_file_301",
+        "2026-04-10T08:00:00.000Z",
+        lowerValidDocumentText
+      )
+    );
+
+    await evaluateMessageWindow(
+      repository,
+      member,
+      buildFileMessage(
+        "om_file_302",
+        "2026-04-11T08:00:00.000Z",
+        lowerValidDocumentText
+      )
+    );
+
+    const sessionResult = repository.getSessionResult("camp-demo", "user-alice", "session-01");
+    expect(sessionResult).toMatchObject({
+      chosenAttemptId: "session-01:user-alice:om_file_302",
+      finalStatus: "valid",
+      totalScore: 8,
+      latestSubmittedAt: "2026-04-11T08:00:00.000Z"
+    });
+  });
 });

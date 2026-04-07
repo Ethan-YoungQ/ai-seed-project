@@ -28,7 +28,7 @@ describe("aggregateSubmissionWindow", () => {
     active: true
   };
 
-  it("keeps legacy text/image homework flows as one synthetic attempt", () => {
+  it("returns no attempt for text/image only windows", () => {
     const events: RawMessageEvent[] = [
       {
         id: "evt-1",
@@ -60,13 +60,7 @@ describe("aggregateSubmissionWindow", () => {
 
     const attempts = aggregateSubmissionWindow({ member, session, events });
 
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0]?.memberId).toBe("member-01");
-    expect(attempts[0]?.eventIds).toEqual(["evt-1", "evt-2"]);
-    expect(attempts[0]?.attachmentCount).toBe(1);
-    expect(attempts[0]?.combinedText).toContain("\u63d0\u793a\u8bcd\u62c6\u89e3\u95ee\u9898");
-    expect(attempts[0]?.combinedText).toContain("\u6211\u5b66\u4f1a\u4e86");
-    expect(attempts[0]?.latestEventTime).toBe("2026-04-10T08:05:00.000Z");
+    expect(attempts).toHaveLength(0);
   });
 
   it("returns one attempt per document upload event", () => {
