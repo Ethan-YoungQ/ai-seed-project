@@ -1,4 +1,4 @@
-import type { BoardRankingEntry } from "../../domain/types";
+import type { BoardRankingEntry } from "../../domain/types.js";
 
 export function buildBoardOverview(entries: BoardRankingEntry[]) {
   return {

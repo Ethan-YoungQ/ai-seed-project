@@ -9,6 +9,12 @@ export interface FeishuBaseTablesConfig {
   snapshots?: string;
 }
 
+export interface FeishuPhaseOneConfig {
+  learnerHomeUrl?: string;
+  operatorHomeUrl?: string;
+  leaderboardUrl?: string;
+}
+
 export interface FeishuConfig {
   enabled: boolean;
   appId?: string;
@@ -18,6 +24,7 @@ export interface FeishuConfig {
   eventMode: FeishuEventMode;
   botChatId?: string;
   botReceiveIdType: FeishuReceiveIdType;
+  phaseOne: FeishuPhaseOneConfig;
   base: {
     enabled: boolean;
     appToken?: string;
@@ -49,6 +56,17 @@ function readReceiveIdType(value: string | undefined): FeishuReceiveIdType {
   return "chat_id";
 }
 
+function readFirstDefined(env: NodeJS.ProcessEnv, ...keys: string[]) {
+  for (const key of keys) {
+    const value = env[key]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 export function readFeishuConfig(env: NodeJS.ProcessEnv = process.env): FeishuConfig {
   const appId = env.FEISHU_APP_ID?.trim() || undefined;
   const appSecret = env.FEISHU_APP_SECRET?.trim() || undefined;
@@ -62,6 +80,11 @@ export function readFeishuConfig(env: NodeJS.ProcessEnv = process.env): FeishuCo
     eventMode: readEventMode(env.FEISHU_EVENT_MODE),
     botChatId: env.FEISHU_BOT_CHAT_ID?.trim() || undefined,
     botReceiveIdType: readReceiveIdType(env.FEISHU_BOT_RECEIVE_ID_TYPE),
+    phaseOne: {
+      learnerHomeUrl: readFirstDefined(env, "FEISHU_LEARNER_HOME_URL", "FEISHU_LEARNER_HOME_DOC_URL"),
+      operatorHomeUrl: readFirstDefined(env, "FEISHU_OPERATOR_HOME_URL", "FEISHU_OPERATOR_HOME_DOC_URL"),
+      leaderboardUrl: env.FEISHU_LEADERBOARD_URL?.trim() || undefined
+    },
     base: {
       enabled: readBoolean(env.FEISHU_BASE_ENABLED, false),
       appToken: env.FEISHU_BASE_APP_TOKEN?.trim() || undefined,
@@ -83,6 +106,17 @@ export function isFeishuReady(config: FeishuConfig) {
 export function withResolvedFeishuConfig(config: Omit<FeishuConfig, "enabled"> & { enabled?: boolean }): FeishuConfig {
   return {
     ...config,
+    phaseOne: {
+      learnerHomeUrl: config.phaseOne?.learnerHomeUrl,
+      operatorHomeUrl: config.phaseOne?.operatorHomeUrl,
+      leaderboardUrl: config.phaseOne?.leaderboardUrl
+    },
+    base: {
+      ...config.base,
+      tables: {
+        ...config.base.tables
+      }
+    },
     enabled: Boolean(config.appId && config.appSecret)
   };
 }

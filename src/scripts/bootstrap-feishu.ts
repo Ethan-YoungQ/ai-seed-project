@@ -1,8 +1,8 @@
-import { loadLocalEnv } from "../config/load-env";
-import { LarkFeishuApiClient } from "../services/feishu/client";
-import { readFeishuConfig } from "../services/feishu/config";
-import { FeishuBootstrapService } from "../services/feishu/bootstrap";
-import { SqliteRepository } from "../storage/sqlite-repository";
+import { loadLocalEnv } from "../config/load-env.js";
+import { LarkFeishuApiClient } from "../services/feishu/client.js";
+import { readFeishuConfig } from "../services/feishu/config.js";
+import { FeishuBootstrapService } from "../services/feishu/bootstrap.js";
+import { SqliteRepository } from "../storage/sqlite-repository.js";
 
 loadLocalEnv();
 

@@ -3,18 +3,21 @@ import sensible from "@fastify/sensible";
 import Fastify from "fastify";
 import { z } from "zod";
 
-import { loadLocalEnv } from "./config/load-env";
-import { renderAnnouncement } from "./services/announcements/render-announcement";
-import type { FeishuApiClient } from "./services/feishu/client";
-import { LarkFeishuApiClient } from "./services/feishu/client";
-import { FeishuBaseSyncService, NoopBaseSyncService } from "./services/feishu/base-sync";
-import type { FeishuConfig } from "./services/feishu/config";
-import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config";
-import { ConfiguredFeishuMessenger, NoopFeishuMessenger } from "./services/feishu/messenger";
-import { normalizeFeishuMessageEvent } from "./services/feishu/normalize-message";
-import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime";
-import { evaluateMessageWindow } from "./services/scoring/evaluate-window";
-import { SqliteRepository } from "./storage/sqlite-repository";
+import { loadLocalEnv } from "./config/load-env.js";
+import { renderAnnouncement } from "./services/announcements/render-announcement.js";
+import { LocalDocumentTextExtractor, type DocumentTextExtractor } from "./services/documents/extract-text.js";
+import type { FeishuApiClient } from "./services/feishu/client.js";
+import { LarkFeishuApiClient } from "./services/feishu/client.js";
+import { FeishuBaseSyncService, NoopBaseSyncService } from "./services/feishu/base-sync.js";
+import type { FeishuConfig } from "./services/feishu/config.js";
+import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config.js";
+import { ConfiguredFeishuMessenger, NoopFeishuMessenger } from "./services/feishu/messenger.js";
+import { normalizeFeishuMessageEvent, type NormalizedFeishuMessage } from "./services/feishu/normalize-message.js";
+import type { FeishuWsRuntime } from "./services/feishu/ws-runtime.js";
+import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime.js";
+import { evaluateMessageWindow } from "./services/scoring/evaluate-window.js";
+import { readLlmProviderConfig } from "./services/llm/provider-config.js";
+import { SqliteRepository } from "./storage/sqlite-repository.js";
 
 const memberPatchSchema = z.object({
   isParticipant: z.boolean().optional(),
@@ -60,7 +63,9 @@ export async function createApp(options?: {
       text: string;
     }): Promise<{ messageId?: string }>;
   };
+  documentTextExtractor?: DocumentTextExtractor;
   baseSyncService?: NoopBaseSyncService | FeishuBaseSyncService;
+  wsRuntime?: FeishuWsRuntime;
 }) {
   loadLocalEnv();
   const app = Fastify({
@@ -73,6 +78,10 @@ export async function createApp(options?: {
   const feishuConfig = withResolvedFeishuConfig({
     ...baseConfig,
     ...options?.feishuConfigOverride,
+    phaseOne: {
+      ...baseConfig.phaseOne,
+      ...options?.feishuConfigOverride?.phaseOne
+    },
     base: {
       ...baseConfig.base,
       ...options?.feishuConfigOverride?.base,
@@ -87,63 +96,121 @@ export async function createApp(options?: {
   const baseSync =
     options?.baseSyncService ??
     (feishuApiClient
-      ? new FeishuBaseSyncService(feishuConfig.base, feishuApiClient)
+      ? new FeishuBaseSyncService(feishuConfig.base, feishuApiClient, repository)
       : new NoopBaseSyncService());
   const feishuMessenger =
     options?.feishuMessenger ??
     (feishuApiClient ? new ConfiguredFeishuMessenger(feishuConfig, feishuApiClient) : new NoopFeishuMessenger());
-  const wsRuntime = feishuApiClient
+  const documentTextExtractor = options?.documentTextExtractor ?? new LocalDocumentTextExtractor();
+  const inboundDiagnostics: {
+    lastInboundEventAt: string | null;
+    lastInboundReason: string | null;
+    lastInboundError: string | null;
+    lastNormalizedMessage:
+      | {
+          messageId: string;
+          chatId?: string;
+          messageType?: string;
+          fileName?: string;
+          fileExt?: string;
+          fileKey?: string;
+          mimeType?: string;
+          documentParseStatus?: string;
+          documentParseReason?: string | null;
+          documentTextLength?: number;
+        }
+      | null;
+  } = {
+    lastInboundEventAt: null,
+    lastInboundReason: null,
+    lastInboundError: null,
+    lastNormalizedMessage: null
+  };
+
+  async function enrichInboundMessage(normalized: NormalizedFeishuMessage) {
+    if (
+      normalized.messageType !== "file" ||
+      normalized.documentParseStatus === "unsupported" ||
+      !normalized.fileKey ||
+      !feishuApiClient
+    ) {
+      return normalized;
+    }
+
+    try {
+      const file = await feishuApiClient.getMessageFile({
+        messageId: normalized.messageId,
+        fileKey: normalized.fileKey,
+        fileName: normalized.fileName
+      });
+      const extraction = await documentTextExtractor.extract({
+        fileName: file.fileName,
+        fileExt: file.fileExt,
+        bytes: file.bytes
+      });
+
+      return {
+        ...normalized,
+        fileName: normalized.fileName ?? file.fileName,
+        fileExt: normalized.fileExt ?? file.fileExt,
+        mimeType: normalized.mimeType ?? file.mimeType,
+        documentText: extraction.text,
+        documentParseStatus: extraction.status,
+        documentParseReason: extraction.reason
+      };
+    } catch (error) {
+      return {
+        ...normalized,
+        documentText: "",
+        documentParseStatus: "failed" as const,
+        documentParseReason: error instanceof Error ? error.message : "document_download_failed"
+      };
+    }
+  }
+
+  async function processInboundMessage(normalized: NormalizedFeishuMessage) {
+    inboundDiagnostics.lastInboundEventAt = normalized.eventTime;
+    inboundDiagnostics.lastInboundError = null;
+
+    try {
+      const enriched = await enrichInboundMessage(normalized);
+      inboundDiagnostics.lastNormalizedMessage = {
+        messageId: enriched.messageId,
+        chatId: enriched.chatId,
+        messageType: enriched.messageType,
+        fileName: enriched.fileName,
+        fileExt: enriched.fileExt,
+        fileKey: enriched.fileKey,
+        mimeType: enriched.mimeType,
+        documentParseStatus: enriched.documentParseStatus,
+        documentParseReason: enriched.documentParseReason ?? null,
+        documentTextLength: enriched.documentText?.length ?? 0
+      };
+      const result = await ingestNormalizedMessage(enriched);
+      inboundDiagnostics.lastInboundReason =
+        typeof result === "object" && result && "accepted" in result && result.accepted === false
+          ? String((result as { reason?: string }).reason ?? "ignored")
+          : null;
+      return result;
+    } catch (error) {
+      inboundDiagnostics.lastInboundReason = "inbound_processing_failed";
+      inboundDiagnostics.lastInboundError =
+        error instanceof Error ? error.message : "unexpected_inbound_processing_error";
+      return {
+        accepted: false,
+        reason: "inbound_processing_failed"
+      };
+    }
+  }
+
+  const wsRuntime = options?.wsRuntime ?? (feishuApiClient
     ? new LarkFeishuWsRuntime(feishuConfig, async (normalized) => {
         if (!normalized) {
           return;
         }
-
-        if (normalized.senderType && normalized.senderType !== "user") {
-          return;
-        }
-
-        if (normalized.chatType && normalized.chatType !== "group") {
-          return;
-        }
-
-        if (!normalized.chatId) {
-          return;
-        }
-
-        const camp = repository.getCampByGroupId(normalized.chatId);
-        if (!camp) {
-          return;
-        }
-
-        const member = repository.ensureMember(normalized.memberId, camp.id);
-        await baseSync.syncMember(member);
-        const result = await evaluateMessageWindow(repository, member, normalized);
-
-        if (!result.accepted || !result.candidateId) {
-          return;
-        }
-
-        const rawEvent = repository.getRawEvent(`${normalized.memberId}:${normalized.messageId}`);
-        const score = repository.getScore(result.candidateId);
-        const latestWarning = result.latestWarningId
-          ? repository.listWarnings(member.campId).find((entry) => entry.id === result.latestWarningId)
-          : undefined;
-
-        if (rawEvent) {
-          await baseSync.syncRawEvent(rawEvent);
-        }
-        if (score) {
-          await baseSync.syncScore({
-            campId: member.campId,
-            member,
-            score
-          });
-        }
-        if (latestWarning) {
-          await baseSync.syncWarning(latestWarning);
-        }
+        await processInboundMessage(normalized);
       })
-    : new NoopFeishuWsRuntime();
+    : new NoopFeishuWsRuntime());
 
   await app.register(cors);
   await app.register(sensible);
@@ -188,20 +255,20 @@ export async function createApp(options?: {
     const member = repository.ensureMember(normalized.memberId, camp.id);
     await baseSync.syncMember(member);
     const result = await evaluateMessageWindow(repository, member, normalized);
-
-    if (!result.accepted || !result.candidateId) {
-      return result;
-    }
-
     const rawEvent = repository.getRawEvent(`${normalized.memberId}:${normalized.messageId}`);
-    const score = repository.getScore(result.candidateId);
-    const latestWarning = result.latestWarningId
-      ? repository.listWarnings(member.campId).find((entry) => entry.id === result.latestWarningId)
-      : undefined;
 
     if (rawEvent) {
       await baseSync.syncRawEvent(rawEvent);
     }
+
+    if (!result.candidateId) {
+      return result;
+    }
+
+    const score = repository.getScore(result.candidateId);
+    const latestWarning = result.latestWarningId
+      ? repository.listWarnings(member.campId).find((entry) => entry.id === result.latestWarningId)
+      : undefined;
 
     if (score) {
       await baseSync.syncScore({
@@ -223,10 +290,16 @@ export async function createApp(options?: {
   }));
 
   app.get("/api/feishu/status", async () => {
+    const llmConfig = readLlmProviderConfig(process.env);
     const defaultCamp = repository.getDefaultCamp();
     const baseTablesConfigured = Object.fromEntries(
       Object.entries(feishuConfig.base.tables).map(([key, value]) => [key, Boolean(value)])
     );
+    const phaseOneLinks = {
+      learnerHomeUrl: feishuConfig.phaseOne?.learnerHomeUrl ?? null,
+      operatorHomeUrl: feishuConfig.phaseOne?.operatorHomeUrl ?? null,
+      leaderboardUrl: feishuConfig.phaseOne?.leaderboardUrl ?? null
+    };
     const baseReady =
       feishuConfig.base.enabled &&
       Boolean(feishuConfig.base.appToken) &&
@@ -234,12 +307,27 @@ export async function createApp(options?: {
 
     let credentialsValid = false;
     let validationError: string | null = null;
+    let groupMessageReadProbe:
+      | {
+          ok: boolean;
+          code?: number;
+          message?: string;
+          missingScope?: string;
+          logId?: string;
+        }
+      | null = null;
     if (feishuApiClient && feishuConfig.enabled) {
       try {
         await feishuApiClient.validateCredentials();
         credentialsValid = true;
       } catch (error) {
         validationError = error instanceof Error ? error.message : "credential validation failed";
+      }
+
+      if (defaultCamp?.groupId) {
+        groupMessageReadProbe = await feishuApiClient.probeGroupMessageAccess({
+          chatId: defaultCamp.groupId
+        });
       }
     }
 
@@ -257,7 +345,37 @@ export async function createApp(options?: {
       baseAppConfigured: Boolean(feishuConfig.base.appToken),
       baseTablesConfigured,
       baseReady,
-      baseTables: feishuConfig.base.tables
+      baseTables: feishuConfig.base.tables,
+      phaseOne: {
+        homeTemplates: {
+          learner: "docs/feishu/learner-homepage-copy.md",
+          operator: "docs/feishu/operator-homepage-copy.md"
+        },
+        entryContract: phaseOneLinks,
+        linksConfigured: {
+          learnerHomeUrl: Boolean(phaseOneLinks.learnerHomeUrl),
+          operatorHomeUrl: Boolean(phaseOneLinks.operatorHomeUrl),
+          leaderboardUrl: Boolean(phaseOneLinks.leaderboardUrl)
+        }
+      },
+      llm: {
+        enabled: llmConfig.enabled,
+        provider: llmConfig.provider,
+        baseUrl: llmConfig.baseUrl || null,
+        textModel: llmConfig.textModel,
+        fileModel: llmConfig.fileModel || null,
+        fileExtractor: llmConfig.fileExtractor,
+        fileParserToolType: llmConfig.fileParserToolType,
+        timeoutMs: llmConfig.timeoutMs,
+        maxInputChars: llmConfig.maxInputChars,
+        concurrency: llmConfig.concurrency
+      },
+      groupMessageReadAccess: groupMessageReadProbe?.ok ?? null,
+      groupMessageReadProbe,
+      lastInboundEventAt: inboundDiagnostics.lastInboundEventAt,
+      lastInboundReason: inboundDiagnostics.lastInboundReason,
+      lastInboundError: inboundDiagnostics.lastInboundError,
+      lastNormalizedMessage: inboundDiagnostics.lastNormalizedMessage
     };
   });
 
@@ -279,7 +397,7 @@ export async function createApp(options?: {
       });
     }
 
-    return ingestNormalizedMessage(normalized);
+    return processInboundMessage(normalized);
   });
 
   app.get("/api/dashboard/ranking", async (request, reply) => {

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { MemberProfile, RawMessageEvent, ScoringResult, WarningRecord } from "../../src/domain/types";
+import { SqliteRepository } from "../../src/storage/sqlite-repository";
 import { FeishuBaseSyncService } from "../../src/services/feishu/base-sync";
 
 describe("FeishuBaseSyncService", () => {
@@ -23,6 +24,13 @@ describe("FeishuBaseSyncService", () => {
       {
         validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
         sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
         createBaseRecord: createRecord,
         searchBaseRecords: searchRecords,
         updateBaseRecord: updateRecord,
@@ -122,6 +130,13 @@ describe("FeishuBaseSyncService", () => {
       {
         validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
         sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
         createBaseRecord: createRecord,
         searchBaseRecords: searchRecords,
         updateBaseRecord: updateRecord,
@@ -181,6 +196,113 @@ describe("FeishuBaseSyncService", () => {
         tableId: "tbl_scores",
         fieldName: "candidate_id",
         fieldValue: "session-01:user-alice"
+      })
+    );
+  });
+  it("syncs the Feishu display name and avatar into SQLite and Base", async () => {
+    const repository = new SqliteRepository(":memory:");
+    repository.seedDemo();
+    const member = repository.ensureMember("user-alice", "camp-demo");
+    const createRecord = vi.fn(async () => ({ recordId: "rec_001" }));
+    const searchRecords = vi.fn(async () => []);
+    const updateRecord = vi.fn(async () => ({ recordId: "rec_001" }));
+    const getMemberProfile = vi.fn(async () => ({
+      userId: "user-alice",
+      displayName: "Alice Chen",
+      avatarUrl: "https://cdn.example.com/avatar/alice.png"
+    }));
+
+    const service = new FeishuBaseSyncService(
+      {
+        enabled: true,
+        appToken: "bitable_app_token",
+        tables: {
+          members: "tbl_members",
+          rawEvents: "tbl_raw_events",
+          scores: "tbl_scores",
+          warnings: "tbl_warnings",
+          snapshots: "tbl_snapshots"
+        }
+      },
+      {
+        validateCredentials: vi.fn(async () => ({ tenantKey: "tenant-demo" })),
+        sendTextMessage: vi.fn(async () => ({ messageId: "om_bot_001" })),
+        getMessageFile: vi.fn(async () => ({
+          fileKey: "file-demo",
+          fileName: "demo.pdf",
+          fileExt: "pdf",
+          mimeType: "application/pdf",
+          bytes: Buffer.from("demo")
+        })),
+        getMemberProfile,
+        createBaseRecord: createRecord,
+        searchBaseRecords: searchRecords,
+        updateBaseRecord: updateRecord,
+        searchChats: vi.fn(async () => []),
+        createChat: vi.fn(async () => ({ chatId: "chat-demo" })),
+        createBaseApp: vi.fn(async () => ({ appToken: "bitable_app_token", defaultTableId: "tbl_default" })),
+        renameBaseTable: vi.fn(async () => undefined),
+        createBaseTable: vi.fn(async () => ({ tableId: "tbl_generated" }))
+      },
+      repository
+    );
+
+    await service.syncMember(member);
+
+    expect(getMemberProfile).toHaveBeenCalledWith({
+      userId: "user-alice",
+      userIdType: "open_id"
+    });
+    expect(repository.getMember("user-alice")).toMatchObject({
+      id: "user-alice",
+      name: "Alice",
+      displayName: "Alice Chen",
+      avatarUrl: "https://cdn.example.com/avatar/alice.png"
+    });
+    expect(createRecord).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tableId: "tbl_members",
+        fields: expect.objectContaining({
+          member_id: "user-alice",
+          display_name: "Alice Chen",
+          avatar_url: "https://cdn.example.com/avatar/alice.png"
+        })
+      })
+    );
+
+    const score: ScoringResult = {
+      memberId: "user-alice",
+      sessionId: "session-01",
+      candidateId: "session-01:user-alice",
+      baseScore: 5,
+      processScore: 3,
+      qualityScore: 2,
+      communityBonus: 0,
+      totalScore: 10,
+      finalStatus: "valid",
+      scoreReason: "evidence + process + result",
+      llmReason: "fallback"
+    };
+
+    await service.syncScore({
+      campId: "camp-demo",
+      member: repository.getMember("user-alice") as MemberProfile,
+      score
+    });
+
+    expect(searchRecords).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tableId: "tbl_scores",
+        fieldName: "candidate_id",
+        fieldValue: "session-01:user-alice"
+      })
+    );
+    expect(createRecord).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        tableId: "tbl_scores",
+        fields: expect.objectContaining({
+          member_name: "Alice Chen"
+        })
       })
     );
   });

@@ -1,9 +1,15 @@
-import { aggregateSubmissionWindow } from "../../domain/submission-aggregation";
-import { scoreSubmissionCandidate } from "../../domain/scoring";
-import { resolveSessionForEvent } from "../../domain/session-windows";
-import type { MemberProfile } from "../../domain/types";
-import type { NormalizedFeishuMessage } from "../feishu/normalize-message";
-import { SqliteRepository } from "../../storage/sqlite-repository";
+import { aggregateSubmissionWindow } from "../../domain/submission-aggregation.js";
+import { buildPendingReviewScore, scoreSubmissionCandidate } from "../../domain/scoring.js";
+import { resolveSessionMatch } from "../../domain/session-windows.js";
+import type { MemberProfile } from "../../domain/types.js";
+import type { NormalizedFeishuMessage } from "../feishu/normalize-message.js";
+import { SqliteRepository } from "../../storage/sqlite-repository.js";
+
+function isEligibleDocument(event: NormalizedFeishuMessage) {
+  return event.messageType === "file" && (event.fileExt === "pdf" || event.fileExt === "docx");
+}
+
+const parseFailureReason = "文档解析失败，已转入人工复核";
 
 export async function evaluateMessageWindow(
   repository: SqliteRepository,
@@ -11,15 +17,26 @@ export async function evaluateMessageWindow(
   event: NormalizedFeishuMessage
 ) {
   const sessions = repository.listSessions(member.campId);
-  const session = resolveSessionForEvent(
+  const sessionMatch = resolveSessionMatch(
     {
       eventTime: event.eventTime,
-      parsedTags: event.parsedTags
+      parsedTags: event.parsedTags,
+      isEligibleDocument: isEligibleDocument(event)
     },
     sessions
   );
+  const session = sessionMatch.session;
 
   const eventId = `${event.memberId}:${event.messageId}`;
+  const parseStatus =
+    sessionMatch.reason === "ambiguous_window"
+      ? "pending_review_ambiguous_session"
+      : session
+        ? event.documentParseStatus === "failed"
+          ? "pending_review_parse_failed"
+          : "parsed"
+        : "ignored_no_active_session";
+
   repository.insertRawEvent({
     id: eventId,
     campId: member.campId,
@@ -27,19 +44,37 @@ export async function evaluateMessageWindow(
     memberId: event.memberId,
     sessionId: session?.id,
     messageId: event.messageId,
+    messageType: event.messageType,
     rawText: event.rawText,
     parsedTags: event.parsedTags,
     attachmentCount: event.attachmentCount,
     attachmentTypes: event.attachmentTypes,
+    fileKey: event.fileKey,
+    fileName: event.fileName,
+    fileExt: event.fileExt,
+    mimeType: event.mimeType,
+    documentText: event.documentText,
+    documentParseStatus: event.documentParseStatus,
+    documentParseReason: event.documentParseReason,
     eventTime: event.eventTime,
     eventUrl: event.eventUrl,
-    parseStatus: session ? "parsed" : "ignored"
+    parseStatus
   });
 
   if (!session) {
     return {
       accepted: false,
-      reason: "no_matching_session"
+      reason:
+        sessionMatch.reason === "ambiguous_window"
+          ? "pending_review_ambiguous_session"
+          : "ignored_no_active_session"
+    };
+  }
+
+  if (event.messageType === "file" && event.documentParseStatus === "unsupported") {
+    return {
+      accepted: false,
+      reason: "unsupported_document"
     };
   }
 
@@ -49,15 +84,53 @@ export async function evaluateMessageWindow(
     session.windowStart,
     session.windowEnd
   );
-
-  const candidate = aggregateSubmissionWindow({
+  const attempts = aggregateSubmissionWindow({
     member,
     session,
     events
   });
-  repository.saveCandidate(candidate);
+  const attempt = isEligibleDocument(event)
+    ? attempts.find((entry) => entry.messageId === event.messageId)
+    : attempts.at(-1);
 
-  const score = await scoreSubmissionCandidate(candidate);
+  if (!attempt) {
+    return {
+      accepted: false,
+      reason: "ignored_no_active_session"
+    };
+  }
+
+  repository.saveAttempt(attempt);
+
+  if (!isEligibleDocument(event)) {
+    return {
+      accepted: false,
+      reason: "ignored_non_document_message",
+      sessionId: session.id,
+      candidateId: attempt.id
+    };
+  }
+
+  if (event.messageType === "file" && event.documentParseStatus === "failed") {
+    const pendingReview = buildPendingReviewScore(
+      attempt,
+      "pending_review_parse_failed",
+      parseFailureReason
+    );
+    repository.saveScore(member.campId, pendingReview);
+    const warnings = repository.syncMemberWarnings(member.campId, member.id);
+
+    return {
+      accepted: false,
+      reason: "pending_review_parse_failed",
+      sessionId: session.id,
+      candidateId: attempt.id,
+      warningLevel: warnings.at(-1)?.level ?? null,
+      latestWarningId: warnings.at(-1)?.id ?? null
+    };
+  }
+
+  const score = await scoreSubmissionCandidate(attempt);
   repository.saveScore(member.campId, score);
   const warnings = repository.syncMemberWarnings(member.campId, member.id);
 
@@ -66,7 +139,7 @@ export async function evaluateMessageWindow(
     sessionId: session.id,
     finalStatus: score.finalStatus,
     totalScore: score.totalScore,
-    candidateId: candidate.id,
+    candidateId: attempt.id,
     warningLevel: warnings.at(-1)?.level ?? null,
     latestWarningId: warnings.at(-1)?.id ?? null
   };

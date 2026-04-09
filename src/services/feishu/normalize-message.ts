@@ -1,4 +1,6 @@
-import { parseTags } from "../../domain/tag-parser";
+import { parseTags } from "../../domain/tag-parser.js";
+import type { DocumentParseStatus } from "../../domain/types.js";
+import { inferDocumentFileExt } from "../documents/file-format.js";
 
 export interface NormalizedFeishuMessage {
   messageId: string;
@@ -6,11 +8,19 @@ export interface NormalizedFeishuMessage {
   chatId?: string;
   chatType?: string;
   senderType?: string;
+  messageType?: string;
   eventTime: string;
   rawText: string;
   parsedTags: string[];
   attachmentCount: number;
   attachmentTypes: string[];
+  fileKey?: string;
+  fileName?: string;
+  fileExt?: string;
+  mimeType?: string;
+  documentText: string;
+  documentParseStatus: DocumentParseStatus;
+  documentParseReason?: string;
   eventUrl: string;
 }
 
@@ -26,13 +36,46 @@ function inferAttachmentTypes(messageType: string | undefined, attachments: Arra
   return [];
 }
 
-function readMessageText(content: string): string {
+function readMessageContent(content: string): {
+  text: string;
+  fileKey?: string;
+  fileName?: string;
+  mimeType?: string;
+} {
   try {
-    const parsed = JSON.parse(content) as { text?: string };
-    return parsed.text ?? "";
+    const parsed = JSON.parse(content) as {
+      text?: string;
+      file_key?: string;
+      file_name?: string;
+      mime_type?: string;
+    };
+    return {
+      text: parsed.text ?? "",
+      fileKey: parsed.file_key,
+      fileName: parsed.file_name,
+      mimeType: parsed.mime_type
+    };
   } catch {
-    return content;
+    return {
+      text: content
+    };
   }
+}
+
+function initialDocumentParseStatus(messageType: string | undefined, fileExt: string | undefined): DocumentParseStatus {
+  if (messageType !== "file") {
+    return "not_applicable";
+  }
+
+  if (!fileExt) {
+    return "pending";
+  }
+
+  if (fileExt === "pdf" || fileExt === "docx") {
+    return "pending";
+  }
+
+  return "unsupported";
 }
 
 export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuMessage | undefined {
@@ -61,9 +104,14 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
     return undefined;
   }
 
-  const rawText = readMessageText(content);
+  const parsedContent = readMessageContent(content);
+  const rawText = parsedContent.text;
   const attachments = raw.event?.message?.attachments ?? [];
   const attachmentTypes = inferAttachmentTypes(messageType, attachments);
+  const fileExt = inferDocumentFileExt({
+    fileName: parsedContent.fileName,
+    mimeType: parsedContent.mimeType
+  });
 
   return {
     messageId,
@@ -71,11 +119,18 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
     chatId: raw.event?.message?.chat_id,
     chatType: raw.event?.message?.chat_type,
     senderType: raw.event?.sender?.sender_type,
+    messageType,
     eventTime: new Date(Number(createTime)).toISOString(),
     rawText,
     parsedTags: parseTags(rawText),
     attachmentCount: attachmentTypes.length,
     attachmentTypes,
+    fileKey: parsedContent.fileKey,
+    fileName: parsedContent.fileName,
+    fileExt,
+    mimeType: parsedContent.mimeType,
+    documentText: "",
+    documentParseStatus: initialDocumentParseStatus(messageType, fileExt),
     eventUrl: `feishu://message/${messageId}`
   };
 }

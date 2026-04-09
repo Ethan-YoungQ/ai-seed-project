@@ -1,8 +1,10 @@
-import { SqliteRepository } from "../../storage/sqlite-repository";
-import type { FeishuApiClient } from "./client";
-import type { FeishuBaseTablesConfig, FeishuConfig } from "./config";
+import { SqliteRepository } from "../../storage/sqlite-repository.js";
+import type { FeishuApiClient } from "./client.js";
+import type { FeishuBaseTablesConfig, FeishuConfig } from "./config.js";
 
 const TEXT_FIELD_TYPE = 1;
+const LEARNER_HOME_TEMPLATE = "docs/feishu/learner-homepage-copy.md";
+const OPERATOR_HOME_TEMPLATE = "docs/feishu/operator-homepage-copy.md";
 
 const tableSchemas: Array<{ key: keyof FeishuBaseTablesConfig; name: string; fields: string[] }> = [
   {
@@ -76,6 +78,16 @@ const tableSchemas: Array<{ key: keyof FeishuBaseTablesConfig; name: string; fie
   }
 ];
 
+function buildPhaseOneLinks(config: FeishuConfig) {
+  const phaseOne = config.phaseOne ?? {};
+
+  return {
+    learnerHomeUrl: phaseOne.learnerHomeUrl ?? "",
+    operatorHomeUrl: phaseOne.operatorHomeUrl ?? "",
+    leaderboardUrl: phaseOne.leaderboardUrl ?? ""
+  };
+}
+
 export class FeishuBootstrapService {
   constructor(
     private readonly repository: SqliteRepository,
@@ -107,11 +119,25 @@ export class FeishuBootstrapService {
     this.repository.updateCampGroupId(campId, chat.chatId);
 
     const base = await this.createBaseSchema(input.baseName ?? "Pfizer HBU AI Evaluator Base");
+    const phaseOneLinks = buildPhaseOneLinks(this.config);
+    const phaseOne = {
+      homeTemplates: {
+        learner: LEARNER_HOME_TEMPLATE,
+        operator: OPERATOR_HOME_TEMPLATE
+      },
+      entryContract: phaseOneLinks,
+      linksConfigured: {
+        learnerHomeUrl: Boolean(phaseOneLinks.learnerHomeUrl),
+        operatorHomeUrl: Boolean(phaseOneLinks.operatorHomeUrl),
+        leaderboardUrl: Boolean(phaseOneLinks.leaderboardUrl)
+      }
+    };
 
     return {
       campId,
       chat,
       base,
+      phaseOne,
       env: {
         FEISHU_BOT_CHAT_ID: chat.chatId,
         FEISHU_BOT_RECEIVE_ID_TYPE: "chat_id",
@@ -121,7 +147,12 @@ export class FeishuBootstrapService {
         FEISHU_BASE_RAW_EVENTS_TABLE: base.tables.rawEvents ?? "",
         FEISHU_BASE_SCORES_TABLE: base.tables.scores ?? "",
         FEISHU_BASE_WARNINGS_TABLE: base.tables.warnings ?? "",
-        FEISHU_BASE_SNAPSHOTS_TABLE: base.tables.snapshots ?? ""
+        FEISHU_BASE_SNAPSHOTS_TABLE: base.tables.snapshots ?? "",
+        FEISHU_LEARNER_HOME_URL: phaseOneLinks.learnerHomeUrl,
+        FEISHU_OPERATOR_HOME_URL: phaseOneLinks.operatorHomeUrl,
+        FEISHU_LEADERBOARD_URL: phaseOneLinks.leaderboardUrl,
+        FEISHU_LEARNER_HOME_DOC_TOKEN: "",
+        FEISHU_OPERATOR_HOME_DOC_TOKEN: ""
       }
     };
   }

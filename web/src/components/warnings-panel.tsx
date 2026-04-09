@@ -5,11 +5,17 @@ interface WarningsPanelProps {
 }
 
 export function WarningsPanel({ entries }: WarningsPanelProps) {
+  const levelLabels = {
+    reminder: "提醒",
+    warning: "警告",
+    elimination: "淘汰"
+  } as const;
+
   return (
     <section className="panel">
       <div className="panel__header">
         <div>
-          <p className="panel__eyebrow">State machine</p>
+          <p className="panel__eyebrow">状态提醒</p>
           <h2>提醒与淘汰</h2>
         </div>
         <p className="panel__hint">根据缺失有效作业的累计次数自动升级</p>
@@ -22,7 +28,7 @@ export function WarningsPanel({ entries }: WarningsPanelProps) {
           entries.map((entry) => (
             <article className={`warning-pill warning-pill--${entry.level}`} key={entry.id}>
               <strong>{entry.memberId}</strong>
-              <span>{entry.level}</span>
+              <span>{levelLabels[entry.level]}</span>
               <span>{entry.note}</span>
             </article>
           ))

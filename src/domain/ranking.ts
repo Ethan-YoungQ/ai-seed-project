@@ -1,4 +1,4 @@
-import type { BoardRankingEntry, MemberProfile, RankingInputScore } from "./types";
+import type { BoardRankingEntry, MemberProfile, RankingInputScore } from "./types.js";
 
 interface BuildBoardRankingInput {
   members: MemberProfile[];
@@ -35,7 +35,7 @@ export function buildBoardRanking(input: BuildBoardRankingInput): BoardRankingEn
 
       return {
         memberId,
-        memberName: member.name,
+        memberName: member.displayName?.trim() || member.name,
         department: member.department,
         totalScore: total.totalScore,
         sessionCount: total.sessionCount,

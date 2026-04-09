@@ -1,0 +1,20 @@
+[Unit]
+Description=AI Seed Project Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__APP_DIR__
+Environment=NODE_ENV=production
+Environment=PORT=3000
+Environment=DATABASE_URL=__DATABASE_URL__
+EnvironmentFile=-__APP_DIR__/.env
+ExecStart=__NODE_BIN__ __APP_DIR__/dist/server.js
+Restart=always
+RestartSec=5
+User=__RUN_USER__
+Group=__RUN_GROUP__
+
+[Install]
+WantedBy=multi-user.target

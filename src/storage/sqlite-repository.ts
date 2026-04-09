@@ -1,8 +1,13 @@
 import Database from "better-sqlite3";
 
-import { demoCamp, demoMembers, demoSessions } from "../config/defaults";
-import { buildBoardRanking } from "../domain/ranking";
-import { nextMemberStatusFromWarnings, resolveWarningLevel } from "../domain/warnings";
+import { demoCamp, demoMembers, demoSessions } from "../config/defaults.js";
+import { buildBoardRanking } from "../domain/ranking.js";
+import {
+  buildWarningKey,
+  classifyWarningViolation,
+  nextMemberStatusFromWarnings,
+  resolveWarningLevel
+} from "../domain/warnings.js";
 import type {
   AnnouncementJob,
   AnnouncementType,
@@ -14,11 +19,12 @@ import type {
   RawMessageEvent,
   ReviewAction,
   ScoringResult,
+  SessionResult,
   SessionDefinition,
-  SubmissionCandidate,
+  SubmissionAttempt,
   WarningRecord
-} from "../domain/types";
-import { buildBoardOverview } from "../services/board/overview";
+} from "../domain/types.js";
+import { buildBoardOverview } from "../services/board/overview.js";
 
 const tableDefinitions = `
 CREATE TABLE IF NOT EXISTS camps (
@@ -33,6 +39,8 @@ CREATE TABLE IF NOT EXISTS members (
   id TEXT PRIMARY KEY,
   camp_id TEXT NOT NULL,
   name TEXT NOT NULL,
+  display_name TEXT NOT NULL DEFAULT '',
+  avatar_url TEXT NOT NULL DEFAULT '',
   department TEXT NOT NULL,
   role_type TEXT NOT NULL,
   is_participant INTEGER NOT NULL DEFAULT 1,
@@ -58,10 +66,18 @@ CREATE TABLE IF NOT EXISTS raw_events (
   member_id TEXT NOT NULL,
   session_id TEXT,
   message_id TEXT NOT NULL UNIQUE,
+  message_type TEXT NOT NULL DEFAULT '',
   raw_text TEXT NOT NULL,
   parsed_tags TEXT NOT NULL,
   attachment_count INTEGER NOT NULL DEFAULT 0,
   attachment_types TEXT NOT NULL,
+  file_key TEXT NOT NULL DEFAULT '',
+  file_name TEXT NOT NULL DEFAULT '',
+  file_ext TEXT NOT NULL DEFAULT '',
+  mime_type TEXT NOT NULL DEFAULT '',
+  document_text TEXT NOT NULL DEFAULT '',
+  document_parse_status TEXT NOT NULL DEFAULT 'not_applicable',
+  document_parse_reason TEXT NOT NULL DEFAULT '',
   event_time TEXT NOT NULL,
   event_url TEXT NOT NULL,
   parse_status TEXT NOT NULL DEFAULT 'raw'
@@ -72,14 +88,29 @@ CREATE TABLE IF NOT EXISTS submission_candidates (
   session_id TEXT NOT NULL,
   member_id TEXT NOT NULL,
   homework_tag TEXT NOT NULL,
+  event_id TEXT NOT NULL DEFAULT '',
+  message_id TEXT NOT NULL DEFAULT '',
   event_ids TEXT NOT NULL,
+  file_key TEXT NOT NULL DEFAULT '',
   combined_text TEXT NOT NULL,
   attachment_count INTEGER NOT NULL DEFAULT 0,
   attachment_types TEXT NOT NULL,
+  document_text TEXT NOT NULL DEFAULT '',
+  document_parse_status TEXT NOT NULL DEFAULT 'not_applicable',
   first_event_time TEXT NOT NULL,
   latest_event_time TEXT NOT NULL,
   deadline_at TEXT NOT NULL,
   evaluation_window_end TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS session_results (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  session_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  chosen_attempt_id TEXT,
+  final_status TEXT NOT NULL,
+  total_score INTEGER NOT NULL DEFAULT 0,
+  latest_submitted_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS scores (
   id TEXT PRIMARY KEY,
@@ -164,6 +195,16 @@ function ensureColumn(db: Database.Database, table: string, column: string, defi
   db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
 }
 
+interface WarningSyncRow {
+  sessionId: string;
+  violationType: WarningRecord["violationType"];
+  createdAt: string;
+  note: string;
+  key: string;
+  resolved: boolean;
+  existing?: WarningRecord;
+}
+
 export class SqliteRepository {
   private readonly db: Database.Database;
 
@@ -171,6 +212,7 @@ export class SqliteRepository {
     this.db = new Database(databaseUrl);
     this.db.exec(tableDefinitions);
     this.ensureCompatibility();
+    this.backfillSessionResults();
   }
 
   private ensureCompatibility() {
@@ -184,6 +226,40 @@ export class SqliteRepository {
     ensureColumn(this.db, "scores", "llm_model", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "scores", "llm_input_excerpt", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "raw_events", "chat_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "message_type", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "file_key", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "file_name", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "file_ext", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "mime_type", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "document_text", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "raw_events", "document_parse_status", "TEXT NOT NULL DEFAULT 'not_applicable'");
+    ensureColumn(this.db, "raw_events", "document_parse_reason", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "members", "display_name", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "members", "avatar_url", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "event_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "message_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "file_key", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "submission_candidates", "document_text", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(
+      this.db,
+      "submission_candidates",
+      "document_parse_status",
+      "TEXT NOT NULL DEFAULT 'not_applicable'"
+    );
+  }
+
+  private backfillSessionResults() {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT camp_id, member_id, session_id
+         FROM scores
+         WHERE session_id IS NOT NULL`
+      )
+      .all() as Array<{ camp_id: string; member_id: string; session_id: string }>;
+
+    for (const row of rows) {
+      this.recomputeSessionResult(row.camp_id, row.member_id, row.session_id);
+    }
   }
 
   close() {
@@ -294,6 +370,8 @@ export class SqliteRepository {
       id: String(row.id),
       campId: String(row.camp_id),
       name: String(row.name),
+      displayName: String(row.display_name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
       department: String(row.department),
       roleType: row.role_type as MemberProfile["roleType"],
       isParticipant: asBoolean(Number(row.is_participant)),
@@ -317,6 +395,8 @@ export class SqliteRepository {
       id: memberId,
       campId,
       name: memberId,
+      displayName: "",
+      avatarUrl: "",
       department: "Unknown",
       roleType: "observer",
       isParticipant: false,
@@ -327,8 +407,8 @@ export class SqliteRepository {
     this.db
       .prepare(
         `INSERT INTO members
-        (id, camp_id, name, department, role_type, is_participant, is_excluded_from_board, status)
-        VALUES (@id, @campId, @name, @department, @roleType, @isParticipant, @isExcludedFromBoard, @status)`
+        (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
+        VALUES (@id, @campId, @name, @displayName, @avatarUrl, @department, @roleType, @isParticipant, @isExcludedFromBoard, @status)`
       )
       .run({
         ...fallback,
@@ -341,7 +421,9 @@ export class SqliteRepository {
 
   updateMember(
     memberId: string,
-    patch: Partial<Pick<MemberProfile, "isParticipant" | "isExcludedFromBoard" | "roleType">>
+    patch: Partial<
+      Pick<MemberProfile, "isParticipant" | "isExcludedFromBoard" | "roleType" | "displayName" | "avatarUrl">
+    >
   ) {
     const current = this.getMember(memberId);
     if (!current) {
@@ -353,20 +435,24 @@ export class SqliteRepository {
       ...patch
     };
 
-    this.db
-      .prepare(
-        `UPDATE members
-        SET role_type = @roleType,
-            is_participant = @isParticipant,
-            is_excluded_from_board = @isExcludedFromBoard
-        WHERE id = @id`
-      )
-      .run({
-        id: memberId,
-        roleType: next.roleType,
-        isParticipant: next.isParticipant ? 1 : 0,
-        isExcludedFromBoard: next.isExcludedFromBoard ? 1 : 0
-      });
+      this.db
+        .prepare(
+          `UPDATE members
+          SET role_type = @roleType,
+              display_name = @displayName,
+              avatar_url = @avatarUrl,
+              is_participant = @isParticipant,
+              is_excluded_from_board = @isExcludedFromBoard
+          WHERE id = @id`
+        )
+        .run({
+          id: memberId,
+          roleType: next.roleType,
+          displayName: next.displayName ?? "",
+          avatarUrl: next.avatarUrl ?? "",
+          isParticipant: next.isParticipant ? 1 : 0,
+          isExcludedFromBoard: next.isExcludedFromBoard ? 1 : 0
+        });
 
     this.recordAudit({
       id: `audit:member:${memberId}:${Date.now()}`,
@@ -391,6 +477,8 @@ export class SqliteRepository {
       id: String(row.id),
       campId: String(row.camp_id),
       name: String(row.name),
+      displayName: String(row.display_name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
       department: String(row.department),
       roleType: row.role_type as MemberProfile["roleType"],
       isParticipant: asBoolean(Number(row.is_participant)),
@@ -422,13 +510,21 @@ export class SqliteRepository {
     this.db
       .prepare(
         `INSERT OR IGNORE INTO raw_events
-        (id, camp_id, chat_id, member_id, session_id, message_id, raw_text, parsed_tags, attachment_count, attachment_types, event_time, event_url, parse_status)
-        VALUES (@id, @campId, @chatId, @memberId, @sessionId, @messageId, @rawText, @parsedTags, @attachmentCount, @attachmentTypes, @eventTime, @eventUrl, @parseStatus)`
+        (id, camp_id, chat_id, member_id, session_id, message_id, message_type, raw_text, parsed_tags, attachment_count, attachment_types, file_key, file_name, file_ext, mime_type, document_text, document_parse_status, document_parse_reason, event_time, event_url, parse_status)
+        VALUES (@id, @campId, @chatId, @memberId, @sessionId, @messageId, @messageType, @rawText, @parsedTags, @attachmentCount, @attachmentTypes, @fileKey, @fileName, @fileExt, @mimeType, @documentText, @documentParseStatus, @documentParseReason, @eventTime, @eventUrl, @parseStatus)`
       )
       .run({
         ...event,
         parsedTags: JSON.stringify(event.parsedTags),
-        attachmentTypes: JSON.stringify(event.attachmentTypes)
+        attachmentTypes: JSON.stringify(event.attachmentTypes),
+        messageType: event.messageType ?? "",
+        fileKey: event.fileKey ?? "",
+        fileName: event.fileName ?? "",
+        fileExt: event.fileExt ?? "",
+        mimeType: event.mimeType ?? "",
+        documentText: event.documentText ?? "",
+        documentParseStatus: event.documentParseStatus ?? "not_applicable",
+        documentParseReason: event.documentParseReason ?? ""
       });
   }
 
@@ -452,11 +548,19 @@ export class SqliteRepository {
       memberId: String(row.member_id),
       sessionId: row.session_id ? String(row.session_id) : undefined,
       messageId: String(row.message_id),
+      messageType: String(row.message_type ?? ""),
       eventTime: String(row.event_time),
       rawText: String(row.raw_text),
       parsedTags: JSON.parse(String(row.parsed_tags)) as string[],
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      fileKey: String(row.file_key ?? "") || undefined,
+      fileName: String(row.file_name ?? "") || undefined,
+      fileExt: String(row.file_ext ?? "") || undefined,
+      mimeType: String(row.mime_type ?? "") || undefined,
+      documentText: String(row.document_text ?? ""),
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as RawMessageEvent["documentParseStatus"],
+      documentParseReason: String(row.document_parse_reason ?? "") || undefined,
       eventUrl: String(row.event_url)
     }));
   }
@@ -477,34 +581,51 @@ export class SqliteRepository {
       memberId: String(row.member_id),
       sessionId: row.session_id ? String(row.session_id) : undefined,
       messageId: String(row.message_id),
+      messageType: String(row.message_type ?? ""),
       rawText: String(row.raw_text),
       parsedTags: JSON.parse(String(row.parsed_tags)) as string[],
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      fileKey: String(row.file_key ?? "") || undefined,
+      fileName: String(row.file_name ?? "") || undefined,
+      fileExt: String(row.file_ext ?? "") || undefined,
+      mimeType: String(row.mime_type ?? "") || undefined,
+      documentText: String(row.document_text ?? ""),
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as RawMessageEvent["documentParseStatus"],
+      documentParseReason: String(row.document_parse_reason ?? "") || undefined,
       eventTime: String(row.event_time),
       eventUrl: String(row.event_url),
       parseStatus: String(row.parse_status)
     };
   }
 
-  saveCandidate(candidate: SubmissionCandidate) {
+  saveAttempt(attempt: SubmissionAttempt) {
     this.db
       .prepare(
         `INSERT OR REPLACE INTO submission_candidates
-        (id, camp_id, session_id, member_id, homework_tag, event_ids, combined_text, attachment_count, attachment_types, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
-        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventIds, @combinedText, @attachmentCount, @attachmentTypes, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
+        (id, camp_id, session_id, member_id, homework_tag, event_id, message_id, event_ids, file_key, combined_text, attachment_count, attachment_types, document_text, document_parse_status, first_event_time, latest_event_time, deadline_at, evaluation_window_end)
+        VALUES (@id, @campId, @sessionId, @memberId, @homeworkTag, @eventId, @messageId, @eventIds, @fileKey, @combinedText, @attachmentCount, @attachmentTypes, @documentText, @documentParseStatus, @firstEventTime, @latestEventTime, @deadlineAt, @evaluationWindowEnd)`
       )
       .run({
-        ...candidate,
-        eventIds: JSON.stringify(candidate.eventIds),
-        attachmentTypes: JSON.stringify(candidate.attachmentTypes)
+        ...attempt,
+        eventIds: JSON.stringify(attempt.eventIds),
+        fileKey: attempt.fileKey ?? "",
+        attachmentTypes: JSON.stringify(attempt.attachmentTypes),
+        documentText: attempt.documentText ?? "",
+        documentParseStatus: attempt.documentParseStatus ?? "not_applicable"
       });
+
+    this.recomputeSessionResult(attempt.campId, attempt.memberId, attempt.sessionId);
   }
 
-  getCandidate(candidateId: string): SubmissionCandidate | undefined {
+  saveCandidate(candidate: SubmissionAttempt) {
+    this.saveAttempt(candidate);
+  }
+
+  getAttempt(attemptId: string): SubmissionAttempt | undefined {
     const row = this.db
       .prepare("SELECT * FROM submission_candidates WHERE id = ?")
-      .get(candidateId) as Record<string, unknown> | undefined;
+      .get(attemptId) as Record<string, unknown> | undefined;
 
     if (!row) {
       return undefined;
@@ -516,15 +637,24 @@ export class SqliteRepository {
       sessionId: String(row.session_id),
       memberId: String(row.member_id),
       homeworkTag: String(row.homework_tag),
+      eventId: String(row.event_id ?? ""),
+      messageId: String(row.message_id ?? ""),
       eventIds: JSON.parse(String(row.event_ids)) as string[],
+      fileKey: String(row.file_key ?? "") || undefined,
       combinedText: String(row.combined_text),
       attachmentCount: Number(row.attachment_count),
       attachmentTypes: JSON.parse(String(row.attachment_types)) as string[],
+      documentText: String(row.document_text ?? ""),
+      documentParseStatus: String(row.document_parse_status ?? "not_applicable") as SubmissionAttempt["documentParseStatus"],
       firstEventTime: String(row.first_event_time),
       latestEventTime: String(row.latest_event_time),
       deadlineAt: String(row.deadline_at),
       evaluationWindowEnd: String(row.evaluation_window_end)
     };
+  }
+
+  getCandidate(candidateId: string): SubmissionAttempt | undefined {
+    return this.getAttempt(candidateId);
   }
 
   saveScore(campId: string, score: ScoringResult) {
@@ -546,9 +676,11 @@ export class SqliteRepository {
         reviewNote: score.reviewNote ?? "",
         reviewedBy: score.reviewedBy ?? "",
         reviewedAt: score.reviewedAt ?? "",
-        llmModel: score.llmModel ?? "",
-        llmInputExcerpt: score.llmInputExcerpt ?? ""
-      });
+          llmModel: score.llmModel ?? "",
+          llmInputExcerpt: score.llmInputExcerpt ?? ""
+        });
+
+    this.recomputeSessionResult(campId, score.memberId, score.sessionId);
   }
 
   getScore(candidateId: string): ScoringResult | undefined {
@@ -597,6 +729,124 @@ export class SqliteRepository {
     }>;
   }
 
+  private listScoredAttemptsForSession(campId: string, memberId: string, sessionId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           sc.candidate_id,
+           sc.final_status,
+           sc.total_score,
+           c.latest_event_time
+         FROM scores sc
+         LEFT JOIN submission_candidates c ON c.id = sc.candidate_id
+         WHERE sc.camp_id = ? AND sc.member_id = ? AND sc.session_id = ?`
+      )
+      .all(campId, memberId, sessionId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      candidateId: String(row.candidate_id),
+      finalStatus: String(row.final_status) as ScoringResult["finalStatus"],
+      totalScore: Number(row.total_score ?? 0),
+      latestEventTime: String(row.latest_event_time ?? "")
+    }));
+  }
+
+  getSessionResult(campId: string, memberId: string, sessionId: string) {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, session_id, member_id, chosen_attempt_id, final_status, total_score, latest_submitted_at
+         FROM session_results
+         WHERE camp_id = ? AND member_id = ? AND session_id = ?
+         LIMIT 1`
+      )
+      .get(campId, memberId, sessionId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      sessionId: String(row.session_id),
+      memberId: String(row.member_id),
+      chosenAttemptId: row.chosen_attempt_id ? String(row.chosen_attempt_id) : undefined,
+      finalStatus: String(row.final_status) as SessionResult["finalStatus"],
+      totalScore: Number(row.total_score ?? 0),
+      latestSubmittedAt: String(row.latest_submitted_at)
+    } satisfies SessionResult;
+  }
+
+  private recomputeSessionResult(campId: string, memberId: string, sessionId: string) {
+    const attempts = this.listScoredAttemptsForSession(campId, memberId, sessionId);
+    const sessionResultId = `${sessionId}:${memberId}`;
+
+    if (attempts.length === 0) {
+      this.db.prepare("DELETE FROM session_results WHERE id = ?").run(sessionResultId);
+      return undefined;
+    }
+
+    const validAttempts = attempts
+      .filter((attempt) => attempt.finalStatus === "valid")
+      .sort((left, right) => {
+        if (right.totalScore !== left.totalScore) {
+          return right.totalScore - left.totalScore;
+        }
+
+        return right.latestEventTime.localeCompare(left.latestEventTime);
+      });
+
+    const latestAttempt = [...attempts].sort((left, right) =>
+      right.latestEventTime.localeCompare(left.latestEventTime)
+    )[0]!;
+    const chosenAttempt = validAttempts[0] ?? latestAttempt;
+
+    const result: SessionResult = {
+      id: sessionResultId,
+      campId,
+      sessionId,
+      memberId,
+      chosenAttemptId: chosenAttempt.candidateId,
+      finalStatus: validAttempts.length > 0 ? "valid" : chosenAttempt.finalStatus,
+      totalScore: validAttempts.length > 0 ? chosenAttempt.totalScore : chosenAttempt.totalScore,
+      latestSubmittedAt: chosenAttempt.latestEventTime
+    };
+
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO session_results
+        (id, camp_id, session_id, member_id, chosen_attempt_id, final_status, total_score, latest_submitted_at)
+        VALUES (@id, @campId, @sessionId, @memberId, @chosenAttemptId, @finalStatus, @totalScore, @latestSubmittedAt)`
+      )
+      .run({
+        ...result,
+        chosenAttemptId: result.chosenAttemptId ?? null
+      });
+
+    return result;
+  }
+
+  private listSessionResults(campId: string): SessionResult[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, camp_id, session_id, member_id, chosen_attempt_id, final_status, total_score, latest_submitted_at
+         FROM session_results
+         WHERE camp_id = ?`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      sessionId: String(row.session_id),
+      memberId: String(row.member_id),
+      chosenAttemptId: row.chosen_attempt_id ? String(row.chosen_attempt_id) : undefined,
+      finalStatus: String(row.final_status) as SessionResult["finalStatus"],
+      totalScore: Number(row.total_score ?? 0),
+      latestSubmittedAt: String(row.latest_submitted_at)
+    }));
+  }
+
   listOperatorSubmissions(campId: string): OperatorSubmissionEntry[] {
     const rows = this.db
       .prepare(
@@ -636,10 +886,75 @@ export class SqliteRepository {
     }));
   }
 
+  private listScoreRowsForMember(campId: string, memberId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           sr.chosen_attempt_id AS candidate_id,
+           sr.session_id,
+           sr.final_status,
+           sc.score_reason,
+           sc.reviewed_at,
+           sr.latest_submitted_at AS latest_event_time,
+           s.course_date,
+           s.deadline_at
+         FROM session_results sr
+         JOIN sessions s ON s.id = sr.session_id
+         LEFT JOIN scores sc ON sc.candidate_id = sr.chosen_attempt_id
+         WHERE sr.camp_id = ? AND sr.member_id = ?
+         ORDER BY s.course_date ASC`
+      )
+      .all(campId, memberId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      candidateId: String(row.candidate_id),
+      sessionId: String(row.session_id),
+      finalStatus: String(row.final_status) as ScoringResult["finalStatus"],
+      scoreReason: String(row.score_reason ?? ""),
+      reviewedAt: String(row.reviewed_at ?? ""),
+      latestEventTime: String(row.latest_event_time ?? ""),
+      courseDate: String(row.course_date),
+      deadlineAt: String(row.deadline_at)
+    }));
+  }
+
+  private resolveWarningsForSession(campId: string, memberId: string, sessionId: string) {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM warnings
+         WHERE camp_id = ? AND member_id = ? AND session_id = ? AND resolved_flag = 0`
+      )
+      .all(campId, memberId, sessionId) as Array<Record<string, unknown>>;
+
+    if (rows.length === 0) {
+      return [];
+    }
+
+    this.db
+      .prepare(
+        `UPDATE warnings
+         SET resolved_flag = 1
+         WHERE camp_id = ? AND member_id = ? AND session_id = ? AND resolved_flag = 0`
+      )
+      .run(campId, memberId, sessionId);
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      sessionId: row.session_id ? String(row.session_id) : undefined,
+      violationType: row.violation_type as WarningRecord["violationType"],
+      level: row.level as WarningRecord["level"],
+      createdAt: String(row.created_at),
+      resolvedFlag: true,
+      note: String(row.note)
+    }));
+  }
+
   overrideReview(candidateId: string, review: ReviewAction) {
     const existing = this.getScore(candidateId);
-    const candidate = this.getCandidate(candidateId);
-    if (!existing || !candidate) {
+    const attempt = this.getAttempt(candidateId);
+    if (!existing || !attempt) {
       return undefined;
     }
 
@@ -649,9 +964,18 @@ export class SqliteRepository {
       this.db
         .prepare("UPDATE members SET status = 'active' WHERE id = ?")
         .run(existing.memberId);
+      this.resolveWarningsForSession(attempt.campId, existing.memberId, existing.sessionId);
     } else {
       const override =
-        review.action === "override_score"
+        review.action === "mark_no_count"
+          ? {
+              finalStatus: "invalid" as const,
+              baseScore: 0,
+              processScore: 0,
+              qualityScore: 0,
+              communityBonus: 0
+            }
+          : review.action === "override_score"
           ? (review.override ?? {
               finalStatus: "pending_review" as const,
               baseScore: 0,
@@ -677,6 +1001,7 @@ export class SqliteRepository {
                total_score = @totalScore,
                final_status = @finalStatus,
                manual_override_flag = 1,
+               score_reason = @scoreReason,
                review_note = @reviewNote,
                reviewed_by = @reviewedBy,
                reviewed_at = @reviewedAt
@@ -694,6 +1019,10 @@ export class SqliteRepository {
             override.qualityScore +
             override.communityBonus,
           finalStatus: override.finalStatus,
+          scoreReason:
+            review.action === "mark_no_count"
+              ? "manual_no_count"
+              : existing.scoreReason,
           reviewNote: review.note,
           reviewedBy: review.reviewer,
           reviewedAt
@@ -702,7 +1031,7 @@ export class SqliteRepository {
 
     this.recordAudit({
       id: `audit:review:${candidateId}:${Date.now()}`,
-      campId: candidate.campId,
+      campId: attempt.campId,
       entityType: "score",
       entityId: candidateId,
       action: review.action,
@@ -711,65 +1040,165 @@ export class SqliteRepository {
       createdAt: reviewedAt
     });
 
-    this.syncMemberWarnings(candidate.campId, candidate.memberId);
+    this.recomputeSessionResult(attempt.campId, attempt.memberId, attempt.sessionId);
+    this.syncMemberWarnings(attempt.campId, attempt.memberId);
     return this.getScore(candidateId);
   }
 
   syncMemberWarnings(campId: string, memberId: string) {
-    const rows = this.db
-      .prepare(
-        `SELECT sc.session_id, s.course_date
-         FROM scores sc
-         JOIN sessions s ON s.id = sc.session_id
-         WHERE sc.camp_id = ? AND sc.member_id = ? AND sc.final_status = 'invalid'
-         ORDER BY s.course_date ASC`
-      )
-      .all(campId, memberId) as Array<{ session_id: string; course_date: string }>;
+    const now = Date.now();
+    const scoreRows = this.listScoreRowsForMember(campId, memberId);
+    const sessions = this.listSessions(campId);
+    const sessionById = new Map(sessions.map((session) => [session.id, session] as const));
+    const currentWarnings = this.listWarnings(campId).filter((warning) => warning.memberId === memberId);
+    const warningByKey = new Map(
+      currentWarnings.map((warning) => [buildWarningKey(memberId, warning.sessionId, warning.violationType), warning] as const)
+    );
 
-    this.db.prepare("DELETE FROM warnings WHERE camp_id = ? AND member_id = ?").run(campId, memberId);
+    const desiredFacts: WarningSyncRow[] = [];
+    const activeScoreSessionIds = new Set<string>();
 
-    const warnings: WarningRecord[] = rows.map((row, index) => ({
-      id: `warning:${memberId}:${row.session_id}`,
-      campId,
-      memberId,
-      sessionId: row.session_id,
-      violationType: "invalid_submission",
-      level: resolveWarningLevel(index + 1),
-      createdAt: row.course_date,
-      resolvedFlag: false,
-      note: `invalid_submission_count=${index + 1}`
-    }));
+    for (const scoreRow of scoreRows) {
+      activeScoreSessionIds.add(scoreRow.sessionId);
 
-    const insertWarning = this.db.prepare(
+      if (scoreRow.finalStatus !== "invalid") {
+        continue;
+      }
+
+      const violationType = classifyWarningViolation(scoreRow.scoreReason) ?? "invalid_submission";
+      const key = buildWarningKey(memberId, scoreRow.sessionId, violationType);
+      const existingWarning = warningByKey.get(key);
+
+      if (existingWarning?.resolvedFlag) {
+        continue;
+      }
+
+      const session = sessionById.get(scoreRow.sessionId);
+      desiredFacts.push({
+        sessionId: scoreRow.sessionId,
+        violationType,
+        createdAt:
+          scoreRow.latestEventTime ||
+          scoreRow.reviewedAt ||
+          session?.courseDate ||
+          nowIso(),
+        note: `${violationType}_count=0`,
+        key,
+        resolved: false,
+        existing: existingWarning
+      });
+    }
+
+    for (const session of sessions) {
+      if (new Date(session.deadlineAt).getTime() > now) {
+        continue;
+      }
+
+      if (activeScoreSessionIds.has(session.id)) {
+        continue;
+      }
+
+      const key = buildWarningKey(memberId, session.id, "absence");
+      const existingWarning = warningByKey.get(key);
+      if (existingWarning?.resolvedFlag) {
+        continue;
+      }
+
+      desiredFacts.push({
+        sessionId: session.id,
+        violationType: "absence",
+        createdAt: session.deadlineAt,
+        note: "absence_count=0",
+        key,
+        resolved: false,
+        existing: existingWarning
+      });
+    }
+
+    desiredFacts.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+
+    const updatedWarnings: WarningRecord[] = desiredFacts.map((fact, index) => {
+      const level = resolveWarningLevel(index + 1);
+      const warning =
+        fact.existing ??
+        ({
+          id: `warning:${memberId}:${fact.sessionId}:${fact.violationType}`,
+          campId,
+          memberId,
+          sessionId: fact.sessionId,
+          violationType: fact.violationType,
+          level,
+          createdAt: fact.createdAt,
+          resolvedFlag: false,
+          note: fact.note
+        } satisfies WarningRecord);
+
+      return {
+        ...warning,
+        level,
+        resolvedFlag: false,
+        note: `${fact.violationType}_count=${index + 1}`
+      };
+    });
+
+    const desiredActiveKeys = new Set(desiredFacts.map((fact) => fact.key));
+    const warningsToResolve = currentWarnings.filter(
+      (warning) => !warning.resolvedFlag && !desiredActiveKeys.has(buildWarningKey(memberId, warning.sessionId, warning.violationType))
+    );
+
+    const upsertWarning = this.db.prepare(
       `INSERT OR REPLACE INTO warnings
       (id, camp_id, member_id, session_id, violation_type, level, created_at, resolved_flag, note)
       VALUES (@id, @campId, @memberId, @sessionId, @violationType, @level, @createdAt, @resolvedFlag, @note)`
     );
 
-    for (const warning of warnings) {
-      insertWarning.run({
+    for (const warning of updatedWarnings) {
+      upsertWarning.run({
         ...warning,
-        resolvedFlag: warning.resolvedFlag ? 1 : 0
+        resolvedFlag: 0
       });
     }
 
-    const nextStatus = nextMemberStatusFromWarnings(warnings);
-    this.db.prepare("UPDATE members SET status = ? WHERE id = ?").run(nextStatus, memberId);
+    if (warningsToResolve.length > 0) {
+      const resolveWarning = this.db.prepare(
+        `UPDATE warnings
+         SET resolved_flag = 1
+         WHERE id = ?`
+      );
 
-    if (warnings.length > 0) {
+      for (const warning of warningsToResolve) {
+        resolveWarning.run(warning.id);
+      }
+    }
+
+    const memberWarnings = this.listWarnings(campId).filter(
+      (warning) => warning.memberId === memberId && !warning.resolvedFlag
+    );
+    const nextStatus = nextMemberStatusFromWarnings(memberWarnings);
+    const currentMember = this.getMember(memberId);
+    if (currentMember && currentMember.status !== nextStatus) {
+      this.db.prepare("UPDATE members SET status = ? WHERE id = ?").run(nextStatus, memberId);
+    }
+
+    const shouldAudit = updatedWarnings.length > 0 || warningsToResolve.length > 0 || currentMember?.status !== nextStatus;
+    if (shouldAudit) {
       this.recordAudit({
         id: `audit:warning:${memberId}:${Date.now()}`,
         campId,
         entityType: "warning",
         entityId: memberId,
-        action: "warning_synced",
+        action: "warning_state_synced",
         actor: "system",
-        payload: JSON.stringify(warnings),
+        payload: JSON.stringify({
+          activeWarnings: updatedWarnings,
+          resolvedWarnings: warningsToResolve,
+          nextStatus
+        }),
         createdAt: nowIso()
       });
     }
 
-    return warnings;
+    return updatedWarnings;
   }
 
   listWarnings(campId: string): WarningRecord[] {
@@ -793,13 +1222,15 @@ export class SqliteRepository {
   getRanking(campId: string) {
     return buildBoardRanking({
       members: this.listMembers(campId),
-      scores: this.listScores(campId).map((row) => ({
-        memberId: row.member_id,
-        sessionId: row.session_id,
-        totalScore: row.total_score,
-        communityBonus: row.community_bonus,
-        finalStatus: row.final_status
-      }))
+      scores: this.listSessionResults(campId)
+        .filter((row) => row.finalStatus === "valid")
+        .map((row) => ({
+          memberId: row.memberId,
+          sessionId: row.sessionId,
+          totalScore: row.totalScore,
+          communityBonus: 0,
+          finalStatus: row.finalStatus
+        }))
     });
   }
 

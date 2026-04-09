@@ -4,6 +4,12 @@ export type RoleType = "student" | "operator" | "trainer" | "observer";
 export type FinalStatus = "valid" | "invalid" | "pending_review";
 export type WarningLevel = "reminder" | "warning" | "elimination";
 export type ReviewActionType = "override_score" | "mark_no_count" | "restore_status";
+export type DocumentParseStatus =
+  | "not_applicable"
+  | "pending"
+  | "parsed"
+  | "unsupported"
+  | "failed";
 export type AnnouncementType =
   | "deadline_reminder"
   | "submission_summary"
@@ -36,6 +42,8 @@ export interface MemberProfile {
   id: string;
   campId: string;
   name: string;
+  displayName?: string;
+  avatarUrl?: string;
   department: string;
   roleType: RoleType;
   isParticipant: boolean;
@@ -49,29 +57,45 @@ export interface RawMessageEvent {
   memberId: string;
   sessionId?: string;
   messageId: string;
+  messageType?: string;
   eventTime: string;
   rawText: string;
   parsedTags: string[];
   attachmentCount: number;
   attachmentTypes: string[];
+  fileKey?: string;
+  fileName?: string;
+  fileExt?: string;
+  mimeType?: string;
+  documentText?: string;
+  documentParseStatus?: DocumentParseStatus;
+  documentParseReason?: string;
   eventUrl: string;
 }
 
-export interface SubmissionCandidate {
+export interface SubmissionAttempt {
   id: string;
   campId: string;
   sessionId: string;
   memberId: string;
   homeworkTag: string;
+  eventId: string;
+  messageId: string;
   eventIds: string[];
+  fileKey?: string;
   combinedText: string;
   attachmentCount: number;
   attachmentTypes: string[];
+  documentText?: string;
+  documentParseStatus?: DocumentParseStatus;
   firstEventTime: string;
   latestEventTime: string;
   deadlineAt: string;
   evaluationWindowEnd: string;
 }
+
+// One scored attempt corresponds to one supported file submission event.
+export type SubmissionCandidate = SubmissionAttempt;
 
 export interface ScoringResult {
   memberId: string;
@@ -95,6 +119,17 @@ export interface ScoringResult {
   autoProcessScore?: number;
   autoQualityScore?: number;
   autoCommunityBonus?: number;
+}
+
+export interface SessionResult {
+  id: string;
+  campId: string;
+  sessionId: string;
+  memberId: string;
+  chosenAttemptId?: string;
+  finalStatus: FinalStatus;
+  totalScore: number;
+  latestSubmittedAt: string;
 }
 
 export interface RankingInputScore {

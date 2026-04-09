@@ -1,6 +1,7 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 
-import type { FeishuConfig, FeishuReceiveIdType } from "./config";
+import type { FeishuConfig, FeishuReceiveIdType } from "./config.js";
+import { inferDocumentFileExt } from "../documents/file-format.js";
 
 export interface FeishuMessageSendInput {
   receiveId: string;
@@ -30,6 +31,12 @@ export interface FeishuChatSearchInput {
   pageSize?: number;
 }
 
+export interface FeishuMessageFileInput {
+  messageId: string;
+  fileKey: string;
+  fileName?: string;
+}
+
 export interface FeishuChatCreateInput {
   name: string;
   description?: string;
@@ -50,9 +57,35 @@ export interface FeishuBaseTableCreateInput {
   fields?: Array<{ fieldName: string; type: number }>;
 }
 
+export interface FeishuMemberProfileInput {
+  userId: string;
+  userIdType?: "open_id" | "user_id" | "union_id";
+}
+
+export interface FeishuMemberProfile {
+  userId: string;
+  displayName: string;
+  avatarUrl?: string;
+}
+
 export interface FeishuApiClient {
   validateCredentials(): Promise<{ tenantKey?: string }>;
   sendTextMessage(input: FeishuMessageSendInput): Promise<{ messageId?: string }>;
+  probeGroupMessageAccess(input: { chatId: string }): Promise<{
+    ok: boolean;
+    code?: number;
+    message?: string;
+    missingScope?: string;
+    logId?: string;
+  }>;
+  getMessageFile(input: FeishuMessageFileInput): Promise<{
+    fileKey: string;
+    fileName?: string;
+    fileExt?: string;
+    mimeType?: string;
+    bytes: Buffer;
+  }>;
+  getMemberProfile?(input: FeishuMemberProfileInput): Promise<FeishuMemberProfile>;
   createBaseRecord(input: FeishuBaseRecordInput): Promise<{ recordId?: string }>;
   searchBaseRecords(input: FeishuBaseRecordSearchInput): Promise<Array<{ recordId: string; fields?: Record<string, unknown> }>>;
   updateBaseRecord(input: FeishuBaseRecordUpdateInput): Promise<{ recordId?: string }>;
@@ -108,6 +141,128 @@ export class LarkFeishuApiClient implements FeishuApiClient {
 
     return {
       messageId: response?.data?.message_id
+    };
+  }
+
+  async probeGroupMessageAccess(input: { chatId: string }) {
+    try {
+      await this.client.im.message.list({
+        params: {
+          container_id: input.chatId,
+          container_id_type: "chat",
+          page_size: 1,
+          sort_type: "ByCreateTimeDesc"
+        }
+      });
+
+      return {
+        ok: true
+      };
+    } catch (error) {
+      const responseData = (
+        error &&
+        typeof error === "object" &&
+        "response" in error &&
+        (error as { response?: { data?: unknown } }).response?.data &&
+        typeof (error as { response?: { data?: unknown } }).response?.data === "object"
+      )
+        ? ((error as { response?: { data?: Record<string, unknown> } }).response?.data ?? {})
+        : {};
+      const message = typeof responseData.msg === "string"
+        ? responseData.msg
+        : error instanceof Error
+          ? error.message
+          : "group_message_probe_failed";
+      const missingScopeMatch = message.match(/need scope:\s*([A-Za-z0-9:._-]+)/);
+
+      return {
+        ok: false,
+        code: typeof responseData.code === "number" ? responseData.code : undefined,
+        message,
+        missingScope: missingScopeMatch?.[1],
+        logId:
+          responseData.error &&
+          typeof responseData.error === "object" &&
+          typeof (responseData.error as { log_id?: unknown }).log_id === "string"
+            ? (responseData.error as { log_id: string }).log_id
+            : undefined
+      };
+    }
+  }
+
+  async getMemberProfile(input: FeishuMemberProfileInput) {
+    const response = await this.client.contact.user.get({
+      path: {
+        user_id: input.userId
+      },
+      params: {
+        user_id_type: input.userIdType ?? "open_id"
+      }
+    });
+
+    const user = response?.data?.user;
+    const avatar = user?.avatar;
+    return {
+      userId: String(user?.open_id ?? user?.user_id ?? input.userId),
+      displayName: String(user?.nickname ?? user?.name ?? input.userId),
+      avatarUrl: avatar?.avatar_240 ?? avatar?.avatar_origin ?? undefined
+    };
+  }
+
+  async getMessageFile(input: FeishuMessageFileInput) {
+    let fileName = input.fileName;
+    let mimeType: string | undefined;
+
+    if (!fileName) {
+      try {
+        const message = await this.client.im.message.get({
+          path: {
+            message_id: input.messageId
+          }
+        });
+        const content = String(message?.data?.items?.[0]?.body?.content ?? message?.data?.body?.content ?? "");
+        if (content) {
+          const parsed = JSON.parse(content) as { file_name?: string; mime_type?: string };
+          fileName = parsed.file_name ?? fileName;
+          mimeType = parsed.mime_type;
+        }
+      } catch {
+        // Keep the download path resilient even when the metadata lookup is unavailable.
+      }
+    }
+
+    const response =
+      this.client.im.messageResource?.get
+        ? await this.client.im.messageResource.get({
+            path: {
+              message_id: input.messageId,
+              file_key: input.fileKey
+            },
+            params: {
+              type: "file"
+            }
+          })
+        : await this.client.im.file.get({
+            path: {
+              file_key: input.fileKey
+            }
+          });
+    const stream = response.getReadableStream();
+    const chunks: Buffer[] = [];
+
+    for await (const chunk of stream) {
+      chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+    }
+
+    return {
+      fileKey: input.fileKey,
+      fileName,
+      fileExt: inferDocumentFileExt({
+        fileName,
+        mimeType
+      }),
+      mimeType,
+      bytes: Buffer.concat(chunks)
     };
   }
 

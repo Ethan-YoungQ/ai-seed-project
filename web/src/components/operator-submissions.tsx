@@ -9,11 +9,17 @@ interface OperatorSubmissionsProps {
 }
 
 export function OperatorSubmissions({ entries, onUpdated }: OperatorSubmissionsProps) {
+  const finalStatusLabels = {
+    valid: "有效",
+    invalid: "无效",
+    pending_review: "待复核"
+  } as const;
+
   async function markValid(entry: OperatorSubmissionEntry) {
     await reviewCandidate(entry.candidateId, {
       action: "override_score",
       reviewer: "operator-ui",
-      note: "运营后台兜底判定为有效提交",
+      note: "人工复核确认该提交有效",
       override: {
         finalStatus: "valid",
         baseScore: 5,
@@ -32,7 +38,7 @@ export function OperatorSubmissions({ entries, onUpdated }: OperatorSubmissionsP
     <section className="panel">
       <div className="panel__header">
         <div>
-          <p className="panel__eyebrow">Review queue</p>
+          <p className="panel__eyebrow">提交复核</p>
           <h2>提交复核</h2>
         </div>
         <p className="panel__hint">查看候选提交并执行运营兜底判分</p>
@@ -44,7 +50,7 @@ export function OperatorSubmissions({ entries, onUpdated }: OperatorSubmissionsP
             <div>
               <strong>{entry.memberName}</strong>
               <p>
-                {entry.sessionTitle} · {entry.department} · {entry.finalStatus}
+                {entry.sessionTitle} · {entry.department} · {finalStatusLabels[entry.finalStatus]}
               </p>
             </div>
             <div className="operator-list__actions">

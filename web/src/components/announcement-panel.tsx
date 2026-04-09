@@ -17,7 +17,12 @@ export function AnnouncementPanel({ onUpdated }: AnnouncementPanelProps) {
 
   async function handleRun() {
     const result = await runAnnouncement("biweekly_ranking");
-    setStatus(`播报已记录，状态：${result.status}`);
+    const statusLabels = {
+      recorded: "已记录",
+      sent: "已发送",
+      failed: "发送失败"
+    } as const;
+    setStatus(`播报已记录，状态：${statusLabels[result.status as keyof typeof statusLabels] ?? result.status}`);
     await onUpdated();
   }
 
@@ -25,7 +30,7 @@ export function AnnouncementPanel({ onUpdated }: AnnouncementPanelProps) {
     <section className="panel">
       <div className="panel__header">
         <div>
-          <p className="panel__eyebrow">Announcement lab</p>
+          <p className="panel__eyebrow">公告发布</p>
           <h2>播报控制台</h2>
         </div>
         <p className="panel__hint">先预览文本，再写入公告记录并固化榜单快照</p>

@@ -1,5 +1,5 @@
-import { loadLocalEnv } from "./config/load-env";
-import { createApp } from "./app";
+import { loadLocalEnv } from "./config/load-env.js";
+import { createApp } from "./app.js";
 
 loadLocalEnv();
 const port = Number(process.env.PORT ?? 3000);

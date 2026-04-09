@@ -9,7 +9,7 @@ export function SnapshotTimeline({ entries }: SnapshotTimelineProps) {
     <section className="panel">
       <div className="panel__header">
         <div>
-          <p className="panel__eyebrow">Trend archive</p>
+          <p className="panel__eyebrow">历史快照</p>
           <h2>历史快照</h2>
         </div>
         <p className="panel__hint">每次排行榜播报都会固化一份双周快照</p>
