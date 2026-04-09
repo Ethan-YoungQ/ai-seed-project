@@ -2,7 +2,7 @@ import type {
   AnnouncementType,
   BoardRankingEntry,
   WarningRecord
-} from "../../domain/types";
+} from "../../domain/types.js";
 
 interface RenderAnnouncementInput {
   type: AnnouncementType;

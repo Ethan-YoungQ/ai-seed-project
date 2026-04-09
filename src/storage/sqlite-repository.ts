@@ -1,13 +1,13 @@
 import Database from "better-sqlite3";
 
-import { demoCamp, demoMembers, demoSessions } from "../config/defaults";
-import { buildBoardRanking } from "../domain/ranking";
+import { demoCamp, demoMembers, demoSessions } from "../config/defaults.js";
+import { buildBoardRanking } from "../domain/ranking.js";
 import {
   buildWarningKey,
   classifyWarningViolation,
   nextMemberStatusFromWarnings,
   resolveWarningLevel
-} from "../domain/warnings";
+} from "../domain/warnings.js";
 import type {
   AnnouncementJob,
   AnnouncementType,
@@ -23,8 +23,8 @@ import type {
   SessionDefinition,
   SubmissionAttempt,
   WarningRecord
-} from "../domain/types";
-import { buildBoardOverview } from "../services/board/overview";
+} from "../domain/types.js";
+import { buildBoardOverview } from "../services/board/overview.js";
 
 const tableDefinitions = `
 CREATE TABLE IF NOT EXISTS camps (

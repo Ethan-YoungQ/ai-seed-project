@@ -1,6 +1,6 @@
-import { parseTags } from "../../domain/tag-parser";
-import type { DocumentParseStatus } from "../../domain/types";
-import { inferDocumentFileExt } from "../documents/file-format";
+import { parseTags } from "../../domain/tag-parser.js";
+import type { DocumentParseStatus } from "../../domain/types.js";
+import { inferDocumentFileExt } from "../documents/file-format.js";
 
 export interface NormalizedFeishuMessage {
   messageId: string;

@@ -11,7 +11,7 @@ describe("LocalDocumentTextExtractor fallback", () => {
       llmFallback: async () => ({
         text: "Recovered text from the document model.",
         status: "parsed",
-        reason: "qwen_doc_fallback"
+        reason: "glm_file_parser_fallback"
       })
     });
 
@@ -24,7 +24,7 @@ describe("LocalDocumentTextExtractor fallback", () => {
     expect(result).toMatchObject({
       text: "Recovered text from the document model.",
       status: "parsed",
-      reason: "qwen_doc_fallback"
+      reason: "glm_file_parser_fallback"
     });
   });
 

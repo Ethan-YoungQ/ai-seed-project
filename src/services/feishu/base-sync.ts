@@ -4,10 +4,10 @@ import type {
   RawMessageEvent,
   ScoringResult,
   WarningRecord
-} from "../../domain/types";
-import type { SqliteRepository } from "../../storage/sqlite-repository";
-import type { FeishuApiClient } from "./client";
-import type { FeishuBaseTablesConfig } from "./config";
+} from "../../domain/types.js";
+import type { SqliteRepository } from "../../storage/sqlite-repository.js";
+import type { FeishuApiClient } from "./client.js";
+import type { FeishuBaseTablesConfig } from "./config.js";
 
 function stringifyBaseValue(value: unknown): string {
   if (value === undefined || value === null) {

@@ -1,8 +1,8 @@
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import { loadLocalEnv } from "../config/load-env";
-import { SqliteRepository } from "../storage/sqlite-repository";
+import { loadLocalEnv } from "../config/load-env.js";
+import { SqliteRepository } from "../storage/sqlite-repository.js";
 
 loadLocalEnv();
 const databaseUrl = process.env.DATABASE_URL ?? "./data/app.db";

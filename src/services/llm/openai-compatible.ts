@@ -1,4 +1,4 @@
-import type { LlmProviderConfig } from "./provider-config";
+import type { LlmProviderConfig } from "./provider-config.js";
 
 export interface OpenAiCompatibleClientDeps {
   fetchImpl?: typeof fetch;
@@ -42,6 +42,31 @@ async function parseJsonResponse(response: Response) {
   }
 }
 
+function stringifyApiError(payload: Record<string, unknown>) {
+  const error = payload.error;
+  if (typeof error === "string") {
+    return error;
+  }
+
+  if (error && typeof error === "object") {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return "[unserializable_error_object]";
+    }
+  }
+
+  if (typeof payload.raw === "string") {
+    return payload.raw;
+  }
+
+  try {
+    return JSON.stringify(payload);
+  } catch {
+    return "unknown";
+  }
+}
+
 export function createOpenAiCompatibleClient(
   config: LlmProviderConfig,
   deps: OpenAiCompatibleClientDeps = {}
@@ -72,9 +97,7 @@ export function createOpenAiCompatibleClient(
 
     const payload = await parseJsonResponse(response);
     if (!response.ok) {
-      throw new Error(
-        `openai_compatible_chat_failed:${response.status}:${String(payload.error ?? payload.raw ?? "unknown")}`
-      );
+      throw new Error(`openai_compatible_chat_failed:${response.status}:${stringifyApiError(payload)}`);
     }
 
     return payload;
@@ -102,7 +125,7 @@ export function createOpenAiCompatibleClient(
     const payload = await parseJsonResponse(response);
     if (!response.ok) {
       throw new Error(
-        `openai_compatible_file_upload_failed:${response.status}:${String(payload.error ?? payload.raw ?? "unknown")}`
+        `openai_compatible_file_upload_failed:${response.status}:${stringifyApiError(payload)}`
       );
     }
 

@@ -21,6 +21,7 @@ and an Aliyun always-on backend for scoring and sync.
 - `npm run dev:api`
 - `npm run dev:web`
 - `npm run seed:demo`
+- `npm run seed:ensure`
 - `npm run bootstrap:feishu`
 - `npm run build`
 - `npm test`
@@ -65,27 +66,32 @@ connecting the tenant.
 ### Reserved For Provider-Neutral LLM Routing
 
 - `LLM_ENABLED=true`
-- `LLM_PROVIDER=aliyun`
-- `LLM_BASE_URL`
+- `LLM_PROVIDER=glm`
+- `LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4`
 - `LLM_API_KEY`
-- `LLM_TEXT_MODEL=qwen3-flash`
-- `LLM_FILE_MODEL=qwen-doc`
+- `LLM_TEXT_MODEL=glm-4.7`
+- `LLM_FILE_MODEL`
+- `LLM_FILE_EXTRACTOR=glm_file_parser`
+- `LLM_FILE_PARSER_TOOL_TYPE=lite`
 - `LLM_TIMEOUT_MS`
 - `LLM_MAX_INPUT_CHARS`
 - `LLM_CONCURRENCY`
-- The scoring runtime already reads these keys; when enabled it uses compatible model scoring
-  and falls back to heuristic scoring if the LLM path is disabled or fails.
+- `LLM_FILE_MODEL` remains for backward compatibility with the older file-chat path.
+- The current release path uses GLM-compatible chat scoring plus GLM file parser fallback,
+  and still falls back to heuristic scoring if the LLM path is disabled or fails.
 
 ## Bring-Up Order
 
 1. Fill `.env` from `.env.example`.
 2. Run `npm install`.
-3. Seed local demo data with `npm run seed:demo`.
-4. Start the API with `npm run dev:api`.
-5. Confirm `GET /api/health`.
-6. Confirm `GET /api/feishu/status`.
-7. Run `npm run bootstrap:feishu` if you need the repo to create the test chat and Base schema.
-8. Restart the app after writing the bootstrap output back into `.env`.
+3. Initialize the SQLite baseline with `npm run seed:ensure`.
+4. `seed:ensure` is idempotent: on an empty database it seeds the phase-one baseline, and when
+   `FEISHU_BOT_CHAT_ID` is configured it aligns the default camp binding to that live group.
+5. Start the API with `npm run dev:api`.
+6. Confirm `GET /api/health`.
+7. Confirm `GET /api/feishu/status`.
+8. Run `npm run bootstrap:feishu` if you need the repo to create the test chat and Base schema.
+9. Restart the app after writing the bootstrap output back into `.env`.
 
 ## Local Verification Baseline
 
@@ -93,7 +99,7 @@ The current phase-one baseline has already been verified locally with:
 
 - `npm test`
 - `npm run build`
-- `npm run seed:demo`
+- `npm run seed:ensure`
 - `GET /api/health`
 - `GET /api/feishu/status`
 
@@ -119,25 +125,27 @@ On a blank local `.env`, `/api/feishu/status` is expected to return `200` with:
 7. Trigger an announcement with `POST /api/announcements/run`.
 8. Confirm the announcement job is recorded and the bot posts the summary into the group.
 
-## Live Domestic-Model Smoke
+## Live GLM Smoke
 
-Run this only after the real domestic-model API key is available.
+Run this only after the real GLM API key is available.
 
 1. Fill the provider-neutral runtime keys:
    - `LLM_ENABLED=true`
-   - `LLM_PROVIDER=aliyun`
-   - `LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1`
+   - `LLM_PROVIDER=glm`
+   - `LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4`
    - `LLM_API_KEY=<real_key>`
-   - `LLM_TEXT_MODEL=qwen3-flash`
-   - `LLM_FILE_MODEL=qwen-doc`
+   - `LLM_TEXT_MODEL=glm-4.7`
+   - `LLM_FILE_MODEL=`
+   - `LLM_FILE_EXTRACTOR=glm_file_parser`
+   - `LLM_FILE_PARSER_TOOL_TYPE=lite`
 2. Restart the API.
 3. Submit:
    - one normal PDF
    - one normal DOCX
    - one parse-failure style document
 4. Verify:
-   - normal documents score through `qwen3-flash`
-   - parse-failure fallback goes through `qwen-doc`
+   - normal documents score through `glm-4.7`
+   - parse-failure fallback goes through the GLM file parser
    - SQLite and Base both receive the attempt and final session result
    - learner/operator one-click links still point to the live release surfaces
 
@@ -160,5 +168,5 @@ The release is ready for sign-off when:
   and Base readiness.
 - A live Feishu bot test message succeeds.
 - A live PDF or DOCX submission in the real group is parsed, scored, and persisted.
-- The domestic-model smoke passes with the configured `LLM_*` provider-neutral keys.
+- The GLM smoke passes with the configured `LLM_*` provider-neutral keys.
 - Base mirrors the raw event and score for that live document submission.

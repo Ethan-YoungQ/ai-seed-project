@@ -21,7 +21,7 @@ Use this checklist after each release or Feishu configuration change.
 | 6 | Check the Feishu Base raw-events and scores tables | The new document submission is mirrored into Base. |
 | 7 | Open the configured learner/operator Feishu knowledge-base or document homepage links and Base entry links | Confirm the links are reachable and point at the live release data. This is a manual check; the standalone web UI is not part of the phase-one sign-off target. |
 | 8 | `POST /api/announcements/run` | The announcement job is recorded, and the bot posts the summary. |
-| 9 | After the real domestic-model API key is configured, send one normal PDF, one normal DOCX, and one parse-failure document | Normal documents score through `qwen3-flash`; parse fallback routes through `qwen-doc`; attempts and final session results land in SQLite and Base. |
+| 9 | After the real GLM API key is configured, send one normal PDF, one normal DOCX, and one parse-failure document | Normal documents score through `glm-4.7`; parse fallback routes through the GLM file parser; attempts and final session results land in SQLite and Base. |
 
 ## Expected Pass/Fail Signals
 
@@ -48,5 +48,5 @@ Treat the release as blocked if any of the following are true:
 - The live group does not show incoming document submissions.
 - `GET /api/feishu/status` reports credentials or Base as unready.
 - PDF/DOCX submissions fail before text extraction or remain stuck in `pending_review_parse_failed`.
-- The domestic-model smoke does not route parsed documents to `qwen3-flash` or fallback documents to `qwen-doc`.
+- The GLM smoke does not route parsed documents to `glm-4.7` or fallback documents to the GLM file parser.
 - The Feishu Base raw-events and scores tables do not reflect the latest submission.

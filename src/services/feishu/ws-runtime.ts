@@ -1,7 +1,7 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 
-import type { FeishuConfig } from "./config";
-import { normalizeFeishuMessageEvent } from "./normalize-message";
+import type { FeishuConfig } from "./config.js";
+import { normalizeFeishuMessageEvent } from "./normalize-message.js";
 
 export interface FeishuWsRuntime {
   start(): Promise<void>;

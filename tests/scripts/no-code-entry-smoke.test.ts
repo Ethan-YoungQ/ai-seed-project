@@ -33,6 +33,7 @@ describe("no-code entry smoke", () => {
     expect(packageJson.scripts?.["ops:deploy"]).toBe("bash scripts/ops/deploy-app.sh");
     expect(packageJson.scripts?.["ops:check"]).toBe("bash scripts/ops/check-health.sh");
     expect(packageJson.scripts?.["ops:backup"]).toBe("bash scripts/ops/backup-db.sh");
+    expect(packageJson.scripts?.["seed:ensure"]).toBe("tsx src/scripts/ensure-bootstrap-data.ts");
   });
 
   it("keeps the systemd unit templated for no-code deployment", () => {
@@ -51,7 +52,7 @@ describe("no-code entry smoke", () => {
     expect(script).toContain("ensure_service_user");
     expect(script).toContain("escape_sed_replacement");
     expect(script).toContain("mktemp");
-    expect(script).toContain("sudo env RUN_USER=\"$RUN_USER\"");
+    expect(script).toContain("run_privileged env RUN_USER=\"$RUN_USER\"");
     expect(script).toContain("FALLBACK_SERVICE_FILE");
     expect(script).toContain("install -Dm644");
     expect(script).toContain("$FALLBACK_SERVICE_FILE");
@@ -74,15 +75,26 @@ describe("no-code entry smoke", () => {
 
   it("documents Aliyun MCP as preferred and scripts as fallback", () => {
     const runbook = readFileSync("docs/ops/aliyun-mcp-runbook.md", "utf8");
-    expect(runbook).toContain("优先走 Aliyun MCP");
-    expect(runbook).toContain("脚本/SSH/Cloud Assistant");
+    expect(runbook).toContain("MCP/OpenAPI");
+    expect(runbook).toContain("SSH");
+    expect(runbook).toContain("Cloud Assistant");
   });
 
   it("documents one-click no-code operator flows", () => {
     const guide = readFileSync("docs/ops/no-code-operator-guide.md", "utf8");
-    expect(guide).toContain("一键启动");
-    expect(guide).toContain("一键进入");
-    expect(guide).toContain("学员");
-    expect(guide).toContain("运营");
+    expect(guide).toContain("Windows");
+    expect(guide).toContain("macOS");
+    expect(guide).toContain("Aliyun MCP");
+    expect(guide).toContain("Cloud Assistant");
+  });
+
+  it("seeds bootstrap data during deploy without overwriting existing camps", () => {
+    const deployScript = readFileSync("scripts/ops/deploy-app.sh", "utf8");
+    const seedScript = readFileSync("src/scripts/ensure-bootstrap-data.ts", "utf8");
+
+    expect(deployScript).toContain("\"$NPM_BIN\" run seed:ensure");
+    expect(seedScript).toContain("Seeded bootstrap demo data because the camps table was empty.");
+    expect(seedScript).toContain("Aligned camp");
+    expect(seedScript).toContain("Bootstrap data already present");
   });
 });

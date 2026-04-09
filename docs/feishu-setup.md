@@ -42,16 +42,18 @@ The standalone web UI and `/operator` routes remain engineering surfaces and are
    should use the `*_HOME_URL` names shown above.
 8. Set the provider-neutral LLM contract in `.env`:
    - `LLM_ENABLED=true`
-   - `LLM_PROVIDER=aliyun`
-   - `LLM_BASE_URL`
+   - `LLM_PROVIDER=glm`
+   - `LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4`
    - `LLM_API_KEY`
-   - `LLM_TEXT_MODEL=qwen3-flash`
-   - `LLM_FILE_MODEL=qwen-doc`
+   - `LLM_TEXT_MODEL=glm-4.7`
+   - `LLM_FILE_MODEL`
+   - `LLM_FILE_EXTRACTOR=glm_file_parser`
+   - `LLM_FILE_PARSER_TOOL_TYPE=lite`
    - `LLM_TIMEOUT_MS`
    - `LLM_MAX_INPUT_CHARS`
    - `LLM_CONCURRENCY`
-   The scoring runtime already reads these keys; when enabled it uses compatible model scoring
-   and falls back to heuristic scoring if the LLM path is disabled or fails.
+   The current release path uses GLM-compatible chat scoring and GLM file parser fallback.
+   If the LLM path is disabled or fails, the scoring runtime still falls back to heuristics.
 
 Use [`.env.example`](../.env.example) as the source of truth for the current variable set.
 

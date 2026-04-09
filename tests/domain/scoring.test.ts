@@ -68,14 +68,16 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.totalScore).toBeGreaterThanOrEqual(7);
   });
 
-  it("uses the injected llm scorer when provider-neutral config is enabled", async () => {
+  it("uses the injected llm scorer when glm config is enabled", async () => {
     const llmConfig: LlmProviderConfig = {
       enabled: true,
-      provider: "aliyun",
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      provider: "glm",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       apiKey: "sk-demo",
-      textModel: "qwen3-flash",
-      fileModel: "qwen-doc",
+      textModel: "glm-4.7",
+      fileModel: "",
+      fileExtractor: "glm_file_parser",
+      fileParserToolType: "lite",
       timeoutMs: 15000,
       maxInputChars: 6000,
       concurrency: 3
@@ -86,8 +88,8 @@ describe("scoreSubmissionCandidate", () => {
       llmScorer: async () => ({
         processScore: 3,
         qualityScore: 2,
-        reason: "Scored by qwen.",
-        model: "qwen3-flash",
+        reason: "Scored by glm.",
+        model: "glm-4.7",
         inputExcerpt: candidate.combinedText.slice(0, 160)
       })
     });
@@ -96,18 +98,20 @@ describe("scoreSubmissionCandidate", () => {
     expect(result.processScore).toBe(3);
     expect(result.qualityScore).toBe(2);
     expect(result.totalScore).toBe(10);
-    expect(result.llmModel).toBe("qwen3-flash");
-    expect(result.llmReason).toBe("Scored by qwen.");
+    expect(result.llmModel).toBe("glm-4.7");
+    expect(result.llmReason).toBe("Scored by glm.");
   });
 
   it("falls back to heuristic scoring when the llm scorer fails", async () => {
     const llmConfig: LlmProviderConfig = {
       enabled: true,
-      provider: "aliyun",
-      baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      provider: "glm",
+      baseUrl: "https://open.bigmodel.cn/api/paas/v4",
       apiKey: "sk-demo",
-      textModel: "qwen3-flash",
-      fileModel: "qwen-doc",
+      textModel: "glm-4.7",
+      fileModel: "",
+      fileExtractor: "glm_file_parser",
+      fileParserToolType: "lite",
       timeoutMs: 15000,
       maxInputChars: 6000,
       concurrency: 3

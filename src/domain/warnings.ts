@@ -1,4 +1,4 @@
-import type { WarningLevel, WarningRecord } from "./types";
+import type { WarningLevel, WarningRecord } from "./types.js";
 
 export function resolveWarningLevel(index: number): WarningLevel {
   if (index >= 3) {

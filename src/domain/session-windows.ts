@@ -1,4 +1,4 @@
-import type { SessionDefinition } from "./types";
+import type { SessionDefinition } from "./types.js";
 
 interface SessionLookupInput {
   eventTime: string;

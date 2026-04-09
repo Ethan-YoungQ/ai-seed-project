@@ -1,5 +1,5 @@
-import type { FeishuConfig, FeishuReceiveIdType } from "./config";
-import type { FeishuApiClient } from "./client";
+import type { FeishuConfig, FeishuReceiveIdType } from "./config.js";
+import type { FeishuApiClient } from "./client.js";
 
 export interface FeishuMessenger {
   sendTextMessage(input: {

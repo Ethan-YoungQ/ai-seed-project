@@ -3,20 +3,21 @@ import sensible from "@fastify/sensible";
 import Fastify from "fastify";
 import { z } from "zod";
 
-import { loadLocalEnv } from "./config/load-env";
-import { renderAnnouncement } from "./services/announcements/render-announcement";
-import { LocalDocumentTextExtractor, type DocumentTextExtractor } from "./services/documents/extract-text";
-import type { FeishuApiClient } from "./services/feishu/client";
-import { LarkFeishuApiClient } from "./services/feishu/client";
-import { FeishuBaseSyncService, NoopBaseSyncService } from "./services/feishu/base-sync";
-import type { FeishuConfig } from "./services/feishu/config";
-import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config";
-import { ConfiguredFeishuMessenger, NoopFeishuMessenger } from "./services/feishu/messenger";
-import { normalizeFeishuMessageEvent, type NormalizedFeishuMessage } from "./services/feishu/normalize-message";
-import type { FeishuWsRuntime } from "./services/feishu/ws-runtime";
-import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime";
-import { evaluateMessageWindow } from "./services/scoring/evaluate-window";
-import { SqliteRepository } from "./storage/sqlite-repository";
+import { loadLocalEnv } from "./config/load-env.js";
+import { renderAnnouncement } from "./services/announcements/render-announcement.js";
+import { LocalDocumentTextExtractor, type DocumentTextExtractor } from "./services/documents/extract-text.js";
+import type { FeishuApiClient } from "./services/feishu/client.js";
+import { LarkFeishuApiClient } from "./services/feishu/client.js";
+import { FeishuBaseSyncService, NoopBaseSyncService } from "./services/feishu/base-sync.js";
+import type { FeishuConfig } from "./services/feishu/config.js";
+import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config.js";
+import { ConfiguredFeishuMessenger, NoopFeishuMessenger } from "./services/feishu/messenger.js";
+import { normalizeFeishuMessageEvent, type NormalizedFeishuMessage } from "./services/feishu/normalize-message.js";
+import type { FeishuWsRuntime } from "./services/feishu/ws-runtime.js";
+import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime.js";
+import { evaluateMessageWindow } from "./services/scoring/evaluate-window.js";
+import { readLlmProviderConfig } from "./services/llm/provider-config.js";
+import { SqliteRepository } from "./storage/sqlite-repository.js";
 
 const memberPatchSchema = z.object({
   isParticipant: z.boolean().optional(),
@@ -289,6 +290,7 @@ export async function createApp(options?: {
   }));
 
   app.get("/api/feishu/status", async () => {
+    const llmConfig = readLlmProviderConfig(process.env);
     const defaultCamp = repository.getDefaultCamp();
     const baseTablesConfigured = Object.fromEntries(
       Object.entries(feishuConfig.base.tables).map(([key, value]) => [key, Boolean(value)])
@@ -355,6 +357,18 @@ export async function createApp(options?: {
           operatorHomeUrl: Boolean(phaseOneLinks.operatorHomeUrl),
           leaderboardUrl: Boolean(phaseOneLinks.leaderboardUrl)
         }
+      },
+      llm: {
+        enabled: llmConfig.enabled,
+        provider: llmConfig.provider,
+        baseUrl: llmConfig.baseUrl || null,
+        textModel: llmConfig.textModel,
+        fileModel: llmConfig.fileModel || null,
+        fileExtractor: llmConfig.fileExtractor,
+        fileParserToolType: llmConfig.fileParserToolType,
+        timeoutMs: llmConfig.timeoutMs,
+        maxInputChars: llmConfig.maxInputChars,
+        concurrency: llmConfig.concurrency
       },
       groupMessageReadAccess: groupMessageReadProbe?.ok ?? null,
       groupMessageReadProbe,

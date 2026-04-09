@@ -1,9 +1,9 @@
-import type { SubmissionAttempt } from "./types";
-import type { LlmProviderConfig } from "../services/llm/provider-config";
-import { readLlmProviderConfig } from "../services/llm/provider-config";
-import { scoreAttemptWithQwen, type QwenScoreResult } from "../services/llm/qwen-score";
+import type { SubmissionAttempt } from "./types.js";
+import type { LlmProviderConfig } from "../services/llm/provider-config.js";
+import { readLlmProviderConfig } from "../services/llm/provider-config.js";
+import { scoreAttemptWithLlm, type LlmScoreResult } from "../services/llm/llm-evaluator.js";
 
-import type { ScoringResult } from "./types";
+import type { ScoringResult } from "./types.js";
 
 const processMarkers = [
   "我是",
@@ -32,7 +32,7 @@ const structuredMarkers = ["总结", "输出", "步骤", "1.", "2.", "一、", "
 
 export interface ScoreSubmissionOptions {
   config?: LlmProviderConfig;
-  llmScorer?: (attempt: SubmissionAttempt, config: LlmProviderConfig) => Promise<QwenScoreResult>;
+  llmScorer?: (attempt: SubmissionAttempt, config: LlmProviderConfig) => Promise<LlmScoreResult>;
 }
 
 function buildSourceText(candidate: SubmissionAttempt) {
@@ -101,13 +101,13 @@ function buildHeuristicValidScore(
   };
 }
 
-function applyQwenScore(
+function applyLlmScore(
   candidate: SubmissionAttempt,
   sourceText: string,
-  qwenScore: QwenScoreResult
+  llmScore: LlmScoreResult
 ): ScoringResult {
-  const processScore = Math.max(0, Math.min(qwenScore.processScore, 3));
-  const qualityScore = Math.max(0, Math.min(qwenScore.qualityScore, 2));
+  const processScore = Math.max(0, Math.min(llmScore.processScore, 3));
+  const qualityScore = Math.max(0, Math.min(llmScore.qualityScore, 2));
 
   return {
     memberId: candidate.memberId,
@@ -120,9 +120,9 @@ function applyQwenScore(
     totalScore: 5 + processScore + qualityScore,
     finalStatus: "valid",
     scoreReason: "evidence_present",
-    llmReason: qwenScore.reason,
-    llmModel: qwenScore.model,
-    llmInputExcerpt: qwenScore.inputExcerpt || sourceText.slice(0, 160),
+    llmReason: llmScore.reason,
+    llmModel: llmScore.model,
+    llmInputExcerpt: llmScore.inputExcerpt || sourceText.slice(0, 160),
     autoBaseScore: 5,
     autoProcessScore: processScore,
     autoQualityScore: qualityScore,
@@ -163,12 +163,12 @@ export async function scoreSubmissionCandidate(
   }
 
   const config = options.config ?? readLlmProviderConfig(process.env);
-  const llmScorer = options.llmScorer ?? scoreAttemptWithQwen;
+  const llmScorer = options.llmScorer ?? scoreAttemptWithLlm;
 
   if (config.enabled) {
     try {
-      const qwenScore = await llmScorer(candidate, config);
-      return applyQwenScore(candidate, sourceText, qwenScore);
+      const llmScore = await llmScorer(candidate, config);
+      return applyLlmScore(candidate, sourceText, llmScore);
     } catch (error) {
       const fallbackReason =
         error instanceof Error && error.message.trim()

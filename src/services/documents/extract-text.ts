@@ -1,10 +1,10 @@
 import mammoth from "mammoth";
 import pdfParse from "pdf-parse";
 
-import type { DocumentParseStatus } from "../../domain/types";
-import { readLlmProviderConfig, type LlmProviderConfig } from "../llm/provider-config";
-import { extractTextWithQwenDoc } from "../llm/qwen-score";
-import { inferDocumentFileExt } from "./file-format";
+import type { DocumentParseStatus } from "../../domain/types.js";
+import { readLlmProviderConfig, type LlmProviderConfig } from "../llm/provider-config.js";
+import { inferDocumentFileExt } from "./file-format.js";
+import { createGlmFileParserClient } from "../llm/glm-file-parser.js";
 
 export interface DocumentExtractionInput {
   fileName?: string;
@@ -49,25 +49,34 @@ export class LocalDocumentTextExtractor implements DocumentTextExtractor {
     }
 
     try {
-      const result = await extractTextWithQwenDoc(
-        {
-          bytes: input.bytes,
-          fileName: input.fileName
-        },
-        config,
-        {
-          fetchImpl: this.options.fetchImpl
-        }
-      );
-
-      if (!result.text.trim()) {
+      if (config.fileExtractor !== "glm_file_parser") {
         return undefined;
       }
+
+      const ext =
+        input.fileExt?.toLowerCase() ??
+        inferDocumentFileExt({
+          fileName: input.fileName,
+          mimeType: input.mimeType
+        })?.toLowerCase();
+
+      if (ext !== "pdf" && ext !== "docx") {
+        return undefined;
+      }
+
+      const result = await createGlmFileParserClient(config, {
+        fetchImpl: this.options.fetchImpl
+      }).parse({
+        bytes: input.bytes,
+        fileName: input.fileName || `submission.${ext}`,
+        fileType: ext.toUpperCase(),
+        toolType: config.fileParserToolType
+      });
 
       return {
         text: normalizeWhitespace(result.text),
         status: "parsed",
-        reason: `llm_fallback:${result.model}`
+        reason: `llm_fallback:glm_file_parser:${config.fileParserToolType}:${result.taskId}`
       } satisfies DocumentExtractionResult;
     } catch {
       return undefined;

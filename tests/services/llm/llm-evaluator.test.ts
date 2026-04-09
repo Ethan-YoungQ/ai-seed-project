@@ -1,16 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 
 import type { SubmissionAttempt } from "../../../src/domain/types";
-import { extractTextWithQwenDoc, scoreAttemptWithQwen } from "../../../src/services/llm/qwen-score";
+import { scoreAttemptWithLlm } from "../../../src/services/llm/llm-evaluator";
 import type { LlmProviderConfig } from "../../../src/services/llm/provider-config";
 
 const config: LlmProviderConfig = {
   enabled: true,
-  provider: "aliyun",
-  baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  provider: "glm",
+  baseUrl: "https://open.bigmodel.cn/api/paas/v4",
   apiKey: "sk-demo",
-  textModel: "qwen3-flash",
-  fileModel: "qwen-doc",
+  textModel: "glm-4.7",
+  fileModel: "",
+  fileExtractor: "glm_file_parser",
+  fileParserToolType: "lite",
   timeoutMs: 15000,
   maxInputChars: 6000,
   concurrency: 3
@@ -37,12 +39,12 @@ const attempt: SubmissionAttempt = {
   evaluationWindowEnd: "2026-04-17T08:59:59.000Z"
 };
 
-describe("qwen routing", () => {
+describe("llm evaluator", () => {
   it("scores a submission through the OpenAI-compatible chat API", async () => {
     const fetchImpl = vi.fn(async () =>
       new Response(
         JSON.stringify({
-          model: "qwen3-flash",
+          model: "glm-4.7",
           choices: [
             {
               message: {
@@ -62,67 +64,14 @@ describe("qwen routing", () => {
       )
     );
 
-    const result = await scoreAttemptWithQwen(attempt, config, { fetchImpl });
+    const result = await scoreAttemptWithLlm(attempt, config, { fetchImpl });
 
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({
       processScore: 3,
       qualityScore: 2,
       reason: "Clear process and strong output.",
-      model: "qwen3-flash"
-    });
-  });
-
-  it("uploads a file and extracts plain text through the document model", async () => {
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            id: "file-fe-001",
-            filename: "submission.pdf",
-            purpose: "file-extract",
-            status: "processed"
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" }
-          }
-        )
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            model: "qwen-doc",
-            choices: [
-              {
-                message: {
-                  content: "Extracted plain text from the document."
-                }
-              }
-            ]
-          }),
-          {
-            status: 200,
-            headers: { "Content-Type": "application/json" }
-          }
-        )
-      );
-
-    const result = await extractTextWithQwenDoc(
-      {
-        bytes: Buffer.from("fake-pdf"),
-        fileName: "submission.pdf"
-      },
-      config,
-      { fetchImpl }
-    );
-
-    expect(fetchImpl).toHaveBeenCalledTimes(2);
-    expect(result).toMatchObject({
-      fileId: "file-fe-001",
-      model: "qwen-doc",
-      text: "Extracted plain text from the document."
+      model: "glm-4.7"
     });
   });
 });

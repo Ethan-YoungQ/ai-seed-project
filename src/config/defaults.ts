@@ -1,4 +1,4 @@
-import type { MemberProfile, SessionDefinition } from "../domain/types";
+import type { MemberProfile, SessionDefinition } from "../domain/types.js";
 
 export const demoCamp = {
   id: "camp-demo",

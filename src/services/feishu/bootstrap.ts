@@ -1,6 +1,6 @@
-import { SqliteRepository } from "../../storage/sqlite-repository";
-import type { FeishuApiClient } from "./client";
-import type { FeishuBaseTablesConfig, FeishuConfig } from "./config";
+import { SqliteRepository } from "../../storage/sqlite-repository.js";
+import type { FeishuApiClient } from "./client.js";
+import type { FeishuBaseTablesConfig, FeishuConfig } from "./config.js";
 
 const TEXT_FIELD_TYPE = 1;
 const LEARNER_HOME_TEMPLATE = "docs/feishu/learner-homepage-copy.md";

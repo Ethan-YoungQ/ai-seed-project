@@ -1,4 +1,4 @@
-import type { BoardRankingEntry, MemberProfile, RankingInputScore } from "./types";
+import type { BoardRankingEntry, MemberProfile, RankingInputScore } from "./types.js";
 
 interface BuildBoardRankingInput {
   members: MemberProfile[];

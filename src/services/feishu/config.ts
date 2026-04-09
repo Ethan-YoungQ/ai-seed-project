@@ -56,6 +56,17 @@ function readReceiveIdType(value: string | undefined): FeishuReceiveIdType {
   return "chat_id";
 }
 
+function readFirstDefined(env: NodeJS.ProcessEnv, ...keys: string[]) {
+  for (const key of keys) {
+    const value = env[key]?.trim();
+    if (value) {
+      return value;
+    }
+  }
+
+  return undefined;
+}
+
 export function readFeishuConfig(env: NodeJS.ProcessEnv = process.env): FeishuConfig {
   const appId = env.FEISHU_APP_ID?.trim() || undefined;
   const appSecret = env.FEISHU_APP_SECRET?.trim() || undefined;
@@ -70,8 +81,8 @@ export function readFeishuConfig(env: NodeJS.ProcessEnv = process.env): FeishuCo
     botChatId: env.FEISHU_BOT_CHAT_ID?.trim() || undefined,
     botReceiveIdType: readReceiveIdType(env.FEISHU_BOT_RECEIVE_ID_TYPE),
     phaseOne: {
-      learnerHomeUrl: env.FEISHU_LEARNER_HOME_URL?.trim() || undefined,
-      operatorHomeUrl: env.FEISHU_OPERATOR_HOME_URL?.trim() || undefined,
+      learnerHomeUrl: readFirstDefined(env, "FEISHU_LEARNER_HOME_URL", "FEISHU_LEARNER_HOME_DOC_URL"),
+      operatorHomeUrl: readFirstDefined(env, "FEISHU_OPERATOR_HOME_URL", "FEISHU_OPERATOR_HOME_DOC_URL"),
       leaderboardUrl: env.FEISHU_LEADERBOARD_URL?.trim() || undefined
     },
     base: {

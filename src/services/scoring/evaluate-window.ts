@@ -1,9 +1,9 @@
-import { aggregateSubmissionWindow } from "../../domain/submission-aggregation";
-import { buildPendingReviewScore, scoreSubmissionCandidate } from "../../domain/scoring";
-import { resolveSessionMatch } from "../../domain/session-windows";
-import type { MemberProfile } from "../../domain/types";
-import type { NormalizedFeishuMessage } from "../feishu/normalize-message";
-import { SqliteRepository } from "../../storage/sqlite-repository";
+import { aggregateSubmissionWindow } from "../../domain/submission-aggregation.js";
+import { buildPendingReviewScore, scoreSubmissionCandidate } from "../../domain/scoring.js";
+import { resolveSessionMatch } from "../../domain/session-windows.js";
+import type { MemberProfile } from "../../domain/types.js";
+import type { NormalizedFeishuMessage } from "../feishu/normalize-message.js";
+import { SqliteRepository } from "../../storage/sqlite-repository.js";
 
 function isEligibleDocument(event: NormalizedFeishuMessage) {
   return event.messageType === "file" && (event.fileExt === "pdf" || event.fileExt === "docx");

@@ -15,6 +15,7 @@
     "db:generate": "drizzle-kit generate",
     "db:push": "drizzle-kit push",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
+    "seed:ensure": "tsx src/scripts/ensure-bootstrap-data.ts",
     "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts",
     "ops:bootstrap": "bash scripts/ops/bootstrap-server.sh",
     "ops:deploy": "bash scripts/ops/deploy-app.sh",

@@ -508,6 +508,11 @@ describe("phase-2 and phase-3 API", () => {
         eventMode: "long_connection",
         botChatId: "chat-demo",
         botReceiveIdType: "chat_id",
+        phaseOne: {
+          learnerHomeUrl: undefined,
+          operatorHomeUrl: undefined,
+          leaderboardUrl: undefined
+        },
         base: {
           enabled: true,
           appToken: "bitable_app_token",
@@ -589,6 +594,15 @@ describe("phase-2 and phase-3 API", () => {
         operatorHomeUrl: false,
         leaderboardUrl: false
       }
+    });
+    expect(response.json().llm).toMatchObject({
+      enabled: false,
+      provider: "openai_compatible",
+      baseUrl: null,
+      textModel: "qwen3-flash",
+      fileModel: "qwen-doc",
+      fileExtractor: "openai_file_chat",
+      fileParserToolType: "lite"
     });
     expect(response.json().lastInboundEventAt).toBeNull();
     expect(response.json().lastInboundReason).toBeNull();

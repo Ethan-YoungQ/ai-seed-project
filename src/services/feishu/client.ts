@@ -1,7 +1,7 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 
-import type { FeishuConfig, FeishuReceiveIdType } from "./config";
-import { inferDocumentFileExt } from "../documents/file-format";
+import type { FeishuConfig, FeishuReceiveIdType } from "./config.js";
+import { inferDocumentFileExt } from "../documents/file-format.js";
 
 export interface FeishuMessageSendInput {
   receiveId: string;

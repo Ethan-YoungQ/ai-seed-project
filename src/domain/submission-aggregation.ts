@@ -1,4 +1,4 @@
-import type { MemberProfile, RawMessageEvent, SessionDefinition, SubmissionAttempt } from "./types";
+import type { MemberProfile, RawMessageEvent, SessionDefinition, SubmissionAttempt } from "./types.js";
 
 interface AggregateInput {
   member: MemberProfile;

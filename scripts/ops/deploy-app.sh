@@ -19,6 +19,7 @@ else
 fi
 
 "$NPM_BIN" run build
+"$NPM_BIN" run seed:ensure
 
 if [ "$(id -u)" -eq 0 ]; then
   systemctl restart "$SERVICE_NAME" || true
