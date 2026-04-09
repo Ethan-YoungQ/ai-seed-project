@@ -426,6 +426,7 @@ import {
   DomainError,
   DuplicateEventError,
   IceBreakerPeriodError,
+  InvalidDecisionStateError,
   InvalidLevelTransitionError,
   LlmExhaustedError,
   LlmNonRetryableError,
@@ -466,6 +467,7 @@ describe("DomainError hierarchy", () => {
       new NoActiveWindowError(),
       new WindowAlreadySettledError("window-w1"),
       new InvalidLevelTransitionError(1, 3),
+      new InvalidDecisionStateError("evt-xyz", "approved"),
       new LlmRetryableError("timeout"),
       new LlmNonRetryableError("json parse"),
       new LlmExhaustedError("3 attempts failed")
@@ -550,6 +552,20 @@ export class InvalidLevelTransitionError extends DomainError {
     super(
       "invalid_level_transition",
       `Invalid level transition: ${from} -> ${to}`
+    );
+  }
+}
+
+/**
+ * Thrown when an operator attempts to decide on a scoring event that is
+ * not currently in `review_required` state (e.g. already `approved`/`rejected`).
+ * Referenced by Phase G9 review-queue POST route — returns HTTP 409.
+ */
+export class InvalidDecisionStateError extends DomainError {
+  constructor(eventId: string, currentStatus: string) {
+    super(
+      "invalid_decision_state",
+      `Event ${eventId} is not in review_required state (current: ${currentStatus})`
     );
   }
 }
@@ -774,6 +790,7 @@ Create `tests/domain/v2/eligibility.test.ts`:
 import { describe, expect, test } from "vitest";
 
 import {
+  ELIGIBLE_STUDENT_WHERE_CLAUSE,
   isEligibleStudent,
   type EligibilityInput
 } from "../../../src/domain/v2/eligibility.js";
@@ -815,6 +832,14 @@ describe("isEligibleStudent", () => {
     expect(isEligibleStudent(undefined)).toBe(false);
     expect(isEligibleStudent(null)).toBe(false);
   });
+
+  test("ELIGIBLE_STUDENT_WHERE_CLAUSE mirrors the TS predicate for SQL callers", () => {
+    // Phase G7 imports this constant instead of inlining the rule, so the
+    // SQL layer and the domain layer stay in lockstep (spec §5.6).
+    expect(ELIGIBLE_STUDENT_WHERE_CLAUSE).toContain("role_type = 'student'");
+    expect(ELIGIBLE_STUDENT_WHERE_CLAUSE).toContain("is_participant = 1");
+    expect(ELIGIBLE_STUDENT_WHERE_CLAUSE).toContain("is_excluded_from_board = 0");
+  });
 });
 ```
 
@@ -843,12 +868,27 @@ export function isEligibleStudent(
   if (member.isExcludedFromBoard) return false;
   return true;
 }
+
+/**
+ * SQL mirror of `isEligibleStudent` for use in repository-layer queries.
+ * The spec (§5.6) calls `isEligibleStudent` the "唯一真相源" (single source
+ * of truth) for eligibility. Any SQL caller that filters eligible students
+ * (e.g. Phase G7 `fetchRankingByCamp`) MUST import this constant instead of
+ * inlining the predicate, so the TS function and the SQL layer cannot drift.
+ *
+ * Intended usage: `WHERE ${ELIGIBLE_STUDENT_WHERE_CLAUSE}` against a `members`
+ * row or alias (columns: `role_type`, `is_participant`, `is_excluded_from_board`).
+ * If a new eligibility column is added, edit BOTH `isEligibleStudent` and this
+ * constant in the same commit; the A5 test asserts they contain matching tokens.
+ */
+export const ELIGIBLE_STUDENT_WHERE_CLAUSE =
+  "role_type = 'student' AND is_participant = 1 AND is_excluded_from_board = 0";
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npm test -- tests/domain/v2/eligibility.test.ts`
-Expected: PASS — all 7 assertions green.
+Expected: PASS — all 8 assertions green (7 for `isEligibleStudent` + 1 for `ELIGIBLE_STUDENT_WHERE_CLAUSE` SQL mirror).
 
 - [ ] **Step 5: Commit**
 
