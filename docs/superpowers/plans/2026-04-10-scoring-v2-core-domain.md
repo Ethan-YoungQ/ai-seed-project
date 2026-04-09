@@ -9272,57 +9272,182 @@ Expected: both green. The domain layer is now complete enough for the subproject
 
 ## Phase G — API Routes (11 tasks)
 
-Phase G turns the domain services delivered in Phases A–F into a first-class HTTP surface under `/api/v2/*`. All routes are registered inside `createApp` in `src/app.ts`, validated with Zod 4 strict object schemas, and tested through `fastify.inject()` — there is no real HTTP listener in the test suite. A single helper `mapDomainErrorToHttp` in `src/app-v2-errors.ts` centralises the spec §6.4 error → HTTP status table so every route catch block stays one line. `createApp` options are extended with seven new dependency injection points (`ingestor`, `aggregator`, `periodLifecycle`, `windowSettler`, `llmWorker`, `reactionTracker`, `memberSync`) so tests can swap in fakes and production code can wire real implementations through `server.ts`.
+Phase G turns the domain services delivered in Phases A through F into a first-class HTTP surface under `/api/v2/*`. All routes are registered inside `createApp` in `src/app.ts`, validated with Zod 4 strict object schemas, and tested through `fastify.inject()` — there is no real HTTP listener in the test suite. A single helper `mapDomainErrorToHttp` lives in `src/app-v2-errors.ts` and centralises the spec section 6.4 error-to-HTTP status table so every route catch block stays one line. `createApp` options are extended with seven new dependency injection points (`ingestor`, `aggregator`, `periodLifecycle`, `windowSettler`, `llmWorker`, `reactionTracker`, `memberSync`) so tests can swap in fakes and production code can wire real implementations through `server.ts`.
 
-**Design constraints that apply to every task in Phase G:**
+### Why Phase G Is Structured This Way
 
-- All Zod schemas use `z.object({...}).strict()` so unknown keys produce 400 responses.
-- All admin routes (anything under `/api/v2/admin/*`, plus `/api/v2/periods/close`, `/api/v2/windows/open`, `/api/v2/graduation/close`) must use the `requireAdmin(repository)` Fastify `onRequest` hook delivered in Task G1.
-- Error handling is uniform: every route body is `try { ... } catch (err) { return mapDomainErrorToHttp(err, reply) }`. Routes never let domain errors bubble up to Fastify's default handler.
-- Route handler deps come from the closure captured inside `createApp`; the handlers do not read from `app.decorate` or from module-level globals.
-- Test files live beside the spec files in `tests/api/v2/` and import `createApp` directly with a `:memory:` SQLite URL.
-- The spec §6.4 mapping is the single source of truth for HTTP codes: `not_eligible | cap_exceeded | duplicate → 400`; `no_active_period | no_active_window | ice_breaker_no_scoring | window_already_settled → 409`; `invalid_level_transition → 500 (untyped surface)`; `llm_exhausted` never reaches the HTTP layer; unknown errors → 500 with `{ ok: false, code: "internal_error" }` and no stack trace leakage.
+Before diving into the tasks, it helps to understand why Phase G is structured the way it is. There are eleven tasks, not one mega-task, because each route represents an independent slice of user-visible behaviour. A failure in one route should not require the entire phase to be rolled back. The test file per task gives us a surgical rollback path: if `POST /api/v2/events` turns out to have a schema bug that was missed in review, we can revert a single commit without touching any of the other ten routes. That property is only possible because the route registration logic is delegated to per-task files under `src/routes/v2/*`.
 
-### Task G1 — Admin Middleware + `createApp` Dependency Wiring
+The alternative — a single large "add all v2 routes" commit — was rejected for three reasons. First, the commit would be too large for code review (easily 2000+ lines of diff). Second, a single commit means a single rollback unit, so a minor bug in one route forces the entire surface to be reverted. Third, the test-per-task discipline forces us to write the tests for each route in isolation before writing any other routes, which catches shared-state bugs that a monolithic test suite would miss.
+
+### Global Design Constraints For Phase G
+
+These constraints apply to every task in Phase G. They are stated once here and referenced by each task. If a task violates one of these constraints the task is not green and must be reworked.
+
+1. **Strict Zod schemas.** All Zod body schemas use `z.object({...}).strict()` so unknown keys produce 400 responses. This matches the coding-style rule that external input must be validated with schema-based validation at system boundaries. Strict mode also catches typos on the caller side — a sub-project 2 developer who accidentally sends `memberID` instead of `memberId` will see a clear 400 instead of a silent null dereference downstream.
+
+2. **Admin gating.** All admin routes (anything under `/api/v2/admin/*`, plus `/api/v2/periods/close`, `/api/v2/windows/open`, and `/api/v2/graduation/close`) must use the `requireAdmin(repository)` Fastify `onRequest` hook delivered in Task G1. The hook is a closure that captures the repository, not a module-level decorator, so tests can inject a `:memory:` repository without restructuring.
+
+3. **Uniform error handling.** Every route body is wrapped in `try { ... } catch (err) { return mapDomainErrorToHttp(err, reply) }`. Routes never let domain errors bubble up to Fastify's default handler, because Fastify would otherwise leak a generic 500 with no `code` field, forcing clients to string-match the error message.
+
+4. **Closure-based dependency injection.** Route handler dependencies come from the closure captured inside `createApp`. Handlers do not read from `app.decorate` or from module-level globals, because decorator state leaks across tests and globals break parallel test execution inside vitest workers.
+
+5. **Tests use app.inject only.** Test files live beside the spec files in `tests/api/v2/` and import `createApp` directly with a `:memory:` SQLite URL. No test may start a real HTTP listener — doing so would mean every test needs to allocate a port, which serialises the test suite and doubles runtime.
+
+6. **Canonical error mapping.** The spec section 6.4 mapping is the single source of truth for HTTP codes. `not_eligible`, `cap_exceeded`, and `duplicate` become 400. `no_active_period`, `no_active_window`, `ice_breaker_no_scoring`, and `window_already_settled` become 409. `invalid_level_transition` becomes 500 because it is a code-layer bug, not a user error. `llm_exhausted` is never surfaced because the worker converts it to a `review_required` event before the API ever sees it. Unknown errors become 500 with `{ ok: false, code: "internal_error" }` and no stack trace leakage.
+
+7. **File-size limit.** Route files under `src/routes/v2/*` must stay under 200 lines each to satisfy the coding-style file-size rule. When a file approaches that ceiling, split it. For example, `src/routes/v2/admin-members.ts` and `src/routes/v2/admin-review.ts` are separate files even though they share the `/api/v2/admin/*` prefix.
+
+8. **Integration-test coverage.** Every new route must be covered by at least one integration test that uses `app.inject`. Tests that only call the route handler function directly are not acceptable because they skip the middleware chain — in particular, they would skip the Zod body parsing and the `requireAdmin` guard.
+
+9. **Response envelope convention.** Responses on success always include `ok: true`. Responses on failure always include `ok: false` plus a `code` field. This convention lets the dashboard in sub-project 3 handle all v2 endpoints with a single response parser. The convention diverges slightly from the common REST pattern of relying on HTTP status alone, but the dashboard needs a consistent error-code taxonomy for UI localisation.
+
+10. **No console prints.** No route contains a `console.log`, `console.error`, or any debug print statement. Logging goes through `request.log` only. The hookify system will flag any `console` usage before commit, but the discipline is still the developer's responsibility.
+
+11. **Commit discipline.** Each task produces exactly one commit. The commit message is listed at the bottom of each task and must be used verbatim. Do not add `[skip ci]` tags, do not amend commits from previous tasks, do not squash.
+
+12. **TypeScript strict mode.** All new files are written to compile cleanly under `"strict": true`. No `any` types. No `@ts-ignore` or `@ts-expect-error`. If you encounter a type mismatch that seems to require a cast, step back and check whether the type definition itself needs to be extended — the answer is almost always yes.
+
+### Phase G Task Summary
+
+| Task | Route | Method | Admin | New Files | Tests |
+|---|---|---|---|---|---|
+| G1 | middleware + wiring | n/a | yes (factory) | `src/app-v2-errors.ts`, `src/routes/v2/common.ts`, `src/types/fastify.d.ts` | 2 files, 8 tests |
+| G2 | `/api/v2/events` | POST | no | `src/routes/v2/events.ts` | 1 file, 8 tests |
+| G3 | `/api/v2/periods/open` | POST | no | `src/routes/v2/periods.ts` | 1 file, 4 tests |
+| G4 | `/api/v2/periods/close` | POST | yes | extends G3 file | 1 file, 3 tests |
+| G5 | `/api/v2/windows/open` | POST | yes | `src/routes/v2/windows.ts` | 1 file, 5 tests |
+| G6 | `/api/v2/graduation/close` | POST | yes | `src/routes/v2/graduation.ts` | 1 file, 3 tests |
+| G7 | `/api/v2/board/ranking` | GET | no | `src/routes/v2/board.ts` | 2 files, 5 tests |
+| G8 | `/api/v2/board/member/:id` | GET | no | extends G7 file | 2 files, 4 tests |
+| G9 | `/api/v2/admin/review-queue` | GET + POST | yes | `src/routes/v2/admin-review.ts` | 1 file, 6 tests |
+| G10 | `/api/v2/admin/members` | GET + PATCH | yes | `src/routes/v2/admin-members.ts` | 2 files, 6 tests |
+| G11 | `/api/v2/llm/worker/status` | GET | no | `src/routes/v2/llm-status.ts` | 1 file, 2 tests |
+
+Phase G creates thirteen route handlers distributed across nine route files plus common infrastructure, and covers them with approximately 54 tests. The shared helper infrastructure from Task G1 keeps each subsequent route file tight (typically under 100 lines).
+
+### Task G1 — Admin Middleware and createApp Dependency Wiring
+
+**Intent**
+
+Task G1 is the foundation that every later Phase G task stands on. It does three things at once. First, it extends the `createApp` options interface with seven new dependency injection points. Second, it ships the `requireAdmin(repository)` Fastify hook factory used by all admin routes. Third, it ships the `mapDomainErrorToHttp` centralised error mapper used by every route catch block. The middleware implementation follows spec section 5.11 exactly, and the error mapper follows spec section 6.4 exactly.
+
+**Why the three pieces live together**
+
+These three pieces land in one task because they share a test harness. The unit tests for the middleware need a throwaway route that calls `mapDomainErrorToHttp` to verify the 403 path. The dependency wiring tests need the middleware to exist so they can prove that `requireAdmin` composes with the new `createApp` options. Splitting them into three tasks would force circular git dependencies where each task's tests would only pass after the next task's implementation was in place.
+
+**Architectural rationale**
+
+The choice of a closure-based factory (`requireAdmin(repository)`) instead of a Fastify plugin (`fastify.register(requireAdminPlugin)`) is deliberate. Plugins run at registration time and are global, which means every route decorated with the plugin would share state. A closure factory gives us one middleware instance per route-registration call, which is what we want because each v2 sub-section has slightly different semantics (for example, the `POST /api/v2/events` route is not admin-gated but the `POST /api/v2/admin/review-queue` route is). A closure factory also lets tests substitute the repository without restructuring.
+
+The choice of a centralised `mapDomainErrorToHttp` instead of a Fastify error handler is also deliberate. Fastify's `setErrorHandler` runs after Zod validation has already consumed the body, which means the error handler has no access to the original body for logging. By handling errors inline in each route catch block, we keep the raw body available for the log line and we avoid a second async hop through Fastify's error-handling middleware stack. The downside is boilerplate in every route, but the boilerplate is exactly one `try/catch` wrapper, which is negligible.
 
 **Files**
 
-- `src/app.ts` — extend the `createApp` options interface with the seven new deps, wire sensible defaults, and add the `requireAdmin(repository)` factory.
-- `src/app-v2-errors.ts` — NEW. Export `mapDomainErrorToHttp(err: unknown, reply: FastifyReply): FastifyReply`. Holds the entire §6.4 mapping table in one place.
-- `src/domain/v2/eligibility.ts` — read-only import; no edits, but the middleware references member shape from here.
+- `src/app.ts` — extend the `createApp` options interface with the seven new deps, wire sensible defaults, and add the `requireAdmin(repository)` factory. This edit is additive; no existing code is removed in this task.
+- `src/app-v2-errors.ts` — NEW. Export `mapDomainErrorToHttp(err: unknown, reply: FastifyReply): FastifyReply`. Holds the entire section 6.4 mapping table in one place.
+- `src/routes/v2/common.ts` — NEW. Re-exports `mapDomainErrorToHttp`, `parseStrict`, and `adminGuard`. Acts as the single import surface for every route file in this phase.
+- `src/types/fastify.d.ts` — NEW. TypeScript module augmentation that declares `request.currentAdmin: MemberRecord | undefined` so every later route can consume the field with full type safety.
+- `src/domain/v2/eligibility.ts` — read-only import; no edits in this task, but the middleware references the member shape from here.
 - `tests/api/v2/require-admin.test.ts` — NEW. Unit-style tests that use `fastify.inject()` on a tiny route registered inside the test harness.
-- `tests/api/v2/app-wiring.test.ts` — NEW. Asserts that `createApp` accepts the new options and exposes them on `request.server.v2` (or an equivalent closure hook) to every route.
+- `tests/api/v2/app-wiring.test.ts` — NEW. Asserts that `createApp` accepts the new options and exposes them to every route via a closure.
+
+**Expected file sizes**
+
+- `src/app.ts`: grows by approximately 60 lines for the new options interface, the `buildV2Runtime` helper, and the `requireAdmin` factory. Total stays under 700 lines. If the total would exceed 700 lines, extract `buildV2Runtime` to its own file.
+- `src/app-v2-errors.ts`: approximately 70 lines. The error mapper switch has one case per `DomainError` subclass plus a default.
+- `src/routes/v2/common.ts`: approximately 40 lines. It is primarily re-exports.
+- `src/types/fastify.d.ts`: approximately 15 lines. Just the module augmentation.
 
 **Steps**
 
-- [ ] RED: write `tests/api/v2/require-admin.test.ts` with four failing cases. (1) No `x-feishu-open-id` header → 401 JSON body `{ ok: false, code: "no_identity" }`. (2) Header set but `repository.findMemberByFeishuOpenId` returns `null` → 403 JSON `{ ok: false, code: "not_admin" }`. (3) Header matches a student → 403. (4) Header matches an operator → 200 with a dummy payload echoed by the test-only route. The test harness registers a throwaway route `GET /_test/admin` decorated with `{ onRequest: requireAdmin(repository) }` that returns `{ ok: true, currentAdmin: request.currentAdmin }`. Running `npm test -- tests/api/v2/require-admin.test.ts` must fail with "requireAdmin is not a function".
-- [ ] RED: write `tests/api/v2/app-wiring.test.ts`. Instantiate `createApp({ databaseUrl: ":memory:", ingestor: fakeIngestor, aggregator: fakeAggregator, periodLifecycle: fakePeriodLifecycle, windowSettler: fakeWindowSettler, llmWorker: fakeLlmWorker, reactionTracker: fakeReactionTracker, memberSync: fakeMemberSync })`. Then assert via `app.inject({ method: "GET", url: "/_health" })` that the app boots. Also register a second route `GET /_test/deps` inside the test harness (via a factory that you expose temporarily under `createApp` test hook) that returns the typeof each injected dep. This test must fail with "createApp does not accept property 'ingestor'".
-- [ ] GREEN: edit `src/app.ts` and expand the `createApp` options interface. Add seven new optional fields, each a full TypeScript interface imported from the domain / services layer: `ingestor?: EventIngestor`, `aggregator?: ScoringAggregator`, `periodLifecycle?: PeriodLifecycleService`, `windowSettler?: WindowSettler`, `llmWorker?: LlmScoringWorker`, `reactionTracker?: ReactionTracker`, `memberSync?: MemberSyncService`. Provide default implementations inline: `options.ingestor ?? new EventIngestor({ repository, clock: options.clock ?? Date })`, and the analogous pattern for the other six. Defaults live behind a small `buildV2Runtime(options, repository)` helper near the top of `createApp` so route registration is not cluttered. Add `declare module "fastify"` augmentation for `request.currentAdmin: MemberRecord | undefined` in `src/types/fastify.d.ts` or an equivalent shared types file.
-- [ ] GREEN: add the `requireAdmin` factory. It is a closure that takes a `Repository` and returns a Fastify `onRequest` hook. The hook reads `request.headers["x-feishu-open-id"]`, coerces to a trimmed string, calls `repository.findMemberByFeishuOpenId(openId)`, and short-circuits with 401 on missing header or 403 on missing / non-admin role. On success it assigns `request.currentAdmin = member` and calls `done()`. Also write `src/app-v2-errors.ts` with the `mapDomainErrorToHttp` helper — a simple switch on `err.code` (after narrowing `err` to `DomainError` via `instanceof`) that writes `reply.code(status).send({ ok: false, code, message })`. Unknown errors log via `reply.request.log.error` and return a 500 with `{ ok: false, code: "internal_error" }`. Run `npm test -- tests/api/v2/require-admin.test.ts tests/api/v2/app-wiring.test.ts` — all tests green.
-- [ ] REFACTOR: DRY the middleware's header-read logic into a single helper `readOpenIdHeader(request): string | null` inside `src/app.ts`. Add a JSDoc block at the top of `src/app-v2-errors.ts` that lists every `DomainError` subclass and its HTTP mapping so a future reader sees the full table at a glance. Run `npm run build` to confirm the type augmentation compiles; fix any strict-mode gaps the compiler complains about.
+- [ ] RED: Write `tests/api/v2/require-admin.test.ts` with four failing cases. The harness imports `createApp` from `../../../src/app.js`, creates a `:memory:` repository, and seeds one operator member (`id: "op-1", sourceFeishuOpenId: "ou-op-1", roleType: "operator"`) plus one student member (`id: "st-1", sourceFeishuOpenId: "ou-st-1", roleType: "student"`). The test then boots `createApp({ databaseUrl: ":memory:" })` with a test-only option hook that registers a throwaway route `GET /_test/admin-required`. The throwaway route uses `{ onRequest: requireAdmin(repository) }` and returns `{ ok: true, currentAdmin: request.currentAdmin }`. Case 1: no header set — `app.inject({ method: "GET", url: "/_test/admin-required" })` returns 401 and body `{ ok: false, code: "no_identity" }`. Case 2: header set but unknown open id — returns 403 and body `{ ok: false, code: "not_admin" }`. Case 3: header set but student — returns 403. Case 4: header set, operator — returns 200 and body `{ ok: true, currentAdmin: { id: "op-1", ... } }`. Run `npm test -- tests/api/v2/require-admin.test.ts` and watch all four fail with "requireAdmin is not a function".
 
-**Commit:** `feat(v2-api): add requireAdmin middleware and wire v2 dependencies into createApp`
+- [ ] RED: Write `tests/api/v2/app-wiring.test.ts`. This test boots `createApp({ databaseUrl: ":memory:", ingestor: fakeIngestor, aggregator: fakeAggregator, periodLifecycle: fakePeriodLifecycle, windowSettler: fakeWindowSettler, llmWorker: fakeLlmWorker, reactionTracker: fakeReactionTracker, memberSync: fakeMemberSync })` where every fake is a minimal vitest `vi.fn()`-based stub. First assertion: `app.inject({ method: "GET", url: "/_health" })` returns 200. Second assertion: the test-only route `GET /_test/deps` (exposed via a tiny test-hook option) returns a JSON object where every one of the seven deps has the expected identity (compare by object reference equality). Third assertion: calling `createApp({ databaseUrl: ":memory:" })` without any of the new deps also works — every dep defaults to a real production implementation constructed from the repository. Fourth assertion: the default `ingestor` is an instance of `EventIngestor`. Run `npm test -- tests/api/v2/app-wiring.test.ts` and watch it fail because `createApp` does not yet know the new option keys.
 
-### Task G2 — `POST /api/v2/events`
+- [ ] GREEN: Edit `src/app.ts` and expand the `createApp` options interface. Add seven new optional fields, each a full TypeScript interface imported from the domain / services layer: `ingestor?: EventIngestor`, `aggregator?: ScoringAggregator`, `periodLifecycle?: PeriodLifecycleService`, `windowSettler?: WindowSettler`, `llmWorker?: LlmScoringWorker`, `reactionTracker?: ReactionTracker`, `memberSync?: MemberSyncService`. Provide default implementations inline: `options.ingestor ?? new EventIngestor({ repository, clock: options.clock ?? Date })`, and the analogous pattern for the other six. The defaults live behind a small `buildV2Runtime(options, repository)` helper near the top of `createApp` so route registration is not cluttered. Return the runtime bundle as `const v2 = buildV2Runtime(options, repository);` and thread it into every later route registration call via the `deps` parameter.
+
+- [ ] GREEN: Create `src/types/fastify.d.ts` with a TypeScript module augmentation. The file content is the three-line block: `declare module "fastify" { interface FastifyRequest { currentAdmin?: MemberRecord; } }`. Import `MemberRecord` from `../domain/v2/types.js`. This file is picked up automatically by `tsconfig.json` `include` because it sits under `src/`. The augmentation means that every Fastify request object now has an optional `currentAdmin` field that is `undefined` by default and set to a `MemberRecord` by the `requireAdmin` hook.
+
+- [ ] GREEN: Create `src/app-v2-errors.ts`. Export a single function `mapDomainErrorToHttp(err: unknown, reply: FastifyReply): FastifyReply`. The function body narrows the error with `if (err instanceof DomainError)` and switches on `err.code`. For each known code it calls `reply.code(status).send({ ok: false, code: err.code, message: err.message })`. The final branch (unknown error) calls `reply.request.log.error({ err }, "unhandled_error")` followed by `reply.code(500).send({ ok: false, code: "internal_error" })`. The switch ends with an exhaustive `default` that uses `const _never: never = err.code;` to force the TypeScript compiler to reject a future addition to the `DomainError` hierarchy that forgets to update this switch.
+
+- [ ] GREEN: Add the `requireAdmin` factory to `src/app.ts`. It is a closure that takes a `Repository` and returns a Fastify `onRequest` hook. The hook reads `request.headers["x-feishu-open-id"]`, coerces to a trimmed string, calls `repository.findMemberByFeishuOpenId(openId)`, and short-circuits with 401 on missing header or 403 on missing or non-admin role. On success it assigns `request.currentAdmin = member` and the hook returns without calling `reply.send`. Export both the factory and the raw hook shape for testability.
+
+- [ ] GREEN: Create `src/routes/v2/common.ts`. Re-export `mapDomainErrorToHttp` from `../../app-v2-errors.js`. Export `parseStrict(schema, body, reply)` — a helper that calls `schema.safeParse(body)` and either returns the parsed value or calls `reply.code(400).send({ ok: false, code: "invalid_body", details: parsed.error.flatten() })` and returns `null`. Export `adminGuard(repository)` as a thin alias over `requireAdmin(repository)` scoped to the v2 surface. The `common.ts` file becomes the single import surface that every route file in this phase pulls from, which keeps each route file's import block to a single line.
+
+- [ ] GREEN: Run `npm test -- tests/api/v2/require-admin.test.ts tests/api/v2/app-wiring.test.ts`. All tests should now be green. If any assertion still fails, check the order of branches in the `requireAdmin` hook: 401 must come before 403 because a missing header is a more fundamental failure than a known-but-non-admin header. Also check that the factory is exported from `src/app.ts` and not just defined inline — the test file needs to import it directly.
+
+- [ ] REFACTOR: DRY the middleware header-read logic into a single helper `readOpenIdHeader(request): string | null` inside `src/app.ts`. The helper trims whitespace and returns `null` for empty strings. This ensures that a header with only whitespace is treated the same as a missing header, which is the behaviour the tests assert.
+
+- [ ] REFACTOR: Add a JSDoc block at the top of `src/app-v2-errors.ts` that lists every `DomainError` subclass and its HTTP mapping, so a future reader sees the full table at a glance without needing to read the switch body. The JSDoc is the developer-facing companion to spec section 6.4.
+
+- [ ] REFACTOR: Run `npm run build` to confirm the type augmentation compiles. Fix any strict-mode gaps the compiler complains about. In particular, verify that `request.currentAdmin` is typed as `MemberRecord | undefined` everywhere so admin routes can safely write `request.currentAdmin!.id` after the guard has run (the `!` non-null assertion is safe because the guard short-circuits with 403 if the member is missing, so any code after the guard is only reachable when `currentAdmin` is defined).
+
+- [ ] REFACTOR: Run the full `npm test -- tests/api/v2/` folder to confirm no existing test regressed. There should be no existing v2 tests yet, so this is a smoke check rather than a substantive assertion.
+
+**Commit**
+
+`feat(v2-api): add requireAdmin middleware and wire v2 dependencies into createApp`
+
+**Why this commit is atomic**
+
+All three deliverables — middleware, error mapper, and dep wiring — must land together. Splitting them would either leave a broken build between commits or force a later task to re-open `src/app.ts` for a second-round wiring fix. Keeping them in one commit honours the "atomic, reversible commit" guideline in the git-workflow rule.
+
+### Task G2 — POST /api/v2/events
+
+**Intent**
+
+Task G2 exposes the `EventIngestor` built in Phase D through an HTTP endpoint. The route is the single entry point for manual event ingestion, primarily called by sub-project 2's card-action handler. It validates the body with Zod, forwards to the ingestor, and translates domain errors to HTTP per spec section 6.4.
+
+**Why it is not admin-gated**
+
+The `/api/v2/events` endpoint is reachable by any caller with network access. It is not admin-gated because the gating is inside the ingestor itself: `EventIngestor.ingest` calls `isEligibleStudent` before doing anything else. A student cannot elevate themselves to admin by POSTing events. A non-student who POSTs will receive a 400 `not_eligible` response because the ingestor will refuse. This matches spec section 5.5 layer 1.
+
+**HTTP semantics**
+
+The route returns 202 Accepted on success rather than 200 OK because the ingestor may enqueue an LLM scoring task for items that require LLM scoring (K3, K4, C1, C3, H2, G2). From the HTTP client's perspective, the event has been accepted for processing but the final scoring decision may not be available yet. A client that needs the final decision must poll the review queue or the member detail endpoint.
+
+**Status code rationale**
+
+The six domain errors map as follows. `not_eligible`, `cap_exceeded`, `duplicate` → 400 because they are user-input-level rejections: the caller sent something that the domain rules forbid, and the caller can fix the input. `no_active_period`, `ice_breaker_no_scoring`, `no_active_window` → 409 because they are temporal conflicts: the input is fine but the system is not in a state where the input can be processed. The distinction matters because a dashboard can react differently to the two categories — a 400 triggers "fix your input" and a 409 triggers "try again later".
 
 **Files**
 
-- `src/app.ts` — register the new route.
-- `src/app-v2-errors.ts` — no changes; the route consumes the existing helper.
-- `tests/api/v2/events-post.test.ts` — NEW with six failing tests.
-- `src/routes/v2/events.ts` — NEW. Route registration module imported by `src/app.ts`. Keeps `src/app.ts` from ballooning past the 800-line limit in the coding-style rule. Exports `registerV2EventsRoute(app, deps)`.
+- `src/app.ts` — import `registerV2EventsRoute` and call it inside `createApp` after `buildV2Runtime`.
+- `src/routes/v2/events.ts` — NEW. Exports `registerV2EventsRoute(app, deps)`.
+- `tests/api/v2/events-post.test.ts` — NEW with eight failing tests.
 
 **Steps**
 
-- [ ] RED: write all six tests in `tests/api/v2/events-post.test.ts`. Each test boots `createApp({ databaseUrl: ":memory:", ingestor: fakeIngestor })` where `fakeIngestor.ingest` is a vitest `vi.fn()` with a scripted return value. The happy-path test asserts `app.inject({ method: "POST", url: "/api/v2/events", payload: { memberId: "m-1", itemCode: "K1", scoreDelta: 2, sourceRef: "card-123", payload: { note: "hi" } } })` returns 202 and body `{ ok: true, eventId: "evt-123" }`. The not_eligible test scripts `fakeIngestor.ingest` to throw `new NotEligibleError("not_eligible", "m-1 is not a student")` and asserts 400 + `{ ok: false, code: "not_eligible", message: "m-1 is not a student" }`. The cap_exceeded test throws `new PerPeriodCapExceededError("cap_exceeded", "K1 cap reached for period p-1")` → 400. The duplicate test throws `new DuplicateEventError("duplicate", "sourceRef already ingested")` → 400. The no_active_period test throws `new NoActivePeriodError("no_active_period", "no open period for camp c-1")` → 409. The ice_breaker test throws `new IceBreakerPeriodError("ice_breaker_no_scoring", "ice breaker period does not score")` → 409. Run `npm test -- tests/api/v2/events-post.test.ts` — all six red with "Cannot find /api/v2/events".
-- [ ] RED: add a seventh test that asserts an unknown body shape `{ memberId: 42, itemCode: null }` returns 400 with `{ ok: false, code: "invalid_body" }`, and an eighth test that asserts `{ memberId: "m-1", itemCode: "K1", sourceRef: "s", extra: "forbidden" }` also returns 400 because of the `.strict()` modifier. Red.
-- [ ] GREEN: create `src/routes/v2/events.ts`. Export `function registerV2EventsRoute(app, deps)`. Inside: declare `const bodySchema = z.object({ memberId: z.string().min(1), itemCode: z.string().min(1), scoreDelta: z.number().int().optional(), sourceRef: z.string().min(1), payload: z.record(z.string(), z.unknown()).optional() }).strict();` followed by `type PostEventBody = z.infer<typeof bodySchema>;`. Register with `app.post<{ Body: PostEventBody }>("/api/v2/events", async (request, reply) => { const parsed = bodySchema.safeParse(request.body); if (!parsed.success) return reply.code(400).send({ ok: false, code: "invalid_body", details: parsed.error.flatten() }); try { const result = await deps.ingestor.ingest(parsed.data); return reply.code(202).send({ ok: true, eventId: result.eventId }); } catch (err) { return mapDomainErrorToHttp(err, reply); } })`. Import and call `registerV2EventsRoute(app, v2Runtime)` from `createApp`. Run `npm test -- tests/api/v2/events-post.test.ts` — all eight green.
-- [ ] REFACTOR: extract a private `parseStrict(schema, body, reply)` helper into `src/routes/v2/common.ts` that short-circuits with the invalid_body 400 payload. The new file also re-exports `mapDomainErrorToHttp` for convenience so every route file has a single import line. Thread the helper through Task G2 and leave a `// used by subsequent G-tasks` comment.
-- [ ] REFACTOR: re-read `src/routes/v2/events.ts` and verify it is under 120 lines. Verify the `parseStrict` helper preserves the original Zod flattened error so the debug output is still useful. Run `npm run build`.
+- [ ] RED: Write all eight tests in `tests/api/v2/events-post.test.ts`. Each test boots `createApp({ databaseUrl: ":memory:", ingestor: fakeIngestor })` where `fakeIngestor.ingest` is a vitest `vi.fn()` with a scripted return value. Test 1 (happy path): `fakeIngestor.ingest` returns `{ eventId: "evt-123", status: "approved" }`; POST body `{ memberId: "m-1", itemCode: "K1", scoreDelta: 2, sourceRef: "card-123", payload: { note: "hi" } }`; assert 202 and body `{ ok: true, eventId: "evt-123" }`. Test 2 (not_eligible): `fakeIngestor.ingest` throws `new NotEligibleError("not_eligible", "m-1 is not a student")`; assert 400 and body `{ ok: false, code: "not_eligible", message: "m-1 is not a student" }`. Test 3 (cap_exceeded): throws `new PerPeriodCapExceededError("cap_exceeded", "K1 cap reached for period p-1")`; assert 400. Test 4 (duplicate): throws `new DuplicateEventError("duplicate", "sourceRef already ingested")`; assert 400. Test 5 (no_active_period): throws `new NoActivePeriodError("no_active_period", "no open period for camp c-1")`; assert 409. Test 6 (ice_breaker_no_scoring): throws `new IceBreakerPeriodError("ice_breaker_no_scoring", "ice breaker period does not score")`; assert 409. Test 7 (invalid body type): POST `{ memberId: 42, itemCode: null }` returns 400 with `{ ok: false, code: "invalid_body" }` and a `details` field. Test 8 (strict reject): POST `{ memberId: "m-1", itemCode: "K1", sourceRef: "s", extra: "forbidden" }` returns 400 `invalid_body` because the `.strict()` modifier rejects unknown keys. Run `npm test -- tests/api/v2/events-post.test.ts` and watch all eight fail with "Cannot find /api/v2/events".
 
-**Commit:** `feat(v2-api): add POST /api/v2/events route with ingestor integration and six-path error mapping`
+- [ ] GREEN: Create `src/routes/v2/events.ts`. Export `function registerV2EventsRoute(app, deps)`. Inside, declare `const bodySchema = z.object({ memberId: z.string().min(1), itemCode: z.string().min(1), scoreDelta: z.number().int().optional(), sourceRef: z.string().min(1), payload: z.record(z.string(), z.unknown()).optional() }).strict();` followed by `type PostEventBody = z.infer<typeof bodySchema>;`. Register the route: `app.post<{ Body: PostEventBody }>("/api/v2/events", async (request, reply) => { const parsed = parseStrict(bodySchema, request.body, reply); if (!parsed) return; try { const result = await deps.ingestor.ingest(parsed); return reply.code(202).send({ ok: true, eventId: result.eventId }); } catch (err) { return mapDomainErrorToHttp(err, reply); } });`. Note the early-return pattern: `parseStrict` already called `reply.send` on the failure path, so a `null` return means the reply is already sealed.
 
-### Task G3 — `POST /api/v2/periods/open`
+- [ ] GREEN: Import `registerV2EventsRoute` from `src/app.ts` and call it inside `createApp` after `buildV2Runtime`. Pass the `v2` runtime bundle as `deps`. Run `npm test -- tests/api/v2/events-post.test.ts` — all eight tests should now pass.
+
+- [ ] REFACTOR: Verify `src/routes/v2/events.ts` is under 120 lines. Verify the `parseStrict` helper preserves the original Zod flattened error so the `details` field in the 400 response is still useful for debugging. Run `npm run build` to catch any type issues introduced by the Zod generic on the `app.post` call.
+
+- [ ] REFACTOR: Add a short JSDoc above `registerV2EventsRoute` noting that this route is the HTTP entrypoint for the `EventIngestor` and that the spec references are section 1.3 (API naming) and section 5.6 (`isEligibleStudent` as the single source of truth for eligibility). Future readers will thank you.
+
+- [ ] REFACTOR: Run the full `npm test -- tests/api/v2/` folder to confirm G1 and G2 tests are both still green.
+
+**Commit**
+
+`feat(v2-api): add POST /api/v2/events route with ingestor integration and six-path error mapping`
+
+### Task G3 — POST /api/v2/periods/open
+
+**Intent**
+
+Task G3 exposes `PeriodLifecycleService.openNewPeriod` through an HTTP endpoint. This is how trainer-initiated `/开期` commands from Feishu are translated into domain state changes. Sub-project 2 will call this endpoint directly from its slash-command handler.
+
+**Edge case: window auto-settlement**
+
+Spec section 3.5 establishes that opening a new period can trigger settlement of the previous window. The service returns `shouldSettleWindowId` non-null when that happens. The route must echo this field back to the caller so sub-project 2 can display a trainer-facing confirmation message such as "Period 4 opened. W1 has been settled." Without this echo, the trainer has no signal that a settlement just happened, and the audit trail becomes opaque.
+
+**Why 201 Created rather than 202 Accepted**
+
+The period is fully created and committed by the time the route returns. There is no pending background work (unlike the event ingestion endpoint, which may enqueue LLM tasks). 201 Created is the correct HTTP semantic for a synchronous resource creation.
 
 **Files**
 
@@ -9332,14 +9457,33 @@ Phase G turns the domain services delivered in Phases A–F into a first-class H
 
 **Steps**
 
-- [ ] RED: write four tests in `tests/api/v2/periods-open.test.ts`. (1) Happy path — `fakePeriodLifecycle.openNewPeriod` returns `{ periodId: "p-2", assignedWindowId: "w-W1", shouldSettleWindowId: null }`; POST `/api/v2/periods/open` with body `{ number: 2 }`; assert 201 and body `{ ok: true, periodId: "p-2", assignedWindowId: "w-W1", shouldSettleWindowId: null }`. (2) Window-settle path — `openNewPeriod` returns `{ periodId: "p-4", assignedWindowId: "w-W3", shouldSettleWindowId: "w-W1" }`; assert 201 and body echoes `shouldSettleWindowId`. (3) NoActiveWindow — `openNewPeriod` throws `new NoActiveWindowError("no_active_window", "W3 has not been opened by trainer")`; assert 409 and body `{ ok: false, code: "no_active_window", message: "W3 has not been opened by trainer" }`. (4) Invalid body — POST `{ number: "two" }` → 400 `invalid_body`. All four red.
-- [ ] GREEN: create `src/routes/v2/periods.ts`. `registerV2PeriodsOpenRoute(app, deps)`. Schema: `z.object({ number: z.number().int().min(1).max(12) }).strict()`. Handler calls `deps.periodLifecycle.openNewPeriod(body.number)`; wraps in try/catch → `mapDomainErrorToHttp`. Import into `src/app.ts`. Run `npm test -- tests/api/v2/periods-open.test.ts` — green.
-- [ ] REFACTOR: pull the shared `parseStrict` usage from Task G2. Verify the file stays under 80 lines.
-- [ ] REFACTOR: add a comment block above the route explaining that this endpoint is trainer-initiated and does not require `requireAdmin` because the broader `/开期` slash-command flow in sub-project 2 already gates it inside Feishu — but document that sub-project 3 may choose to add `requireAdmin` if exposed to the admin console. Run `npm run build`.
+- [ ] RED: Write four tests in `tests/api/v2/periods-open.test.ts`. Test 1 (happy path, no settlement): `fakePeriodLifecycle.openNewPeriod` returns `{ periodId: "p-2", assignedWindowId: "w-W1", shouldSettleWindowId: null }`; POST `/api/v2/periods/open` with body `{ number: 2 }`; assert 201 and body `{ ok: true, periodId: "p-2", assignedWindowId: "w-W1", shouldSettleWindowId: null }`. Test 2 (window-settle path): `openNewPeriod` returns `{ periodId: "p-4", assignedWindowId: "w-W3", shouldSettleWindowId: "w-W1" }`; assert 201 and body echoes `shouldSettleWindowId`. Test 3 (NoActiveWindow): `openNewPeriod` throws `new NoActiveWindowError("no_active_window", "W3 has not been opened by trainer")`; assert 409 and body `{ ok: false, code: "no_active_window", message: "W3 has not been opened by trainer" }`. Test 4 (invalid body): POST `{ number: "two" }` returns 400 `invalid_body`. Run the test file — all four fail.
 
-**Commit:** `feat(v2-api): add POST /api/v2/periods/open route`
+- [ ] GREEN: Create `src/routes/v2/periods.ts`. Export `registerV2PeriodsOpenRoute(app, deps)`. Schema: `z.object({ number: z.number().int().min(1).max(12) }).strict()`. Handler calls `deps.periodLifecycle.openNewPeriod(body.number)`, wraps in try/catch, and uses `mapDomainErrorToHttp` for the failure path. On success it returns 201 and the full result bundle from the service.
 
-### Task G4 — `POST /api/v2/periods/close` (admin-only)
+- [ ] GREEN: Import into `src/app.ts` and call it inside `createApp`. Run `npm test -- tests/api/v2/periods-open.test.ts` — green.
+
+- [ ] REFACTOR: Pull the shared `parseStrict` helper from Task G2. Verify the file stays under 80 lines. Verify the schema `min(1).max(12)` correctly rejects period numbers outside the 1-to-12 range by adding a fifth test case `POST { number: 13 } → 400 invalid_body`. If that test passes without additional work, no additional code is needed.
+
+- [ ] REFACTOR: Add a comment block above the route explaining that this endpoint is trainer-initiated and does not require `requireAdmin` because the broader `/开期` slash-command flow in sub-project 2 already gates it inside Feishu. Document that sub-project 3 may choose to add `requireAdmin` if exposed to the admin console. Run `npm run build`.
+
+**Commit**
+
+`feat(v2-api): add POST /api/v2/periods/open route`
+
+### Task G4 — POST /api/v2/periods/close (admin-only)
+
+**Intent**
+
+Task G4 exposes the manual-close escape hatch for a period that ran past its trainer-scheduled end. Spec section 3.5 lists `manual_close` as one of the three valid `closed_reason` values, alongside `next_period_opened` and `force_close_by_timeout`. This endpoint covers the `manual_close` case.
+
+**Why it is admin-gated when G3 is not**
+
+`POST /api/v2/periods/open` advances the camp forward, which is an idempotent operation from the trainer's perspective — even a mistaken "open" can be corrected by the next "open". `POST /api/v2/periods/close` is destructive in the sense that it commits the current period's scoring without waiting for the next period's trigger, which may leave some legitimate events stranded. That asymmetry is why closing requires admin authorisation while opening does not.
+
+**Audit trail**
+
+The `closePeriod` repository method accepts the closing admin's `openId` so the `closed_by_op_id` column on the `periods` table is populated. This lets the sub-project 3 dashboard show who closed each period, which is important for the biweekly compliance review.
 
 **Files**
 
@@ -9348,14 +9492,33 @@ Phase G turns the domain services delivered in Phases A–F into a first-class H
 
 **Steps**
 
-- [ ] RED: write three tests. (1) Happy path — admin header present, member is operator; POST body `{ periodId: "p-2", reason: "manual_close" }`; assert 200 and `fakeRepository.closePeriod` was called with `("p-2", "manual_close", "op-user-openid")`. (2) Missing header — 401 `no_identity`. (3) Student header — 403 `not_admin`. All red.
-- [ ] GREEN: register `app.post("/api/v2/periods/close", { onRequest: requireAdmin(repository) }, handler)`. Schema: `z.object({ periodId: z.string().min(1), reason: z.string().min(1) }).strict()`. Handler calls `deps.repository.closePeriod(body.periodId, body.reason, request.currentAdmin.sourceFeishuOpenId ?? request.currentAdmin.id)` and returns 200 `{ ok: true }`. Wrap in try/catch. Run tests — green.
-- [ ] REFACTOR: DRY the admin-guard import: update `src/routes/v2/common.ts` to re-export a `adminGuard(repository)` helper that is just a thin alias over `requireAdmin(repository)` but scoped to the v2 surface. The re-export gives every admin route a single import line and keeps the intent obvious.
-- [ ] REFACTOR: run `npm run build` and `npm test -- tests/api/v2/periods-close.test.ts` to confirm all three green and that the type augmentation for `request.currentAdmin` propagates.
+- [ ] RED: Write three tests in `tests/api/v2/periods-close.test.ts`. Test 1 (happy path): admin header present, member is operator; POST body `{ periodId: "p-2", reason: "manual_close" }` with header `x-feishu-open-id: ou-op-1`; assert 200 and body `{ ok: true }`; assert that `fakeRepository.closePeriod` was called with `("p-2", "manual_close", "ou-op-1")`. Test 2 (missing header): POST with no header returns 401 `no_identity`. Test 3 (student header): POST with a student's open id returns 403 `not_admin`. All three fail before the route exists.
 
-**Commit:** `feat(v2-api): add POST /api/v2/periods/close admin route`
+- [ ] GREEN: Extend `src/routes/v2/periods.ts` with `registerV2PeriodsCloseRoute(app, deps)`. Register `app.post("/api/v2/periods/close", { onRequest: adminGuard(deps.repository) }, handler)`. Schema: `z.object({ periodId: z.string().min(1), reason: z.string().min(1) }).strict()`. Handler calls `deps.repository.closePeriod(body.periodId, body.reason, request.currentAdmin!.sourceFeishuOpenId ?? request.currentAdmin!.id)` and returns 200 `{ ok: true }`. Wrap in try/catch. The `!` non-null assertion on `currentAdmin` is safe because the `adminGuard` hook runs first and short-circuits with 403 if the member is missing, so any code after the hook is guaranteed to have a defined `currentAdmin`.
 
-### Task G5 — `POST /api/v2/windows/open` (admin-only)
+- [ ] GREEN: Export both route-registration functions from `src/routes/v2/periods.ts` and import them into `src/app.ts`. Run the tests — green.
+
+- [ ] REFACTOR: DRY the admin-guard import: confirm `adminGuard` from `src/routes/v2/common.ts` is a thin alias over `requireAdmin(repository)` scoped to the v2 surface. The re-export gives every admin route a single import line and makes the intent obvious.
+
+- [ ] REFACTOR: Run `npm run build` and `npm test -- tests/api/v2/periods-close.test.ts` to confirm all three green. Verify the type augmentation for `request.currentAdmin` propagates through the handler body — TypeScript should infer `currentAdmin` as `MemberRecord` (not `MemberRecord | undefined`) after the non-null assertion.
+
+**Commit**
+
+`feat(v2-api): add POST /api/v2/periods/close admin route`
+
+### Task G5 — POST /api/v2/windows/open (admin-only)
+
+**Intent**
+
+Task G5 exposes the `/开窗` command described in spec section 3.5. Windows W3, W4, W5, and FINAL are lazy-loaded — they are not pre-seeded by the bootstrap script. The trainer opens them explicitly when the camp reaches the corresponding period range. Because a trainer mistake here would silently break the settlement pipeline (a missing window means the next period cannot be settled), the endpoint is admin-gated.
+
+**Idempotency semantics**
+
+Spec section 3.5 is clear that opening a window that already exists is not an error: it simply returns a 200 echo. This matters because sub-project 2's command handler may retry on network hiccups, and the retry must not create duplicate rows. The service `periodLifecycle.openWindow(code)` returns `{ windowId, created }` where `created: false` indicates idempotency. The HTTP route maps `created: true` to 201 (a new row was created) and `created: false` to 200 (no change, already existed).
+
+**Regex rationale**
+
+The window code regex is `/^W[1-5]$|^FINAL$/`, which accepts exactly W1 through W5 and FINAL. Any other string (W6, W0, W, FINAL2, final, lowercase variants) is rejected at the schema layer with a 400. This is deliberately strict because the trainer should not be able to type a window code with a typo — a typo that makes it past the schema would either crash the service or silently create a malformed row.
 
 **Files**
 
@@ -9365,14 +9528,29 @@ Phase G turns the domain services delivered in Phases A–F into a first-class H
 
 **Steps**
 
-- [ ] RED: write five tests. (1) New window — `fakePeriodLifecycle.openWindow("W3")` returns `{ windowId: "w-W3", created: true }`; POST body `{ code: "W3" }` with operator header; assert 201 body `{ ok: true, windowId: "w-W3", created: true }`. (2) Idempotent — `openWindow("W2")` returns `{ windowId: "w-W2", created: false }`; assert 200 body `{ ok: true, windowId: "w-W2", created: false }`. (3) Regex reject — POST `{ code: "W6" }` → 400 `invalid_body`. (4) Regex accept FINAL — POST `{ code: "FINAL" }` returns 201 when fake returns `{ created: true }`. (5) Admin missing — POST `{ code: "W3" }` with no header → 401.
-- [ ] GREEN: create `src/routes/v2/windows.ts`. Schema: `z.object({ code: z.string().regex(/^W[1-5]$|^FINAL$/) }).strict()`. Handler calls `deps.periodLifecycle.openWindow(body.code)`. Picks 201 if `result.created` is true, else 200. Wrap in try/catch. Register on `createApp` with `{ onRequest: requireAdmin(repository) }`. Run `npm test -- tests/api/v2/windows-open.test.ts` — green.
-- [ ] REFACTOR: move the `WINDOW_CODE_REGEX` constant to `src/domain/v2/window-codes.ts` and import both here and from Phase B/C code that already validates the pattern. Avoids two copies of the regex drifting.
-- [ ] REFACTOR: run `npm run build` to confirm nothing else broke, then re-run the G5 test file.
+- [ ] RED: Write five tests. Test 1 (new window): `fakePeriodLifecycle.openWindow("W3")` returns `{ windowId: "w-W3", created: true }`; POST body `{ code: "W3" }` with operator header; assert 201 body `{ ok: true, windowId: "w-W3", created: true }`. Test 2 (idempotent): `openWindow("W2")` returns `{ windowId: "w-W2", created: false }`; assert 200 body `{ ok: true, windowId: "w-W2", created: false }`. Test 3 (regex reject W6): POST `{ code: "W6" }` returns 400 `invalid_body`. Test 4 (regex accept FINAL): POST `{ code: "FINAL" }` with the fake returning `{ created: true }` returns 201. Test 5 (admin missing): POST `{ code: "W3" }` with no header returns 401. Consider adding a sixth test for lowercase rejection: POST `{ code: "w1" }` returns 400.
 
-**Commit:** `feat(v2-api): add POST /api/v2/windows/open admin route`
+- [ ] GREEN: Create `src/routes/v2/windows.ts`. Schema: `z.object({ code: z.string().regex(/^W[1-5]$|^FINAL$/) }).strict()`. Handler calls `deps.periodLifecycle.openWindow(body.code)`. Picks 201 if `result.created` is true, else 200. Wrap in try/catch. Register on `createApp` with `{ onRequest: adminGuard(deps.repository) }`.
 
-### Task G6 — `POST /api/v2/graduation/close` (admin-only)
+- [ ] GREEN: Import into `src/app.ts`. Run `npm test -- tests/api/v2/windows-open.test.ts` — green.
+
+- [ ] REFACTOR: Move the `WINDOW_CODE_REGEX` constant to `src/domain/v2/window-codes.ts` and import it both here and from Phase B/C code that already validates the pattern. Two copies of the regex drifting is a real risk without this extraction. The constant is exported with a type predicate helper: `export function isWindowCode(s: string): s is WindowCode` so call sites can narrow the type automatically.
+
+- [ ] REFACTOR: Run `npm run build` to confirm nothing else broke, then re-run the G5 test file.
+
+**Commit**
+
+`feat(v2-api): add POST /api/v2/windows/open admin route`
+
+### Task G6 — POST /api/v2/graduation/close (admin-only)
+
+**Intent**
+
+Task G6 exists because period 12, the final period of the camp, has no "next /开期" call to trigger settlement of the FINAL window. Spec section 8.3 mandates a separate `/结业` command that becomes this endpoint. The endpoint is the only way to finish the camp cleanly and commit the final promotions.
+
+**Idempotency and the already-settled error**
+
+Unlike the open-window endpoint, closing graduation is not idempotent: attempting to close graduation twice is a user error and should be rejected with a 409. The domain error is `WindowAlreadySettledError` with code `window_already_settled`. The error includes the previous settlement timestamp in the message so the operator can check the logs.
 
 **Files**
 
@@ -9382,51 +9560,140 @@ Phase G turns the domain services delivered in Phases A–F into a first-class H
 
 **Steps**
 
-- [ ] RED: write three tests. (1) Happy path — operator header present; POST with empty body `{}`; `fakePeriodLifecycle.closeGraduation` returns `{ finalWindowId: "w-FINAL", settled: true }`; assert 200 `{ ok: true, finalWindowId: "w-FINAL", settled: true }`. (2) Already settled — `closeGraduation` throws `new WindowAlreadySettledError("window_already_settled", "FINAL already settled at 2026-04-03T10:00:00Z")`; assert 409 and body echoes the code and message. (3) Student header — 403.
-- [ ] GREEN: create `src/routes/v2/graduation.ts`. Schema: `z.object({}).strict()`. Handler calls `deps.periodLifecycle.closeGraduation(request.currentAdmin)` (the trainer's identity is passed for audit logging). Wrap in try/catch. Register with `requireAdmin`. Run tests — green.
-- [ ] REFACTOR: add a brief comment explaining that `/api/v2/graduation/close` exists because period 12 has no "next /开期" to trigger the FINAL window settlement (spec §8.3). The comment helps future readers understand why this endpoint is separate from `/api/v2/windows/open`.
-- [ ] REFACTOR: run `npm run build` and the G6 test file.
+- [ ] RED: Write three tests. Test 1 (happy path): operator header present; POST with empty body `{}`; `fakePeriodLifecycle.closeGraduation` returns `{ finalWindowId: "w-FINAL", settled: true }`; assert 200 `{ ok: true, finalWindowId: "w-FINAL", settled: true }`. Test 2 (already settled): `closeGraduation` throws `new WindowAlreadySettledError("window_already_settled", "FINAL already settled at 2026-04-03T10:00:00Z")`; assert 409 and body echoes the code and message. Test 3 (student header): 403 `not_admin`.
 
-**Commit:** `feat(v2-api): add POST /api/v2/graduation/close admin route`
+- [ ] GREEN: Create `src/routes/v2/graduation.ts`. Schema: `z.object({}).strict()`. Handler calls `deps.periodLifecycle.closeGraduation(request.currentAdmin!)` passing the trainer's identity for audit logging. Wrap in try/catch. Register with `adminGuard`.
 
-### Task G7 — `GET /api/v2/board/ranking`
+- [ ] GREEN: Import into `src/app.ts`. Run `npm test -- tests/api/v2/graduation-close.test.ts` — green.
+
+- [ ] REFACTOR: Add a brief comment explaining that `/api/v2/graduation/close` exists because period 12 has no "next /开期" to trigger the FINAL window settlement (spec section 8.3). The comment helps future readers understand why this endpoint is separate from `/api/v2/windows/open`.
+
+- [ ] REFACTOR: Run `npm run build` and the G6 test file.
+
+**Commit**
+
+`feat(v2-api): add POST /api/v2/graduation/close admin route`
+
+### Task G7 — GET /api/v2/board/ranking
+
+**Intent**
+
+Task G7 is the first read-side endpoint. It returns the camp-wide ranking, pre-sorted by cumulative AQ descending then by display name ascending, with a computed `rank` field that handles ties via "1224" standard competition ranking. The endpoint is the primary data source for the sub-project 3 dashboard leaderboard view.
+
+**Eligibility gate**
+
+The query must filter out operators, trainers, and hidden members. This is spec section 5.5 layer 4. The filter is implemented as a JOIN-level WHERE clause inside `fetchRankingByCamp` so the API handler does not need to know about `isEligibleStudent`. This design keeps the gate in one place (the repository layer) and avoids the failure mode where a handler forgets to apply the gate and leaks operator data.
+
+**Row shape**
+
+Each ranking row contains the following fields:
+
+- `memberId`: the primary key of the member.
+- `memberName`: the display name shown in the leaderboard.
+- `avatarUrl`: the cached Feishu avatar URL, or null if not yet synced.
+- `currentLevel`: the integer level (L0 through L5 or LFINAL).
+- `cumulativeAq`: the total AQ earned across all settled windows, used as the primary sort key.
+- `latestWindowAq`: the AQ earned in the most-recently-settled window, shown as a secondary metric.
+- `dimensions`: an object with five fields `K, H, C, S, G`, each an integer. This drives the radar chart in the dashboard.
+- `rank`: the computed rank integer using standard competition ranking.
+
+**Ties and rank computation**
+
+Standard competition ranking ("1224" ranking) means that when two members are tied, they both receive the same rank, and the next member receives a rank that accounts for the tied pair. For example, if members A and B are tied for rank 1, they both get rank 1, and the next member gets rank 3 (not rank 2). The test suite covers this edge case.
 
 **Files**
 
 - `src/routes/v2/board.ts` — NEW.
-- `src/storage/sqlite-repository.ts` — extend with a `fetchRankingByCamp(campId: string)` method that joins `members`, `member_levels`, `member_dimension_scores`, and `window_snapshots` with the `isEligibleStudent` gate (`role_type='student' AND is_participant=1 AND is_excluded_from_board=0 AND hidden_from_board=0`).
+- `src/storage/sqlite-repository.ts` — extend with a `fetchRankingByCamp(campId: string)` method that joins `members`, `member_levels`, `member_dimension_scores`, and `window_snapshots` with the `isEligibleStudent` gate.
 - `tests/api/v2/board-ranking.test.ts` — NEW with four failing tests.
 - `tests/storage/sqlite-repository-v2-ranking.test.ts` — NEW unit test for the repository method.
 
 **Steps**
 
-- [ ] RED: write the repository test first. Seed five members (four students, one operator), populate fake window snapshots and member level records, and assert that `repo.fetchRankingByCamp("c-1")` returns exactly four rows in the correct order: cumAq DESC, then name ASC. The operator row is excluded. Red because the method does not exist.
-- [ ] RED: write four tests in `tests/api/v2/board-ranking.test.ts`. (1) Empty — POST no members, GET `/api/v2/board/ranking?campId=c-1`; assert 200 body `{ ok: true, campId: "c-1", rows: [] }`. (2) Single student — seed one student with snapshot data; assert 200 body has one row with all seven fields: `memberId, memberName, avatarUrl, currentLevel, cumulativeAq, latestWindowAq, dimensions: { K, H, C, S, G }, rank: 1`. (3) Five-member ordering — seed five students with known cum AQ values (mixed with ties on cum AQ that force a name-ASC tiebreak); assert `rows` is ordered cumAq DESC then name ASC and the `rank` field is `[1,2,3,4,5]` with ties reflected correctly (use "1224" ranking — two tied members both get rank 2, the next gets rank 4). (4) Operator excluded — seed a student + an operator with higher cum AQ; assert the operator does not appear in the response.
-- [ ] GREEN: implement `fetchRankingByCamp` in `sqlite-repository.ts` using the JOIN described above. Return rows with the exact shape asserted. Hand-write the rank assignment in the repository (or a small helper `assignRanks(rows)`) so the API layer stays thin.
-- [ ] GREEN: implement `src/routes/v2/board.ts` with a `registerV2BoardRoutes(app, deps)` function. Schema: querystring `z.object({ campId: z.string().min(1) }).strict()`. Handler: `const rows = await deps.repository.fetchRankingByCamp(query.campId); return reply.send({ ok: true, campId: query.campId, rows });` wrapped in the standard try/catch. Register both board routes (G7 + G8) from the same file. Run `npm test -- tests/api/v2/board-ranking.test.ts tests/storage/sqlite-repository-v2-ranking.test.ts` — all green.
-- [ ] REFACTOR: move the `assignRanks` helper to `src/domain/v2/rank.ts` and write one unit test for it with a ties scenario. The helper must be pure and deterministic so both Phase F snapshots and Phase G API reuse it without drift. Run `npm run build`.
+- [ ] RED: Write the repository test first in `tests/storage/sqlite-repository-v2-ranking.test.ts`. Seed five members: four students with distinct cumulative AQ values (100, 75, 75, 50 — deliberately tied at 75 so the name-ASC tiebreak is exercised), and one operator with cumulative AQ 200 (to prove the operator is excluded). Populate fake `window_snapshots` rows and `member_levels` rows. Assert that `repo.fetchRankingByCamp("c-1")` returns exactly four rows in the correct order: the 100-AQ student at rank 1, then the two 75-AQ students in name-ASC order at rank 2 (both tied), then the 50-AQ student at rank 4. The operator row is excluded. The rank array is `[1, 2, 2, 4]` using standard competition ranking. Red because the method does not exist.
 
-**Commit:** `feat(v2-api): add GET /api/v2/board/ranking with camp-scoped eligibility gate`
+- [ ] RED: Write four tests in `tests/api/v2/board-ranking.test.ts`. Test 1 (empty): no members; GET `/api/v2/board/ranking?campId=c-1`; assert 200 body `{ ok: true, campId: "c-1", rows: [] }`. Test 2 (single student): seed one student with snapshot data; assert 200 body has one row with all seven fields: `memberId, memberName, avatarUrl, currentLevel, cumulativeAq, latestWindowAq, dimensions: { K, H, C, S, G }, rank: 1`. Test 3 (five-member ordering): seed five students with known cum AQ values with a deliberate name-ASC tiebreak; assert `rows` is ordered cum AQ DESC then name ASC, and the `rank` array matches standard competition ranking. Test 4 (operator excluded): seed a student plus an operator with higher cum AQ; assert the operator does not appear in the response.
 
-### Task G8 — `GET /api/v2/board/member/:id`
+- [ ] GREEN: Implement `fetchRankingByCamp` in `src/storage/sqlite-repository.ts` using the JOIN described above. The query is approximately: `SELECT m.id, m.display_name, m.avatar_url, ml.current_level, mds.cumulative_aq, mds.latest_window_aq, mds.dim_k, mds.dim_h, mds.dim_c, mds.dim_s, mds.dim_g FROM members m JOIN member_levels ml ON ml.member_id = m.id JOIN member_dimension_scores mds ON mds.member_id = m.id WHERE m.camp_id = ? AND m.role_type = 'student' AND m.is_participant = 1 AND m.is_excluded_from_board = 0 AND m.hidden_from_board = 0 ORDER BY mds.cumulative_aq DESC, m.display_name ASC`. Return rows with the exact shape asserted by the tests. The rank assignment is hand-written in the repository (or through a small helper `assignRanks(rows)`) so the API layer stays thin. The helper sorts by `cumulativeAq` DESC, then `memberName` ASC, then walks the sorted list assigning standard competition ranks: rank starts at 1, increments by the count of equal-AQ members when moving to the next distinct AQ value.
+
+- [ ] GREEN: Implement `src/routes/v2/board.ts` with a `registerV2BoardRoutes(app, deps)` function. Schema: querystring `z.object({ campId: z.string().min(1) }).strict()`. Handler: `const rows = await deps.repository.fetchRankingByCamp(query.campId); return reply.send({ ok: true, campId: query.campId, rows });` wrapped in the standard try/catch. Register both board routes (G7 plus the upcoming G8) from the same file so related logic lives together.
+
+- [ ] GREEN: Run `npm test -- tests/api/v2/board-ranking.test.ts tests/storage/sqlite-repository-v2-ranking.test.ts` — all green.
+
+- [ ] REFACTOR: Move the `assignRanks` helper to `src/domain/v2/rank.ts` and write one unit test for it with a ties scenario. The helper must be pure and deterministic so both Phase F snapshots and Phase G API reuse it without drift. Run `npm run build`.
+
+- [ ] REFACTOR: Verify the JOIN in `fetchRankingByCamp` returns a single row per member even when multiple window snapshots exist. Use `GROUP BY members.id` and a subquery for the latest window snapshot per member. Add a test assertion for a member with two settled windows that only the latest window's AQ is used as `latestWindowAq`.
+
+- [ ] REFACTOR: Profile the query on a seeded database with 50 members across 5 settled windows to confirm it runs in under 50 milliseconds. If it exceeds that, add a composite index on `(camp_id, role_type, hidden_from_board)` to `members` and re-profile.
+
+**Commit**
+
+`feat(v2-api): add GET /api/v2/board/ranking with camp-scoped eligibility gate`
+
+### Task G8 — GET /api/v2/board/member/:id
+
+**Intent**
+
+Task G8 returns the per-member detail panel shown on the sub-project 3 dashboard: current level badge, promotion history, dimension time series, and window-snapshot timeline. It must return 404 for any member that is not an eligible student (operator, trainer, hidden, excluded, or unknown).
+
+**Why 404 for operators**
+
+An operator's member id is a valid DB row, but returning their detail panel would leak scoring data that was recorded before they were promoted (per spec section 5.8, historical data is preserved but hidden from the dashboard). The 404 response hides the existence of operator rows from the API surface, which matches the "data silently disappears" guarantee in spec section 5.8.
+
+**Detail panel shape**
+
+The response wraps the detail object inside `{ ok: true, detail: {...} }` so the response envelope stays consistent with the ranking endpoint. The `detail` object has the following fields:
+
+- `memberId`
+- `memberName`
+- `avatarUrl`
+- `currentLevel`
+- `promotions`: array of `{ fromLevel, toLevel, windowId, promotedAt }` objects.
+- `dimensionSeries`: array of per-window dimension snapshots, one per settled window, in window-code order (W1, W2, W3, W4, W5, FINAL).
+- `windowSnapshots`: array of per-window AQ totals, also in window-code order.
 
 **Files**
 
 - `src/routes/v2/board.ts` — extend.
-- `src/storage/sqlite-repository.ts` — add `fetchMemberBoardDetail(memberId: string)` that fetches a member plus `promotion_records`, `member_dimension_scores` series (one per settled window) and `window_snapshots` series.
-- `tests/api/v2/board-member-detail.test.ts` — NEW with three failing tests.
+- `src/storage/sqlite-repository.ts` — add `fetchMemberBoardDetail(memberId: string): MemberBoardDetail | null`.
+- `tests/api/v2/board-member-detail.test.ts` — NEW with four failing tests.
 - `tests/storage/sqlite-repository-v2-member-detail.test.ts` — NEW.
 
 **Steps**
 
-- [ ] RED: write the repository test — seed one student with a promotion record and two settled window snapshots; assert `fetchMemberBoardDetail("m-1")` returns `{ memberId, memberName, avatarUrl, currentLevel, promotions: [...], dimensionSeries: [...], windowSnapshots: [...] }`. Also assert `fetchMemberBoardDetail("m-999")` returns `null`.
-- [ ] RED: write three tests in `tests/api/v2/board-member-detail.test.ts`. (1) Existing student — GET `/api/v2/board/member/m-1` returns 200 with the full payload. (2) Unknown id — GET `/api/v2/board/member/m-ghost` returns 404 `{ ok: false, code: "not_found" }`. (3) Operator id — GET `/api/v2/board/member/op-1` (operator exists in DB) returns 404 because the repository method also gates on `isEligibleStudent`.
-- [ ] GREEN: implement the repository method and the route. Schema: `z.object({ id: z.string().min(1) }).strict()` for the URL params. Handler returns the detail payload or `reply.code(404).send({ ok: false, code: "not_found" })`. Wrap in try/catch.
-- [ ] REFACTOR: extract a `MemberBoardDetail` type into `src/domain/v2/types.ts` so sub-project 3 can import it directly when rendering the dashboard. Run `npm run build` and the G8 tests.
+- [ ] RED: Write the repository test first. Seed one student with a promotion record and two settled window snapshots; assert `fetchMemberBoardDetail("m-1")` returns `{ memberId, memberName, avatarUrl, currentLevel, promotions: [...], dimensionSeries: [...], windowSnapshots: [...] }` with the expected array lengths and field names. Also assert `fetchMemberBoardDetail("m-999")` returns `null`. Also assert that calling with an operator id returns `null` because the query JOINs the eligibility gate.
 
-**Commit:** `feat(v2-api): add GET /api/v2/board/member/:id with 404 on non-eligible members`
+- [ ] RED: Write four tests in `tests/api/v2/board-member-detail.test.ts`. Test 1 (existing student): GET `/api/v2/board/member/m-1` returns 200 with the full payload wrapped in `{ ok: true, detail: {...} }`. Test 2 (unknown id): GET `/api/v2/board/member/m-ghost` returns 404 `{ ok: false, code: "not_found" }`. Test 3 (operator id): GET `/api/v2/board/member/op-1` returns 404 because the repository method also gates on `isEligibleStudent`. Test 4 (URL encoding): GET `/api/v2/board/member/m%2D1` (URL-encoded dash) returns 200 and the route correctly decodes the id.
 
-### Task G9 — Admin Review Queue (`GET` list + `POST` decide)
+- [ ] GREEN: Implement the repository method. Use a single query that LEFT JOINs `promotion_records`, `member_dimension_scores`, and `window_snapshots` for the given member id, aggregated into arrays via a result-builder pattern because SQLite does not support native JSON aggregation without an extension. The result-builder walks the rows and folds them into the `MemberBoardDetail` shape. Return `null` if the member does not exist or does not pass the eligibility gate.
+
+- [ ] GREEN: Implement the route in `src/routes/v2/board.ts`. Schema: params `z.object({ id: z.string().min(1) }).strict()`. Handler returns the detail payload wrapped in `{ ok: true, detail }` on success, or `reply.code(404).send({ ok: false, code: "not_found" })` on null. Wrap in try/catch.
+
+- [ ] GREEN: Run `npm test -- tests/api/v2/board-member-detail.test.ts` — green.
+
+- [ ] REFACTOR: Extract a `MemberBoardDetail` TypeScript interface into `src/domain/v2/types.ts` so sub-project 3 can import it directly when rendering the dashboard. This avoids duplication between the repository return type, the route return type, and the frontend consumption type. The interface is exported from the domain layer, not the API layer, because it describes a domain concept (a member's dashboard view) rather than an API shape.
+
+- [ ] REFACTOR: Run `npm run build` and the G8 tests.
+
+- [ ] REFACTOR: Verify the repository method's behaviour on a member with zero promotions and one settled window. The `promotions` array should be empty, not null. The `dimensionSeries` and `windowSnapshots` arrays should each have one entry. Add a dedicated test for this edge case.
+
+**Commit**
+
+`feat(v2-api): add GET /api/v2/board/member/:id with 404 on non-eligible members`
+
+### Task G9 — Admin Review Queue
+
+**Intent**
+
+Task G9 is the LLM complaint desk. When the LLM worker marks an event `review_required` (either because the LLM rejected the content or because the worker exhausted retries), the event lands in this queue. Trainers and operators see it through the admin dashboard and decide approve or reject. The GET endpoint lists pending reviews; the POST endpoint commits a decision.
+
+**Why the POST body has both a decision and a note**
+
+The note is mandatory because spec section 5.5 layer 2 requires audit tagging for every admin decision. A decision without a note is less useful than a decision with a note for the biweekly compliance review. The note also helps the LLM prompt team debug why a particular kind of input keeps getting rejected.
+
+**Decision propagation**
+
+`aggregator.applyDecision(eventId, { decision, note }, operator)` flips the event status from `review_required` to either `approved` or `rejected`, updates the `reviewed_by_op_id` and `review_note` columns, and, on approval, increments the member's dimension score. The aggregator handles the cap-checking and deduplication, so the API route does not need to worry about those concerns.
 
 **Files**
 
@@ -9436,31 +9703,90 @@ Phase G turns the domain services delivered in Phases A–F into a first-class H
 
 **Steps**
 
-- [ ] RED: write six tests. (1) GET happy — three `review_required` events seeded; GET `/api/v2/admin/review-queue` with operator header returns 200 body `{ ok: true, rows: [...] }` with exactly three entries that include `eventId, memberId, memberName, itemCode, dimension, scoreDelta, createdAt, llmTaskId`. (2) GET empty — no events; returns 200 `{ ok: true, rows: [] }`. (3) GET with student header — 403. (4) POST approved — `fakeAggregator.applyDecision` accepts `("evt-1", { decision: "approved", note: "looks good" }, operator)`; POST body `{ decision: "approved", note: "looks good" }`; assert 200 `{ ok: true }` and the fake was called. (5) POST rejected — same shape with `decision: "rejected"`; asserts the fake was called with the reject decision. (6) POST invalid decision — body `{ decision: "banana", note: "x" }` → 400 `invalid_body`.
-- [ ] GREEN: implement the repository method and both routes. Schemas: GET query `z.object({ campId: z.string().min(1).optional() }).strict()`; POST body `z.object({ decision: z.enum(["approved", "rejected"]), note: z.string().min(1) }).strict()`; POST params `z.object({ eventId: z.string().min(1) }).strict()`. Handlers wrapped in try/catch. Register with `requireAdmin`. Run tests — green.
-- [ ] REFACTOR: verify that the POST handler forwards the `currentAdmin` identity to `aggregator.applyDecision` so the decision is audit-tagged correctly (see spec §5.5 layer 2). Add a dedicated assertion in test (4) that captures the third argument passed to `fakeAggregator.applyDecision.mock.calls[0][2]` and checks it equals the operator member object.
-- [ ] REFACTOR: run `npm run build` and all G9 tests.
+- [ ] RED: Write six tests. Test 1 (GET happy): three `review_required` events seeded; GET `/api/v2/admin/review-queue` with operator header returns 200 body `{ ok: true, rows: [...] }` with exactly three entries that include `eventId, memberId, memberName, itemCode, dimension, scoreDelta, createdAt, llmTaskId`. Test 2 (GET empty): no events; returns 200 `{ ok: true, rows: [] }`. Test 3 (GET student header): returns 403. Test 4 (POST approved): `fakeAggregator.applyDecision` accepts `("evt-1", { decision: "approved", note: "looks good" }, operator)`; POST body `{ decision: "approved", note: "looks good" }`; assert 200 `{ ok: true }` and the fake was called with the correct third argument. Test 5 (POST rejected): same shape with `decision: "rejected"`; asserts the fake was called with the reject decision. Test 6 (POST invalid decision): body `{ decision: "banana", note: "x" }` returns 400 `invalid_body`.
 
-**Commit:** `feat(v2-api): add GET /api/v2/admin/review-queue and POST decide routes`
+- [ ] GREEN: Implement `listReviewRequiredEvents({ campId? })` and `findReviewEvent(eventId)` on the repository. The listing query JOINs `scoring_item_events` with `members` to pull `memberName` and with `llm_scoring_tasks` to pull `llmTaskId`. The `campId` filter is applied as `WHERE members.camp_id = ?` if provided, otherwise listed across all camps (single-camp deployments do not care).
+
+- [ ] GREEN: Create `src/routes/v2/admin-review.ts`. GET schema: query `z.object({ campId: z.string().min(1).optional() }).strict()`. POST body schema: `z.object({ decision: z.enum(["approved", "rejected"]), note: z.string().min(1) }).strict()`. POST params schema: `z.object({ eventId: z.string().min(1) }).strict()`. GET handler lists events and returns them. POST handler calls `deps.aggregator.applyDecision(params.eventId, body, request.currentAdmin!)` and returns 200 on success. Both handlers wrapped with `adminGuard`.
+
+- [ ] GREEN: Register in `src/app.ts`. Run `npm test -- tests/api/v2/admin-review-queue.test.ts` — green.
+
+- [ ] REFACTOR: Verify that the POST handler forwards the `currentAdmin` identity to `aggregator.applyDecision` so the decision is audit-tagged correctly (see spec section 5.5 layer 2). Add a dedicated assertion in test 4 that captures the third argument passed to `fakeAggregator.applyDecision.mock.calls[0][2]` and checks it equals the operator member object.
+
+- [ ] REFACTOR: Run `npm run build` and all G9 tests.
+
+- [ ] REFACTOR: Add a test that attempts to POST a decision for an event that is not in `review_required` state. The aggregator should throw a domain error (for example `InvalidDecisionStateError`) and the route should return 409. If the error type does not exist in the current domain layer, document the gap in a code comment and skip the test until Phase D provides the error.
+
+**Commit**
+
+`feat(v2-api): add GET /api/v2/admin/review-queue and POST decide routes`
 
 ### Task G10 — Admin Member Management
+
+**Intent**
+
+Task G10 lets operators edit member metadata from the admin dashboard. The GET endpoint lists every member (admin sees everything, including operators and trainers). The PATCH endpoint applies a partial update to a single member. The PATCH body is dynamic: every field is optional, and any combination is valid as long as at least one field is set.
+
+**Security constraint: SQL injection**
+
+The PATCH handler must use parameter binding for the dynamic UPDATE. A naive string-concatenation approach would let an operator inject SQL through `displayName`. Because the PATCH endpoint is admin-gated, the attack surface is small, but the coding-standard rule against SQL injection is absolute: every query uses parameter binding regardless of the trust level of the caller.
+
+**Partial update pattern**
+
+The PATCH handler walks the parsed body object, builds a list of `${column} = ?` fragments for each present key, and passes the corresponding values as a parameter array. The column names are hard-coded inside the repository method, not taken from the body keys, so a malicious body cannot inject a column name like `id = 'admin'; DROP TABLE users`. The hard-coded column list is a whitelist of editable columns: `role_type`, `is_participant`, `is_excluded_from_board`, `hidden_from_board`, `display_name`.
+
+**Role type enum**
+
+The PATCH schema validates `roleType` against the enum `["student", "operator", "trainer", "observer"]`. A value outside the enum is rejected with 400 `invalid_body`. This ensures that an operator cannot accidentally set a member to an undefined role like "superadmin" or "admin".
 
 **Files**
 
 - `src/routes/v2/admin-members.ts` — NEW.
 - `src/storage/sqlite-repository.ts` — extend with `listMembersForAdmin()` and `patchMemberForAdmin(id, patch)`.
 - `tests/api/v2/admin-members.test.ts` — NEW with five failing tests.
+- `tests/storage/patch-member-for-admin.test.ts` — NEW. Stand-alone test for the SQL-injection guarantee.
 
 **Steps**
 
-- [ ] RED: write five tests. (1) GET happy — three members seeded (one student, one operator, one trainer); GET `/api/v2/admin/members` with operator header returns 200 with all three rows and fields `{ id, displayName, roleType, isParticipant, isExcludedFromBoard, hiddenFromBoard }`. (2) GET student header — 403. (3) PATCH happy — PATCH `/api/v2/admin/members/m-1` with body `{ roleType: "operator", hiddenFromBoard: true }`; assert 200 `{ ok: true, member: {...updated} }` and the repository was called. (4) PATCH partial — body `{ displayName: "Alice v2" }` only; assert the other fields are not touched. (5) PATCH unknown field — body `{ roleType: "superadmin" }` → 400 `invalid_body` (enum reject), and body `{ unknownKey: true }` → 400 `invalid_body` (.strict).
-- [ ] GREEN: implement `listMembersForAdmin()` (SELECT with no filter — admin sees everything) and `patchMemberForAdmin(id, patch)` that issues a dynamic UPDATE based on the set keys. Route schemas: PATCH body `z.object({ roleType: z.enum(["student","operator","trainer","observer"]).optional(), isParticipant: z.boolean().optional(), isExcludedFromBoard: z.boolean().optional(), hiddenFromBoard: z.boolean().optional(), displayName: z.string().min(1).optional() }).strict()` with `.refine((data) => Object.keys(data).length > 0, { message: "empty_patch" })`. Handlers wrapped with `requireAdmin`. Run tests — green.
-- [ ] REFACTOR: audit the PATCH path for SQL injection risk. The dynamic UPDATE must use parameter binding only, not string concatenation. Write a separate test `patchMemberForAdmin.test.ts` in `tests/storage/` with a malicious `displayName: "'; DROP TABLE members; --"` asserting the table is intact after the PATCH.
-- [ ] REFACTOR: run `npm run build` and all G10 tests.
+- [ ] RED: Write five tests in `tests/api/v2/admin-members.test.ts`. Test 1 (GET happy): three members seeded (one student, one operator, one trainer); GET `/api/v2/admin/members` with operator header returns 200 with all three rows and fields `{ id, displayName, roleType, isParticipant, isExcludedFromBoard, hiddenFromBoard }`. Test 2 (GET student header): 403. Test 3 (PATCH happy): PATCH `/api/v2/admin/members/m-1` with body `{ roleType: "operator", hiddenFromBoard: true }`; assert 200 `{ ok: true, member: {...updated} }` and the repository was called. Test 4 (PATCH partial): body `{ displayName: "Alice v2" }` only; assert the other fields are not touched by re-fetching the member and verifying the other columns are unchanged. Test 5 (PATCH unknown field): body `{ roleType: "superadmin" }` returns 400 (enum reject), and body `{ unknownKey: true }` returns 400 (strict reject).
 
-**Commit:** `feat(v2-api): add GET /api/v2/admin/members and PATCH /:id admin routes`
+- [ ] RED: Write the SQL-injection test in `tests/storage/patch-member-for-admin.test.ts`. Seed one member. Call `patchMemberForAdmin("m-1", { displayName: "'; DROP TABLE members; --" })`. Assert that the `members` table still exists (query `sqlite_master` for the row) and the member's `displayName` is literally the injection string (not interpreted as SQL). This guarantees parameter binding is in effect.
 
-### Task G11 — `GET /api/v2/llm/worker/status`
+- [ ] GREEN: Implement `listMembersForAdmin()` — a SELECT with no filter because admin sees everything. Implement `patchMemberForAdmin(id, patch)` that builds a dynamic UPDATE from the set keys using parameter binding only. Pattern: walk the patch object, push `${column} = ?` into a `setFragments` array and the value into a `params` array, then call `db.prepare(\`UPDATE members SET ${setFragments.join(", ")} WHERE id = ?\`).run(...params, id)`. The column names are hard-coded to prevent table-name injection.
+
+- [ ] GREEN: Create `src/routes/v2/admin-members.ts`. GET handler lists and returns members. PATCH schema: `z.object({ roleType: z.enum(["student","operator","trainer","observer"]).optional(), isParticipant: z.boolean().optional(), isExcludedFromBoard: z.boolean().optional(), hiddenFromBoard: z.boolean().optional(), displayName: z.string().min(1).optional() }).strict().refine((data) => Object.keys(data).length > 0, { message: "empty_patch" })`. Handlers wrapped with `adminGuard`.
+
+- [ ] GREEN: Register in `src/app.ts`. Run `npm test -- tests/api/v2/admin-members.test.ts tests/storage/patch-member-for-admin.test.ts` — all green.
+
+- [ ] REFACTOR: Verify the PATCH response actually echoes the updated member shape by re-fetching the row after the UPDATE. The naive implementation would return the pre-update object; the correct implementation calls `findMemberById(id)` after the UPDATE completes and returns the fresh row.
+
+- [ ] REFACTOR: Run `npm run build` and all G10 tests.
+
+- [ ] REFACTOR: Audit the `findMemberById` method used by the re-fetch. It must return a non-null row for a member that exists and null for a member that does not. Add a test for the PATCH-then-404 case: if the member id in the URL does not exist, the route returns 404 `not_found` rather than 200 with an empty member.
+
+**Commit**
+
+`feat(v2-api): add GET /api/v2/admin/members and PATCH /:id admin routes`
+
+### Task G11 — GET /api/v2/llm/worker/status
+
+**Intent**
+
+Task G11 is the single monitoring endpoint for the LLM worker. It lets the admin dashboard show a running indicator, current queue depth, and last heartbeat. It is not admin-gated because it exposes only non-sensitive operational metrics.
+
+**Status shape**
+
+The status object has five fields:
+
+- `running`: boolean. True if the worker loop is active.
+- `concurrency`: integer. The configured concurrency level (from `LLM_CONCURRENCY`).
+- `activeTasks`: integer. The number of tasks currently being processed by the worker.
+- `queueDepth`: integer. The number of tasks in `pending` or `retrying` state in the DB.
+- `lastHeartbeatAt`: ISO-8601 timestamp. The most recent time the worker loop completed a tick.
+
+**Why it is not admin-gated**
+
+Operational metrics (is the worker alive, how deep is the queue) are not sensitive enough to require admin authentication. They do not expose PII or scoring decisions. Making the endpoint public lets monitoring tools (health check probes, Prometheus exporters) poll without needing a service account.
 
 **Files**
 
@@ -9470,16 +9796,21 @@ Phase G turns the domain services delivered in Phases A–F into a first-class H
 
 **Steps**
 
-- [ ] RED: write two tests. (1) Running — `fakeLlmWorker.getStatus()` returns `{ running: true, concurrency: 3, activeTasks: 1, queueDepth: 4, lastHeartbeatAt: "2026-04-10T10:00:00Z" }`; GET `/api/v2/llm/worker/status` returns 200 body `{ ok: true, status: {...} }`. (2) Stopped — `getStatus` returns `{ running: false, concurrency: 3, activeTasks: 0, queueDepth: 0, lastHeartbeatAt: null }`; returns 200 with echoed status.
-- [ ] GREEN: create `src/routes/v2/llm-status.ts` with `registerV2LlmStatusRoute(app, deps)`. Handler calls `deps.llmWorker.getStatus()` and returns it directly. Wrap in try/catch. Register from `createApp`. Run tests — green.
-- [ ] REFACTOR: add a JSDoc block explaining that the status shape mirrors the interface defined in the Phase E plan and must stay in sync with `LlmScoringWorker.getStatus()`. Link the comment to the relevant Phase E task by filename.
-- [ ] REFACTOR: run `npm run build` and all G11 tests. Then run the full `npm test -- tests/api/v2/` folder to confirm Phase G is holistically green before moving on.
+- [ ] RED: Write two tests. Test 1 (running): `fakeLlmWorker.getStatus()` returns `{ running: true, concurrency: 3, activeTasks: 1, queueDepth: 4, lastHeartbeatAt: "2026-04-10T10:00:00Z" }`; GET `/api/v2/llm/worker/status` returns 200 body `{ ok: true, status: {...} }`. Test 2 (stopped): `getStatus` returns `{ running: false, concurrency: 3, activeTasks: 0, queueDepth: 0, lastHeartbeatAt: null }`; returns 200 with echoed status.
 
-**Commit:** `feat(v2-api): add GET /api/v2/llm/worker/status monitoring route`
+- [ ] GREEN: Create `src/routes/v2/llm-status.ts` with `registerV2LlmStatusRoute(app, deps)`. Handler calls `deps.llmWorker.getStatus()` and returns it directly wrapped in `{ ok: true, status }`. Wrap in try/catch. Register from `createApp`. Run tests — green.
+
+- [ ] REFACTOR: Add a JSDoc block explaining that the status shape mirrors the interface defined in the Phase E plan and must stay in sync with `LlmScoringWorker.getStatus()`. Link the comment to the relevant Phase E task by filename.
+
+- [ ] REFACTOR: Run `npm run build` and all G11 tests. Then run the full `npm test -- tests/api/v2/` folder to confirm Phase G is holistically green before moving on to Phase H. The full folder should have approximately 54 passing tests and zero skipped.
+
+**Commit**
+
+`feat(v2-api): add GET /api/v2/llm/worker/status monitoring route`
 
 ### Phase G Exit Checkpoint
 
-Before moving on to Phase H, all of the following must be true:
+Before moving on to Phase H, all of the following must be true. This list is the strict gate — if any one item is not satisfied, Phase G is not done.
 
 - [ ] `npm test -- tests/api/v2/` is green with zero skipped tests.
 - [ ] `npm run build` compiles the full tree without TypeScript errors.
@@ -9490,49 +9821,144 @@ Before moving on to Phase H, all of the following must be true:
 - [ ] No route contains `console.log` or a hard-coded camp id.
 - [ ] `git status` shows no uncommitted test fixtures or scratch files.
 - [ ] The eleven Task G commits are in place, each on its own line of `git log --oneline`.
+- [ ] The Phase G task summary table at the top of this phase accurately reflects what was shipped. Update the table if any deviations occurred during implementation.
+- [ ] The `requireAdmin` middleware has been exercised by at least one test from each of tasks G4, G5, G6, G9, and G10 to confirm the middleware composes correctly with every admin route type.
+- [ ] The `mapDomainErrorToHttp` helper has been exercised by at least one test from each of tasks G2, G3, G6 (the three routes that deliberately throw domain errors in their test suites) to confirm the mapper handles every code in spec section 6.4.
+- [ ] The total count of new files under `src/routes/v2/*` is nine: `common.ts`, `events.ts`, `periods.ts`, `windows.ts`, `graduation.ts`, `board.ts`, `admin-review.ts`, `admin-members.ts`, `llm-status.ts`.
+- [ ] Every route file is under 200 lines.
+- [ ] `vitest --list` shows no duplicate test names inside `tests/api/v2/`.
+- [ ] The type augmentation in `src/types/fastify.d.ts` is picked up by `tsconfig.json` include and produces no "implicit any" warnings in strict mode.
+- [ ] Every new test file uses `createApp({ databaseUrl: ":memory:" })` and never touches the real DB.
+- [ ] Every new test file imports `FastifyInstance` from `fastify` rather than declaring a custom type alias.
+- [ ] Every new test file uses `app.inject` and does not call `app.listen`.
+- [ ] No test file uses a sleep timer or a polling loop that can flake.
+- [ ] Every fake service in the test files is constructed with `vi.fn()` so call-count and call-order assertions are possible.
 
 ---
 
 ## Phase H — Startup, Seed, and End-to-End Bootstrap (4 tasks)
 
-Phase H makes the new scoring-v2 surface usable in development and production. It extends `.env.example` with the LLM worker knobs from the spec, teaches `server.ts` to spin up the LLM worker alongside Fastify with clean shutdown, upgrades the bootstrap seed script so it backfills W1/W2 and promotes bootstrap operators, and closes the loop with a single end-to-end test that exercises the whole v2 pipeline through `fastify.inject`.
+Phase H makes the new scoring-v2 surface usable in development and production. It extends `.env.example` with the LLM worker knobs from the spec, teaches `server.ts` to spin up the LLM worker alongside Fastify with clean shutdown, upgrades the bootstrap seed script so it backfills W1/W2 shells and promotes bootstrap operators, and closes the loop with a single end-to-end test that exercises the whole v2 pipeline through `fastify.inject`.
 
-### Task H1 — Extend `.env.example`
+### Why Phase H Exists
+
+Phase G shipped the HTTP surface. Phase H connects the HTTP surface to the operational lifecycle of the process. Without Phase H the scoring v2 surface is technically complete but practically unusable: the LLM worker would not start at boot, the bootstrap seed would not backfill the new window shells, the `.env.example` would be out of sync with the code, and there would be no single test that proves the whole pipeline works end-to-end. Each of these gaps would be a blocker for sub-project 2 and sub-project 3 because they would have to guess at the production configuration.
+
+Phase H is also the phase where we prove the system can restart cleanly. A naive implementation might start the LLM worker but never stop it, leaving a dangling timer that prevents `process.exit` from running. The lifecycle test in Task H2 catches exactly that bug.
+
+### Phase H Task Summary
+
+| Task | Scope | New Files | Tests |
+|---|---|---|---|
+| H1 | `.env.example` extension | none (edit existing) | `tests/config/env-example-shape.test.ts` |
+| H2 | LLM worker lifecycle in `server.ts` | `src/services/v2/llm-scoring-client-factory.ts` | `tests/server/llm-lifecycle.test.ts` |
+| H3 | bootstrap seed refactor | none (edit existing) | `tests/scripts/ensure-bootstrap-data-v2.test.ts` |
+| H4 | full-pipeline E2E | `tests/api/v2/helpers.ts` | `tests/api/v2/end-to-end.test.ts` |
+
+### Task H1 — Extend .env.example
+
+**Intent**
+
+Task H1 documents the six new environment keys introduced by Phase E (LLM worker knobs) and spec section 5.9 (bootstrap operator list). The `.env.example` file is the canonical source of documented env keys. Every key shipped by the codebase must appear here with a comment explaining its purpose and default value. A missing key in `.env.example` means a developer spinning up a fresh clone will not know the key exists, which leads to silent production-time surprises.
+
+**Keys introduced**
+
+- `LLM_CONCURRENCY` — maximum concurrent LLM scoring requests (default 3). Higher values trade latency for cost. A typical production value is 3 to 5.
+- `LLM_RATE_LIMIT_PER_SEC` — max requests per second across the whole worker (default 5). This is a global limit, not per-task. The worker applies a token-bucket algorithm.
+- `LLM_POLL_INTERVAL_MS` — worker poll interval when the queue is empty (default 1500). Lower values reduce latency at the cost of CPU.
+- `LLM_TASK_TIMEOUT_MS` — per-task timeout before retry (default 30000). Individual LLM calls that exceed this timeout are cancelled and requeued.
+- `LLM_MAX_ATTEMPTS` — total attempts per task before surrendering to review_required (default 3). Each attempt uses exponential backoff.
+- `BOOTSTRAP_OPERATOR_OPEN_IDS` — comma-separated list of Feishu open ids to auto-promote to operator at seed time (default empty). Used to give initial admin access to the system.
+
+**Why these defaults**
+
+The defaults are chosen to give a working dev environment without additional configuration. `LLM_CONCURRENCY=3` is low enough that local dev on a laptop does not saturate a paid LLM endpoint. `LLM_RATE_LIMIT_PER_SEC=5` matches the rate limit of most free-tier LLM providers. `LLM_POLL_INTERVAL_MS=1500` is fast enough that a developer testing the system sees near-real-time scoring but slow enough that a background worker does not thrash the CPU. `LLM_TASK_TIMEOUT_MS=30000` is generous — most LLM scoring calls complete in under 5 seconds, so a 30-second timeout catches only genuinely broken requests.
 
 **Files**
 
-- `.env.example` — extend with the LLM and bootstrap operator keys.
-- `src/config/load-env.ts` — no changes to behaviour, but document the new keys in the JSDoc at the top.
+- `.env.example` — extend with the six new keys.
+- `src/config/load-env.ts` — no behaviour change, but update the JSDoc at the top to list the new keys.
 - `tests/config/env-example-shape.test.ts` — NEW. Parses `.env.example` and asserts the six new keys are present and commented.
 
 **Steps**
 
-- [ ] RED: write `tests/config/env-example-shape.test.ts` that reads `.env.example` via `fs.readFileSync`, splits into lines, and asserts each of the six keys is present on its own line and the line immediately above it is a comment. Keys: `LLM_CONCURRENCY`, `LLM_RATE_LIMIT_PER_SEC`, `LLM_POLL_INTERVAL_MS`, `LLM_TASK_TIMEOUT_MS`, `LLM_MAX_ATTEMPTS`, `BOOTSTRAP_OPERATOR_OPEN_IDS`. Red.
-- [ ] GREEN: edit `.env.example`. Preserve every existing key and the ordering of Step 5 (which must still be present — the coding-style rule demands we do not delete an ordered bootstrap step). Below the existing Step 5 block, add the six new keys with an explanatory comment above each. Example format: `# Maximum concurrent LLM scoring requests (default 3). Higher values trade latency for cost.` followed by `LLM_CONCURRENCY=3`. Do the same for rate limit per second (default 5), poll interval in ms (default 1500), task timeout in ms (default 30000), max attempts (default 3), and the bootstrap operator CSV (default empty). Run the test — green.
-- [ ] REFACTOR: reorder the new block so it is grouped under a clear `# --- LLM Worker (sub-project 1 Phase E) ---` section header followed by a `# --- Bootstrap Operators (spec §5.9) ---` header. Re-run the test to confirm the shape-checking tolerates the header lines.
-- [ ] REFACTOR: run `npm run build` (no effect expected) and make sure CI still parses the file correctly by running `node -e "require('dotenv').config({ path: '.env.example' })"`. Fix any syntax errors the dotenv parser complains about.
+- [ ] RED: Write `tests/config/env-example-shape.test.ts` that reads `.env.example` via `fs.readFileSync`, splits into lines, and asserts each of the six keys is present on its own line with a comment on the line immediately above it. Use a helper `findKeyWithComment(lines, key)` that walks the lines in pairs and returns `{ key, comment }` or `null`. Assert each of the six lookups is non-null. The test should also confirm that the key names appear in the correct case: `LLM_CONCURRENCY` not `llm_concurrency`. Red because the file does not yet contain any of the new keys.
 
-**Commit:** `chore(v2): document LLM worker and bootstrap operator env keys`
+- [ ] GREEN: Edit `.env.example`. Preserve every existing key and the ordering of Step 5 (which must still be present — the bootstrap step is load-bearing for the legacy seed path and is still referenced by `ensure-bootstrap-data.ts`). Below the existing Step 5 block, add the six new keys with an explanatory comment above each. Example format: `# Maximum concurrent LLM scoring requests (default 3). Higher values trade latency for cost.` followed by `LLM_CONCURRENCY=3`. Do the same for rate limit per second (default 5), poll interval in ms (default 1500), task timeout in ms (default 30000), max attempts (default 3), and the bootstrap operator CSV (default empty).
 
-### Task H2 — Extend `src/server.ts` for LLM Worker Lifecycle
+- [ ] GREEN: Update the JSDoc at the top of `src/config/load-env.ts` to list the new keys. This does not change the runtime behaviour of `loadLocalEnv`, which already reads every key from `process.env`, but it documents the contract for future readers. The JSDoc should be a bullet list with one line per key: `// - LLM_CONCURRENCY: max concurrent LLM scoring requests (default 3)`.
+
+- [ ] GREEN: Run `npm test -- tests/config/env-example-shape.test.ts` — green.
+
+- [ ] REFACTOR: Reorder the new block so it is grouped under a clear `# --- LLM Worker (sub-project 1 Phase E) ---` section header followed by a `# --- Bootstrap Operators (spec section 5.9) ---` header. Re-run the test to confirm the shape-checking tolerates the header lines. If the test fails because the shape checker is too strict about the blank lines around headers, relax the helper to skip blank lines and comment-only lines when walking pairs.
+
+- [ ] REFACTOR: Run `node -e "require('dotenv').config({ path: '.env.example' })"` to verify the file still parses cleanly as a dotenv document. Fix any syntax errors the parser reports. Common pitfalls: values with spaces must be quoted, values with `#` are interpreted as comments unless quoted, and line continuations must be avoided entirely.
+
+- [ ] REFACTOR: Run `npm run build` (no effect expected because the file is not imported) and confirm nothing regressed. Also run the full `npm test` to confirm the env file change did not break any existing test that reads env values at import time.
+
+**Commit**
+
+`chore(v2): document LLM worker and bootstrap operator env keys`
+
+### Task H2 — Extend src/server.ts For LLM Worker Lifecycle
+
+**Intent**
+
+Task H2 makes the LLM worker a first-class citizen of the Fastify server lifecycle. The worker starts after `app.ready()` and stops before `app.close()` on SIGTERM or SIGINT. A small factory `buildLlmScoringClient` decides whether to wire the fake client (dev, test) or the real OpenAI-compatible client (when `LLM_ENABLED=true` and an API key is present). The factory is extracted into its own file so the test harness can stub it.
+
+**Clean shutdown semantics**
+
+Shutdown order matters. The worker must drain its in-flight tasks before Fastify closes, otherwise in-flight tasks would be lost and their events would remain stuck in `pending` forever. The correct sequence is: stop accepting new tasks (`llmWorker.stop()` awaits the in-flight drain) → close Fastify (`app.close()`). Reversing the order means Fastify stops accepting new requests first, which would allow the worker to continue processing — but the HTTP API for `POST /api/v2/events` is already closed, so no new tasks enter the queue. The ordering we chose is still correct, but it is worth documenting why it matters.
+
+**Idempotent signal handling**
+
+If SIGTERM fires twice in rapid succession (for example because a supervisor retries the signal), the second signal must be a no-op. A `let stopping = false` latch at the top of the handler guarantees idempotency. Without the latch, the second signal would call `worker.stop()` a second time, which is a domain error in the worker (it expects to be stopped exactly once per lifetime).
+
+**Why the factory is extracted**
+
+The `buildLlmScoringClient` factory is in its own file so that tests can stub the factory without touching the worker. Tests that want to verify the worker lifecycle do not want to test the factory's branching logic, and tests that want to verify the factory's branching logic do not want to start a real worker. Splitting the two concerns into two files makes each test focused.
 
 **Files**
 
 - `src/server.ts` — extend.
-- `src/services/v2/llm-scoring-client-factory.ts` — NEW. Tiny factory that picks `FakeLlmScoringClient` in dev / test and `OpenAICompatibleLlmScoringClient` when `LLM_ENABLED=true` and a key is present.
+- `src/services/v2/llm-scoring-client-factory.ts` — NEW. Tiny factory.
 - `tests/server/llm-lifecycle.test.ts` — NEW with two failing tests.
 
 **Steps**
 
-- [ ] RED: write two tests in `tests/server/llm-lifecycle.test.ts`. The first test boots the server through the exported `startLlmWorker(app, deps)` helper (which the test must import) and asserts `deps.llmWorker.start` was called exactly once. The second test calls `stopLlmWorker(app, deps)` and asserts `deps.llmWorker.stop` was called once, in order, and that the promise resolves only after both `worker.stop()` and `app.close()` have completed. Use a vitest `vi.fn()` for each so call-order assertions are deterministic. Red because the helpers do not exist.
-- [ ] GREEN: create `src/services/v2/llm-scoring-client-factory.ts` exporting `function buildLlmScoringClient(env: NodeJS.ProcessEnv): LlmScoringClient`. Inside: if `env.LLM_ENABLED !== "true"` or no API key is present, return `new FakeLlmScoringClient()`. Otherwise call `readLlmProviderConfig(env)` and return `new OpenAICompatibleLlmScoringClient(providerConfig)`. Export alongside the existing factory the type guards Phase E defined. Write a short comment explaining that we never auto-enable the real client in tests.
-- [ ] GREEN: update `src/server.ts`. Export `async function startLlmWorker(app, deps)` that calls `deps.llmWorker.start()` and registers a SIGTERM/SIGINT handler that calls `stopLlmWorker(app, deps)` exactly once (guarded with a `let stopping = false` latch). Export `async function stopLlmWorker(app, deps)` that awaits `deps.llmWorker.stop()` then `app.close()`. Inside the default bootstrap block, construct the worker: `const llmClient = buildLlmScoringClient(process.env); const llmWorker = new LlmScoringWorker({ repository, llmClient, concurrency: Number(process.env.LLM_CONCURRENCY ?? 3), ratePerSec: Number(process.env.LLM_RATE_LIMIT_PER_SEC ?? 5), pollIntervalMs: Number(process.env.LLM_POLL_INTERVAL_MS ?? 1500), taskTimeoutMs: Number(process.env.LLM_TASK_TIMEOUT_MS ?? 30000), maxAttempts: Number(process.env.LLM_MAX_ATTEMPTS ?? 3) });`. Call `await startLlmWorker(app, { llmWorker })` after `app.ready()`. Register signal handlers once. Run the test — green.
-- [ ] REFACTOR: verify the signal-handler guard is idempotent by sending SIGTERM twice in a tight loop from within the test. Add a third assertion that `deps.llmWorker.stop` was still called exactly once. Implement the guard if it was missing.
-- [ ] REFACTOR: run `npm run build` and `npm test -- tests/server/llm-lifecycle.test.ts`. Verify `src/server.ts` stays under 200 lines.
+- [ ] RED: Write two tests in `tests/server/llm-lifecycle.test.ts`. Test 1 asserts `startLlmWorker(app, deps)` calls `deps.llmWorker.start` exactly once. The test uses a minimal Fastify app and a vitest `vi.fn()` mock for `llmWorker.start`. After calling `startLlmWorker`, the test asserts `mock.calls.length === 1`. Test 2 asserts `stopLlmWorker(app, deps)` calls `deps.llmWorker.stop` exactly once, calls `app.close` exactly once, and resolves only after both have completed — verified via call-order assertions on the vitest `vi.fn()` mocks. Use `mock.calls` with the recorded call order to assert `stop` was called before `close`. Include a third assertion in test 2: sending SIGTERM twice (simulated by calling the helper twice) does not double-invoke `stop`. Red because the helpers do not exist.
 
-**Commit:** `chore(v2): boot LLM scoring worker with Fastify lifecycle and signal handling`
+- [ ] GREEN: Create `src/services/v2/llm-scoring-client-factory.ts` exporting `function buildLlmScoringClient(env: NodeJS.ProcessEnv): LlmScoringClient`. Inside: if `env.LLM_ENABLED !== "true"` or no API key is present, return `new FakeLlmScoringClient()`. Otherwise call `readLlmProviderConfig(env)` and return `new OpenAICompatibleLlmScoringClient(providerConfig)`. The factory is also the only place that ever constructs a client, so tests can stub the factory without touching the worker. Add a second exported helper `isRealLlmEnabled(env): boolean` that encapsulates the decision logic for reuse.
 
-### Task H3 — Refactor `ensure-bootstrap-data.ts` for Window Shells and Operator Bootstrap
+- [ ] GREEN: Update `src/server.ts`. Export `async function startLlmWorker(app, deps)` that calls `deps.llmWorker.start()` and returns once the worker has reached the "running" state. Export `async function stopLlmWorker(app, deps)` that awaits `deps.llmWorker.stop()` then `app.close()`, guarded by a module-level `let stopping = false` latch. Inside the default bootstrap block at the bottom of the file, construct the worker with the configured knobs from `process.env`, call `await startLlmWorker(app, { llmWorker })` after `app.ready()`, and register `process.on("SIGTERM", () => stopLlmWorker(app, { llmWorker }))` plus the same for `SIGINT`.
+
+- [ ] GREEN: Run `npm test -- tests/server/llm-lifecycle.test.ts` — all tests green.
+
+- [ ] REFACTOR: Verify the signal-handler guard is idempotent by sending SIGTERM twice in a tight loop inside the test. Add a third assertion to confirm that `deps.llmWorker.stop` was still called exactly once. Implement the guard if it was missing. The guard pattern is `if (stopping) return; stopping = true; await ...`.
+
+- [ ] REFACTOR: Run `npm run build` and `npm test -- tests/server/llm-lifecycle.test.ts`. Verify `src/server.ts` stays under 200 lines. If the file grows beyond 200 lines, extract the worker construction into a separate `src/server-v2.ts` file and re-export from `src/server.ts`.
+
+- [ ] REFACTOR: Add a JSDoc comment at the top of `src/services/v2/llm-scoring-client-factory.ts` explaining that the factory exists to keep tests stubbable and to keep the real OpenAI client import out of the test bundle. Cold-start time matters for CI: importing the OpenAI client unconditionally would add several hundred milliseconds to every test file's module graph.
+
+- [ ] REFACTOR: Add a test that verifies `buildLlmScoringClient({ LLM_ENABLED: "false" })` returns an instance of `FakeLlmScoringClient`, and a second test that verifies `buildLlmScoringClient({ LLM_ENABLED: "true", LLM_API_KEY: "sk-test" })` returns an instance of `OpenAICompatibleLlmScoringClient`. These tests live in `tests/services/llm-scoring-client-factory.test.ts`.
+
+**Commit**
+
+`chore(v2): boot LLM scoring worker with Fastify lifecycle and signal handling`
+
+### Task H3 — Refactor ensure-bootstrap-data.ts For Window Shells And Operator Bootstrap
+
+**Intent**
+
+Task H3 makes the bootstrap seed script v2-aware. Two new behaviours are required by the spec. First, after the camp is seeded, W1 and W2 window shells must exist with `settlement_state='open'` (spec section 2.2.2 "懒加载策略"). Second, any member whose `source_feishu_open_id` appears in `BOOTSTRAP_OPERATOR_OPEN_IDS` must be promoted to `role_type='operator'` and `hidden_from_board=1` (spec section 5.9).
+
+**Testability refactor**
+
+The current script is a top-level imperative file with no exports. This task refactors it into a `runEnsureBootstrap(options)` function that accepts an injected repository and env. The top-level block becomes `await runEnsureBootstrap({ env: process.env })` so `npm run seed:ensure` continues to work. The new shape lets tests inject a `:memory:` repository and an in-memory env map, which is essential for deterministic testing.
+
+**Idempotency is non-negotiable**
+
+Running the script twice in a row must produce identical state. The test suite covers this explicitly. The window-shell insert uses `INSERT OR IGNORE` semantics (or a pre-check with `SELECT`). The operator promotion checks `roleType !== 'operator'` before writing, so running twice does not double-write the promotion audit trail.
 
 **Files**
 
@@ -9541,67 +9967,139 @@ Phase H makes the new scoring-v2 surface usable in development and production. I
 
 **Steps**
 
-- [ ] RED: write four tests in `tests/scripts/ensure-bootstrap-data-v2.test.ts`. Each test boots a `:memory:` `SqliteRepository`, optionally pre-seeds data, and calls the new signature `runEnsureBootstrap({ repository, env })`. (1) Fresh DB — empty SQLite; after running, assert `defaultCampId` is set, W1 and W2 rows exist with `settlement_state='open'`, and no bootstrap operators were promoted because the env var is empty. (2) Existing DB — already seeded; assert the function is idempotent (no duplicate W1, no duplicate camp). (3) Windows already present — pre-insert W1 and W2; assert no duplicate and no error. (4) Bootstrap operators — seed two students with `source_feishu_open_id = "ou_a"` and `"ou_b"`; pass env `{ BOOTSTRAP_OPERATOR_OPEN_IDS: "ou_a,ou_b" }`; assert both members were promoted to `role_type="operator"` and `hidden_from_board=1`.
-- [ ] GREEN: refactor `src/scripts/ensure-bootstrap-data.ts`. Export `async function runEnsureBootstrap(options: { repository?: SqliteRepository; env?: NodeJS.ProcessEnv; databaseUrl?: string }): Promise<{ mutated: boolean; campId: string | null }>`. The function uses the injected repository when provided, otherwise constructs one from `options.databaseUrl ?? options.env?.DATABASE_URL ?? "./data/app.db"`. It reads existing logic for legacy seeding, then adds a new block: after the camp is ensured, fetch the `v2_windows` rows for that camp; insert W1 if missing; insert W2 if missing. Finally, if `options.env?.BOOTSTRAP_OPERATOR_OPEN_IDS` is non-empty, split on commas, trim, filter out empty strings, look up each open id via `repository.findMemberByFeishuOpenId`, and if the member's `roleType !== 'operator'`, call `repository.patchMemberForAdmin(member.id, { roleType: "operator", hiddenFromBoard: true })`. Return `{ mutated, campId }`.
-- [ ] GREEN: wire a top-level `await runEnsureBootstrap({ env: process.env })` call at the bottom of the file so `npm run seed:ensure` still works. Run the tests — green.
-- [ ] REFACTOR: factor the window-shell logic into a private helper `ensureWindowShell(repository, campId, code)` inside the same file and call it twice. The helper must be idempotent and raise no error if the row already exists.
-- [ ] REFACTOR: run `npm run build` and the H3 tests.
+- [ ] RED: Write four tests in `tests/scripts/ensure-bootstrap-data-v2.test.ts`. Each test boots a `:memory:` `SqliteRepository`, optionally pre-seeds data, and calls the new signature `runEnsureBootstrap({ repository, env })`. Test 1 (fresh DB): empty SQLite; after running, assert `defaultCampId` is set, W1 and W2 rows exist with `settlement_state='open'`, and no bootstrap operators were promoted because the env var is empty. Test 2 (existing DB): already seeded; assert the function is idempotent — running twice produces identical row counts and no errors. Test 3 (windows already present): pre-insert W1 and W2; assert no duplicate and no error. Test 4 (bootstrap operators): seed two students with `source_feishu_open_id = "ou_a"` and `"ou_b"`; pass env `{ BOOTSTRAP_OPERATOR_OPEN_IDS: "ou_a,ou_b" }`; assert both members were promoted to `role_type="operator"` and `hidden_from_board=1`. Also assert the return value `{ mutated: true, campId: "c-default" }` on the first run and `{ mutated: false, campId: "c-default" }` on the second run.
 
-**Commit:** `chore(v2): refactor ensure-bootstrap to seed W1/W2 shells and apply bootstrap operators`
+- [ ] GREEN: Refactor `src/scripts/ensure-bootstrap-data.ts`. Export `async function runEnsureBootstrap(options: { repository?: SqliteRepository; env?: NodeJS.ProcessEnv; databaseUrl?: string }): Promise<{ mutated: boolean; campId: string | null }>`. The function uses the injected repository when provided, otherwise constructs one from `options.databaseUrl ?? options.env?.DATABASE_URL ?? "./data/app.db"`. Reuse existing logic for legacy seeding, then add a new block: after the camp is ensured, fetch the `v2_windows` rows for that camp; insert W1 if missing; insert W2 if missing. Finally, if `options.env?.BOOTSTRAP_OPERATOR_OPEN_IDS` is non-empty, split on commas, trim, filter out empty strings, look up each open id via `repository.findMemberByFeishuOpenId`, and if the member's `roleType !== 'operator'`, call `repository.patchMemberForAdmin(member.id, { roleType: "operator", hiddenFromBoard: true })`. Return `{ mutated, campId }`.
 
-### Task H4 — End-to-End Integration Test
+- [ ] GREEN: Wire a top-level `await runEnsureBootstrap({ env: process.env })` call at the bottom of the file so `npm run seed:ensure` still works. Guard the top-level call with `if (import.meta.url === \`file://${process.argv[1]}\`)` so importing the module from a test does not trigger the top-level side effect. Without this guard, importing the module from a test file would run the bootstrap logic against whatever DB `DATABASE_URL` points to, which is catastrophic.
+
+- [ ] GREEN: Run `npm test -- tests/scripts/ensure-bootstrap-data-v2.test.ts` — all four tests green.
+
+- [ ] REFACTOR: Factor the window-shell logic into a private helper `ensureWindowShell(repository, campId, code)` inside the same file and call it twice. The helper must be idempotent: if the row already exists, it is a no-op; if it does not, insert with `settlement_state='open'`, `first_period_id=null`, `last_period_id=null`.
+
+- [ ] REFACTOR: Factor the operator promotion logic into a private helper `promoteBootstrapOperators(repository, openIds)` that accepts a pre-parsed array of open ids (not the raw env string) so the caller controls the parsing. Write a test that passes an array directly to the helper, bypassing the env parsing.
+
+- [ ] REFACTOR: Run `npm run build` and the H3 tests.
+
+- [ ] REFACTOR: Run `npm run seed:ensure` against a fresh throwaway DB to confirm the script still works end-to-end from the command line. Verify that the second run prints a "no changes" message rather than an error.
+
+**Commit**
+
+`chore(v2): refactor ensure-bootstrap to seed W1/W2 shells and apply bootstrap operators`
+
+### Task H4 — End-To-End Integration Test
+
+**Intent**
+
+Task H4 is the crown-jewel test that exercises the entire v2 pipeline through `fastify.inject`. It does not use a real HTTP listener. It seeds a `:memory:` repository, boots the app with real service implementations (not fakes), drives the pipeline through HTTP calls, and asserts the final state of every table. It is the single test that proves Phase 1 sub-project 1 is internally consistent.
+
+**Why it is expensive but necessary**
+
+This test takes approximately 2 to 5 seconds to run, which is longer than a typical unit test. It is worth the cost because it catches integration bugs that unit tests miss. For example: a mismatched column name between `WindowSettler` and `fetchRankingByCamp`, or a forgotten eligibility filter in a downstream query, or a deadlock between the LLM worker and the aggregator when they both touch the same row. Unit tests mock these interactions away. Only an end-to-end test can catch them.
+
+**Fake LLM client**
+
+The test uses `FakeLlmScoringClient` configured to always return "approved". This makes the LLM branch deterministic and avoids any network calls. The fake client is not a mock — it is a real implementation of the `LlmScoringClient` interface that always returns a canned response. Tests that want to exercise the reject branch use a second fake configured to always return "rejected".
+
+**Drainable worker**
+
+The LLM worker provides a testing hook `drainOnce()` that processes all pending tasks synchronously and returns when the queue is empty. This is not the production API (production uses a background poll loop). The hook exists purely so the test can advance the worker without waiting for the poll interval. Without this hook the test would need to sleep for `LLM_POLL_INTERVAL_MS` between each step, which would make the test flaky and slow.
 
 **Files**
 
-- `tests/api/v2/end-to-end.test.ts` — NEW. This is the crown-jewel test that exercises the entire v2 pipeline.
+- `tests/api/v2/end-to-end.test.ts` — NEW.
+- `tests/api/v2/helpers.ts` — NEW. Shared helpers for seeding fixtures, building operator headers, and polling the LLM worker.
 
 **Steps**
 
-- [ ] RED: write the full E2E test. Import `createApp`, `FakeLlmScoringClient`, `SqliteRepository`, and the domain types. Use `beforeAll` to construct a `:memory:` repository, call `runEnsureBootstrap({ repository, env: { BOOTSTRAP_OPERATOR_OPEN_IDS: "" } })`, then seed five students (`m-1` through `m-5`), construct real implementations of every service (ingestor, aggregator, window settler, period lifecycle, reaction tracker, member sync stub, LLM worker with `FakeLlmScoringClient` that always returns pass), and finally call `await createApp({ databaseUrl: ":memory:", ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, reactionTracker, memberSync })` with the real instances. Start the LLM worker inline.
-- [ ] RED: write the assertions in a single `it("runs the full period → window → promotion pipeline", async () => {...})` block. Steps and assertions (the test contains roughly twenty assertions in total): (1) `app.inject POST /api/v2/windows/open` with `{ code: "W1" }` and an operator header → 201. (2) `POST /api/v2/periods/open` with `{ number: 1 }` → 201 and the returned `periodId` starts with `period-` and is tagged ice-breaker in the DB. (3) Attempt to `POST /api/v2/events` for member `m-1` item `K1` during the ice breaker → expect 409 `ice_breaker_no_scoring`. (4) `POST /api/v2/periods/open` with `{ number: 2 }` → 201 with `assignedWindowId` equal to the W1 window id. (5) Ingest ten legitimate events for five members across K1/H1/C1/S1/G1 → each returns 202. (6) `POST /api/v2/periods/open` with `{ number: 3 }` → 201. (7) Ingest a K3 event for `m-1` and poll the LLM worker until the task status is `approved` (use `await llmWorker.drainOnce()` to make the test deterministic; the fake client is auto-pass). (8) `POST /api/v2/windows/open` with `{ code: "W3" }` → 201, and `POST /api/v2/periods/open` with `{ number: 4 }` → 201 and `shouldSettleWindowId` equals the W1 id. (9) Trigger `windowSettler.settleWindow(shouldSettleWindowId)` (or assert it was called from the lifecycle). (10) Assert `member_dimension_scores` rows exist for every eligible student for W1. (11) Assert `window_snapshots` rows exist for every eligible student for W1 with the correct rank order. (12) Assert `member_levels` shows at least one student promoted from L0 to L1 via `promotion_records`. (13) `GET /api/v2/board/ranking?campId=c-1` returns 200 with exactly five rows (the operator is excluded). (14) `GET /api/v2/board/member/m-1` returns 200 with `currentLevel` ≥ 1. (15) `GET /api/v2/admin/review-queue` with the operator header returns 200 with zero rows because the fake LLM client auto-passes everything. (16) `GET /api/v2/llm/worker/status` returns 200 with `running: true`. (17) Assert `GET /api/v2/board/member/m-ghost` returns 404. (18) Assert a repeat ingest with the same `sourceRef` for `m-1 K1` returns 400 `duplicate`. (19) Assert `POST /api/v2/events` with a student header and no `currentAdmin` still works (the events route is not admin-gated). (20) Final assertion: call `await stopLlmWorker(app, { llmWorker })` and confirm the worker stopped cleanly.
-- [ ] GREEN: implement any missing glue needed for the assertions to pass. Likely missing: the `drainOnce()` testing hook on `LlmScoringWorker` (if not already provided by Phase E), a small fixture helper for seeding five students with open ids, and a `makeOperatorHeader()` helper that returns `{ "x-feishu-open-id": "ou-operator" }` for tests. These helpers live in `tests/api/v2/helpers.ts` so they can be reused by future v2 tests. Run `npm test -- tests/api/v2/end-to-end.test.ts` — green.
-- [ ] REFACTOR: split the assertions into logically named helper functions (`setupWindowsAndPeriods`, `ingestLegitimateEvents`, `assertRankingShape`, `assertLevelPromotion`) so the test reads linearly. Keep the top-level `it` block under 150 lines.
-- [ ] REFACTOR: run `npm run build` and the full `npm test -- tests/api/v2/` folder once more to ensure the new E2E test does not flake with other suites.
+- [ ] RED: Write the full E2E test skeleton in `tests/api/v2/end-to-end.test.ts`. Import `createApp`, `FakeLlmScoringClient`, `SqliteRepository`, `runEnsureBootstrap`, and every domain service type. In `beforeAll`: construct a `:memory:` repository; call `runEnsureBootstrap({ repository, env: { BOOTSTRAP_OPERATOR_OPEN_IDS: "" } })`; seed five students (`m-1` through `m-5`) plus one operator (`op-1`); construct real implementations of every service; construct `LlmScoringWorker` with `FakeLlmScoringClient` that always returns pass; call `await createApp({ databaseUrl: ":memory:", ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, reactionTracker, memberSync })`; call `await startLlmWorker(app, { llmWorker })`. All of these will fail at first because `runEnsureBootstrap` (from H3) and `startLlmWorker` (from H2) may still be in-flight when this task starts.
 
-**Commit:** `test(v2): add end-to-end integration test covering the full period → settlement pipeline`
+- [ ] RED: Write the assertions in a single `it("runs the full period → window → promotion pipeline", async () => {...})` block. The assertions run in sequence as a narrative. Step 1: `POST /api/v2/windows/open` with `{ code: "W1" }` and an operator header → assert 201. Step 2: `POST /api/v2/periods/open` with `{ number: 1 }` → assert 201 and the returned `periodId` starts with `period-` and is tagged ice-breaker in the DB. Step 3: attempt to `POST /api/v2/events` for member `m-1` item `K1` during the ice breaker → assert 409 `ice_breaker_no_scoring`. Step 4: `POST /api/v2/periods/open` with `{ number: 2 }` → assert 201 with `assignedWindowId` equal to the W1 window id. Step 5: ingest ten legitimate events for five members across K1, H1, C1, S1, G1 → assert each returns 202. Step 6: `POST /api/v2/periods/open` with `{ number: 3 }` → assert 201. Step 7: ingest a K3 event for `m-1` and poll the LLM worker until the task status is `approved` using `await llmWorker.drainOnce()`. Step 8: `POST /api/v2/windows/open` with `{ code: "W3" }` → assert 201, and `POST /api/v2/periods/open` with `{ number: 4 }` → assert 201 and `shouldSettleWindowId` equals the W1 id. Step 9: trigger `windowSettler.settleWindow(shouldSettleWindowId)` (or assert it was called from the lifecycle). Step 10: assert `member_dimension_scores` rows exist for every eligible student for W1. Step 11: assert `window_snapshots` rows exist for every eligible student for W1 with the correct rank order. Step 12: assert `member_levels` shows at least one student promoted from L0 to L1 via `promotion_records`. Step 13: `GET /api/v2/board/ranking?campId=c-1` returns 200 with exactly five rows (the operator is excluded). Step 14: `GET /api/v2/board/member/m-1` returns 200 with `currentLevel >= 1`. Step 15: `GET /api/v2/admin/review-queue` with the operator header returns 200 with zero rows because the fake LLM client auto-passes everything. Step 16: `GET /api/v2/llm/worker/status` returns 200 with `running: true`. Step 17: assert `GET /api/v2/board/member/m-ghost` returns 404. Step 18: assert a repeat ingest with the same `sourceRef` for `m-1 K1` returns 400 `duplicate`. Step 19: assert `POST /api/v2/events` with a student header and no `currentAdmin` still works (the events route is not admin-gated). Step 20: call `await stopLlmWorker(app, { llmWorker })` and confirm the worker stopped cleanly.
+
+- [ ] GREEN: Implement any missing glue needed for the assertions to pass. Likely missing: the `drainOnce()` testing hook on `LlmScoringWorker` (if not already provided by Phase E), a small fixture helper for seeding five students with open ids, and a `makeOperatorHeader()` helper that returns `{ "x-feishu-open-id": "ou-operator" }`. These helpers live in `tests/api/v2/helpers.ts` so they can be reused by future v2 tests.
+
+- [ ] GREEN: Run `npm test -- tests/api/v2/end-to-end.test.ts` — green.
+
+- [ ] REFACTOR: Split the assertions into logically named helper functions (`setupWindowsAndPeriods`, `ingestLegitimateEvents`, `assertRankingShape`, `assertLevelPromotion`) inside `tests/api/v2/helpers.ts` so the test reads linearly. Keep the top-level `it` block under 150 lines.
+
+- [ ] REFACTOR: Run `npm run build` and the full `npm test -- tests/api/v2/` folder once more to ensure the new E2E test does not flake when run alongside the G-phase unit tests. If any previous test suddenly fails, the most likely cause is test-file-order dependency (two tests sharing a `:memory:` DB). Fix by ensuring every test file constructs its own fresh repository.
+
+- [ ] REFACTOR: Measure the E2E test runtime with `npm test -- tests/api/v2/end-to-end.test.ts --reporter=verbose`. If it exceeds 10 seconds, investigate which pipeline step is slow. Likely candidates are the LLM worker poll interval (reduce in test to 50 ms) and the window settler (ensure it uses a single transaction, not per-row commits).
+
+- [ ] REFACTOR: Add a second `it` block that tests the reject branch of the LLM worker. Use a `FakeLlmScoringClient` configured to always return "rejected". Assert that the event lands in `review_required` state and appears in the admin review queue. This doubles the test coverage of the LLM worker pipeline.
+
+**Commit**
+
+`test(v2): add end-to-end integration test covering the full period → settlement pipeline`
 
 ### Phase H Exit Checkpoint
 
 - [ ] `.env.example` contains the six new keys and still boots with `dotenv`.
 - [ ] `src/server.ts` starts the LLM worker after `app.ready()` and stops it cleanly on SIGTERM/SIGINT.
 - [ ] `npm run seed:ensure` works and is idempotent on a fresh DB.
-- [ ] `tests/api/v2/end-to-end.test.ts` passes and exercises every v2 route, domain service, and repository method touched by Phases A–G.
+- [ ] `tests/api/v2/end-to-end.test.ts` passes and exercises every v2 route, domain service, and repository method touched by Phases A through G.
 - [ ] `npm run build` is green.
-- [ ] `npm test` is green across the full suite (including legacy tests that still exist before Phase I runs).
+- [ ] `npm test` is green across the full suite, including legacy tests that still exist before Phase I runs.
+- [ ] The Phase H task summary table at the top of this phase accurately reflects the shipped work.
+- [ ] `src/services/v2/llm-scoring-client-factory.ts` is the only place that constructs an `LlmScoringClient`.
+- [ ] The signal handlers in `src/server.ts` are idempotent and have been tested to confirm a double-SIGTERM does not crash.
+- [ ] The E2E test in `tests/api/v2/end-to-end.test.ts` runs in under 10 seconds.
+- [ ] The bootstrap seed script runs in under 500 milliseconds on a `:memory:` DB.
+- [ ] `git log --oneline` shows four Phase H commits in sequence.
+- [ ] The `runEnsureBootstrap` function is importable from test files without triggering the top-level side effect.
 
 ---
 
 ## Phase I — Legacy Cleanup and Phase 1 Sign-off (2 tasks)
 
-Phase I is the smallest and most surgical phase. Task I1 removes the legacy v1 scoring surface that is now strictly dead code — but it does so carefully, unhooking imports first and running the build between deletions so no dangling reference reaches `git rm`. Task I2 adds a coverage script if missing, runs the final gate, and records that sub-project 1 Phase 1 is complete.
+Phase I is the smallest and most surgical phase. Task I1 removes the legacy v1 scoring surface that is now strictly dead code. It does so carefully, unhooking imports first and running the build between deletions so no dangling reference reaches `git rm`. Task I2 adds a coverage script if missing, runs the final gate, and records that sub-project 1 Phase 1 is complete.
+
+### Why Phase I Is Two Tasks, Not One
+
+Task I1 and Task I2 could be combined into a single "wrap up Phase 1" task. They are kept separate because I1 is a destructive change (it deletes real files) while I2 is an additive change (it adds scripts and a README note). Keeping them separate means a reviewer can inspect the deletion diff in isolation, which is much easier to review than a combined deletion-plus-addition diff. The git history is also cleaner: the `chore: drop legacy v1 scoring surface` commit stands alone as a reference for "what was in the v1 scoring surface" if we ever need to go back and check.
+
+### Phase I Task Summary
+
+| Task | Scope | Commit |
+|---|---|---|
+| I1 | delete v1 scoring surface per spec section 6.2 | `chore: drop legacy v1 scoring surface` |
+| I2 | test coverage script, README note, final gate | `chore(v2): mark phase 1 complete` |
 
 ### Task I1 — Drop Legacy v1 Scoring Surface
 
-**Files (edit first)**
+**Intent**
 
-- `src/app.ts` — remove all imports, route registrations, and helper functions that depend on the legacy files listed in spec §6.2.
+Task I1 removes every file listed under "完全删除" in spec section 6.2. The file list is final — no compatibility shim is kept, no "deprecated" comment is added to any kept file. The scoring v2 surface is the only scoring surface after this task. Keeping dead code around is a maintenance burden that accumulates interest over time; the rule from the coding-style guide is clear: prefer deletion.
 
-**Files (delete after app.ts is clean)**
+**Execution strategy**
 
-- `src/domain/scoring.ts`
-- `src/domain/warnings.ts`
-- `src/domain/ranking.ts`
-- `src/domain/session-windows.ts`
-- `src/domain/submission-aggregation.ts`
-- `src/domain/tag-parser.ts`
-- `src/services/llm/glm-file-parser.ts`
-- `src/services/llm/llm-evaluator.ts`
-- `src/services/documents/extract-text.ts`
-- `src/services/documents/file-format.ts`
-- `src/services/scoring/evaluate-window.ts`
-- `src/services/feishu/base-sync.ts`
-- `web/src/**` (entire frontend surface, including `web/public/**` assets that are tied to it; keep `web/index.html` only if it is already a static placeholder)
-- Corresponding test files listed below.
+The task follows a strict order. First, edit `src/app.ts` to remove all imports and route registrations that depend on the legacy files. Second, run `npm run build` to confirm the edit is clean. Third, `git rm` the legacy files in batches. Fourth, run `npm run build` after each batch to catch any residual references. Fifth, run `npm test` at the end and delete any test files that depend on deleted modules. The Edit-first order is critical because `git rm` on a file that is still imported produces a broken build, which complicates debugging.
+
+**Why deletion beats deprecation**
+
+The alternative to deletion is to leave the files in place and mark them deprecated with a comment. That approach was rejected for three reasons. First, deprecated files continue to consume CI time (they are still compiled and tested). Second, deprecated files are still imported transitively, which means they cannot be safely ignored during a code audit. Third, deprecated files rot over time — a bug fix in the live code may break the deprecated path without anyone noticing, which produces confusing error messages. Deletion is cleaner.
+
+**Files to edit first**
+
+- `src/app.ts` — remove all imports, route registrations, and helper functions that depend on the legacy files.
+
+**Files to delete after app.ts is clean**
+
+The following files are listed in spec section 6.2 "完全删除":
+
+- `src/domain/scoring.ts` — legacy heuristic plus binary LLM scoring; conflicts with the v2 fifteen-item dimension model.
+- `src/domain/warnings.ts` — warning/elimination semantics are obsolete; the new rule does not demote or eliminate members.
+- `src/domain/ranking.ts` — pure cumulative scoring sort; does not support the segment/radar/cumulative ranking required by v2.
+- `src/domain/session-windows.ts` — legacy session definition tag matching; the new rule does not use hashtags.
+- `src/domain/submission-aggregation.ts` — legacy single-file submission aggregation; obsolete semantics.
+- `src/domain/tag-parser.ts` — the new rule uses card buttons, not hashtag parsing.
+- `src/services/llm/glm-file-parser.ts` — the new rule does not parse PDF or DOCX files.
+- `src/services/llm/llm-evaluator.ts` — replaced by the v2 `llm-scoring-worker`.
+- `src/services/documents/extract-text.ts` — the new rule does not extract text from documents.
+- `src/services/documents/file-format.ts` — same reason.
+- `src/services/scoring/evaluate-window.ts` — replaced by the v2 `window-settler`.
+- `src/services/feishu/base-sync.ts` — the new architecture does not use Feishu Base for data mirroring.
+- `web/src/**` — entire frontend surface. Sub-project 3 will rewrite this.
 
 **Test files to delete**
 
@@ -9621,64 +10119,197 @@ Phase I is the smallest and most surgical phase. Task I1 removes the legacy v1 s
 - `tests/api/*operator-warnings*.test.ts`
 - Any `tests/web/**/*` files.
 
+**Files explicitly preserved**
+
+The following files are explicitly preserved per spec section 6.2 "保留复用":
+
+- `src/services/feishu/client.ts` — Feishu API client.
+- `src/services/feishu/ws-runtime.ts` — long-connection runtime.
+- `src/services/feishu/config.ts` — Feishu config loader.
+- `src/services/feishu/messenger.ts` — bot message sender.
+- `src/services/feishu/bootstrap.ts` — bootstrap flow.
+- `src/services/feishu/normalize-message.ts` — message normaliser (file-message branch is dead but the rest is used).
+- `src/storage/sqlite-repository.ts` — data access layer.
+- `src/db/*` — schema management.
+- `src/config/*` — config loading.
+- `src/domain/types.ts` — legacy types kept for non-breaking purposes.
+- `src/app.ts` — main entry point, extended with v2 routes.
+- `src/server.ts` — startup entry point.
+
 **Steps**
 
-- [ ] Unhook imports in `src/app.ts` first. Use the Edit tool to remove every import line referencing `LocalDocumentTextExtractor`, `DocumentTextExtractor`, `FeishuBaseSyncService`, `NoopBaseSyncService`, `evaluateMessageWindow`, the entire `scoring` / `warnings` / `ranking` / `session-windows` / `submission-aggregation` / `tag-parser` modules, and any helper function that depends on them. Then remove the four legacy route blocks: `GET /api/dashboard/ranking`, `POST /api/submissions/:id/review`, `GET /api/members` (the v1 shape), and `GET /api/operator/warnings`. Also remove the `documentTextExtractor`, `baseSync`, `memberPatchSchema`, `reviewSchema`, and `announcementSchema` declarations if they are now unreferenced. Leave the Feishu messenger / WS runtime / normalize-message / client code untouched per spec §6.2 "保留复用". Run `npm run build`. Fix every remaining type error by deleting the offending reference — never restore a deleted file. The goal is a clean build before `git rm` touches disk.
-- [ ] Run `git rm` on every file in the deletion list. Do them in this order so intermediate builds can still type-check: (1) delete the web frontend first (`git rm -r web/src`), (2) delete the domain files, (3) delete the service files, (4) delete the tests. After each deletion, run `npm run build` and fix any residual import leaks via `Edit` (for example, barrel `src/index.ts` files that re-export deleted modules must be trimmed).
-- [ ] Run `npm test` once. Any failing test that depends on a deleted module must be deleted as well — use the Edit tool to remove the file references, then `git rm` the file. Do not try to "fix" the test by stubbing the deleted module. The rule from spec §6.2 is absolute: these modules are gone, not replaced.
-- [ ] Run `npm run build && npm test` one more time. Both must exit green. If a legacy test file is still referenced by a fixture or snapshot, delete it too.
-- [ ] Final sanity sweep: `git status` should show only deletions and the `src/app.ts` edit. No stray untracked files.
+- [ ] Unhook imports in `src/app.ts` first. Use the Edit tool to remove every import line referencing `LocalDocumentTextExtractor`, `DocumentTextExtractor`, `FeishuBaseSyncService`, `NoopBaseSyncService`, `evaluateMessageWindow`, and the entire set of `scoring | warnings | ranking | session-windows | submission-aggregation | tag-parser` modules. Also remove any helper function inside `src/app.ts` that depends on them. Then remove the four legacy route blocks: `GET /api/dashboard/ranking`, `POST /api/submissions/:id/review`, `GET /api/members` (the v1 shape), and `GET /api/operator/warnings`. Also remove the now-unreferenced local declarations: `documentTextExtractor`, `baseSync`, `memberPatchSchema`, `reviewSchema`, `announcementSchema`, and any others that become dead code. Leave the Feishu messenger, WS runtime, `normalize-message`, and client code untouched per spec section 6.2 "保留复用".
 
-**Commit:** `chore: drop legacy v1 scoring surface`
+- [ ] Run `npm run build`. Fix every remaining type error by deleting the offending reference — never restore a deleted file. The goal is a clean build before `git rm` touches disk. If the build fails because of a type error in a test file, that is acceptable because the test file itself will be deleted in a later step. Document the expected failure in a code comment if you need to skip the test file temporarily.
+
+- [ ] Run `git rm` on the web frontend first: `git rm -r web/src`. Then run `npm run build`. Any residual error comes from a barrel file or test fixture that re-exports the deleted modules — trim those files using Edit, then re-run the build.
+
+- [ ] Run `git rm` on the six domain files (`scoring.ts`, `warnings.ts`, `ranking.ts`, `session-windows.ts`, `submission-aggregation.ts`, `tag-parser.ts`) in one command. Run `npm run build`. Fix residual references. Common sources of residual references: a barrel file `src/domain/index.ts` that re-exports deleted modules, or a type import in a file that was supposed to be kept.
+
+- [ ] Run `git rm` on the six service files (`glm-file-parser.ts`, `llm-evaluator.ts`, `extract-text.ts`, `file-format.ts`, `evaluate-window.ts`, `base-sync.ts`) in one command. Run `npm run build`. Fix residual references. This is the batch most likely to surface unexpected imports — pay special attention to the `src/app.ts` diff here because the Feishu `base-sync` import is easy to miss.
+
+- [ ] Run `npm test`. Any failing test that depends on a deleted module must be deleted as well — use Edit to find the file reference, then `git rm` the file. Do not try to "fix" the test by stubbing the deleted module. The rule from spec section 6.2 is absolute: these modules are gone, not replaced.
+
+- [ ] Run `git rm` on every test file in the deletion list. Use a single command per group. Then run `npm test` once more and confirm the suite is green.
+
+- [ ] Run `npm run build && npm test` one more time. Both must exit green. If a legacy test file is still referenced by a fixture or snapshot, delete it too. If a snapshot file is stale, delete it rather than regenerating.
+
+- [ ] Final sanity sweep: `git status` should show only deletions and the `src/app.ts` edit. No stray untracked files. Run `git diff --cached --stat` to review the deletion count; it should be a single large removal diff with approximately 15 to 20 file deletions and a single edit.
+
+- [ ] Verify with `git grep` that no reference remains to any of the deleted module names. Commands to run: `git grep -l "LocalDocumentTextExtractor"` (should return nothing), `git grep -l "evaluateMessageWindow"` (should return nothing), `git grep -l "FeishuBaseSyncService"` (should return nothing), `git grep -l "tag-parser"` (should return nothing), `git grep -l "submission-aggregation"` (should return nothing).
+
+- [ ] Commit as a single atomic commit. Do not split this into multiple commits, because the intermediate states would have broken builds and the commit history would be confusing to navigate.
+
+**Commit**
+
+`chore: drop legacy v1 scoring surface`
 
 ### Task I2 — Mark Phase 1 Complete
 
+**Intent**
+
+Task I2 closes Phase 1. It ensures the coverage script exists, runs the final gate (`npm test && npm run build && npm run test:coverage`), and appends a short note to `README.md` recording that sub-project 1 Phase 1 is complete.
+
+**Coverage configuration**
+
+The spec section 6.5 thresholds are `lines >= 85` and `branches >= 90` for `src/domain/v2/**`, and `lines >= 80` for `src/services/v2/**`. If `vitest.config.ts` does not already have these thresholds, this task adds them. The thresholds are not lowered even if tests are slightly below — the fix is to write more tests, not to relax the gate. A relaxed threshold is technical debt that compounds over time.
+
+**Why a README note**
+
+The README note is important because it signals to future contributors (and to sub-projects 2 and 3) that Phase 1 is complete and the `/api/v2/*` surface is ready to consume. Without the note, a later contributor reading the README would see only the pre-Phase-1 description and might assume the v2 routes are experimental.
+
 **Files**
 
-- `package.json` — add `test:coverage` script if missing. The script shape is `"test:coverage": "vitest run --coverage"`. Preserve the existing `test`, `build`, and `seed:ensure` scripts exactly. Do not touch dependencies.
-- `README.md` — append a short note.
-- `vitest.config.ts` — if coverage provider is not configured, add the `c8` (or `v8`) provider with the thresholds from spec §6.5: `lines ≥ 85`, `branches ≥ 90` for `src/domain/v2/**` and `lines ≥ 80` for `src/services/v2/**`.
+- `package.json` — add `test:coverage` script if missing.
+- `vitest.config.ts` — add coverage thresholds if missing.
+- `README.md` — append a short note under a new heading.
 
 **Steps**
 
-- [ ] Inspect `package.json` scripts. If `test:coverage` is missing, add it with the shape above. If a coverage provider is missing from `vitest.config.ts`, add it. Run `npm install` only if the coverage provider is a new dependency (it usually is not — `@vitest/coverage-v8` is typically already present). If installation is required, include it in the commit via `package.json` and `package-lock.json`.
-- [ ] Run `npm test`. Must be green.
-- [ ] Run `npm run build`. Must be green.
-- [ ] Run `npm run test:coverage`. Must be green and must report ≥ 85% lines for the v2 domain. If it fails to meet the threshold, write the missing tests before continuing — do not lower the threshold.
-- [ ] Append a short note at the bottom of `README.md`: three or four lines under a new heading `## Scoring v2 — Phase 1 Complete (2026-04)` that summarise the delivered surface: "Sub-project 1 Phase 1 is complete: domain model, scoring aggregator, window settler, LLM worker, `/api/v2/*` routes, end-to-end tests, and legacy cleanup. Sub-projects 2 (Feishu cards) and 3 (dashboard UI) consume this layer." Do not delete or rewrite any existing README content.
+- [ ] Inspect `package.json` scripts. If `test:coverage` is missing, add it with the shape `"test:coverage": "vitest run --coverage"`. Preserve the existing `test`, `build`, and `seed:ensure` scripts exactly. Do not touch dependencies unless the coverage provider is missing.
 
-**Commit:** `chore(v2): mark phase 1 complete`
+- [ ] Inspect `vitest.config.ts`. If no coverage provider is configured, add the `v8` (or `c8`) provider plus the thresholds from spec section 6.5. The `include` patterns should cover `src/**`. The `exclude` patterns should cover `tests/**`, `dist/**`, `node_modules/**`, and the legacy paths that were removed by Task I1 (though those paths are already non-existent at this point, so the exclude is defensive rather than necessary).
+
+- [ ] If `@vitest/coverage-v8` is not listed in `devDependencies`, run `npm install --save-dev @vitest/coverage-v8` and commit the updated `package.json` and `package-lock.json` together in this task's commit.
+
+- [ ] Run `npm test`. Must be green.
+
+- [ ] Run `npm run build`. Must be green.
+
+- [ ] Run `npm run test:coverage`. Must be green and must report >= 85% lines for the v2 domain. If it fails to meet the threshold, write the missing tests before continuing — do not lower the threshold. Missing coverage is a signal that the test suite is incomplete, not that the threshold is wrong.
+
+- [ ] Append a short note at the bottom of `README.md` under a new heading `## Scoring v2 — Phase 1 Complete (2026-04)`. The note is three or four lines summarising the delivered surface: sub-project 1 Phase 1 delivered the v2 domain model, the scoring aggregator, the window settler, the LLM worker, the `/api/v2/*` routes, the end-to-end tests, and the legacy cleanup. Sub-projects 2 and 3 consume this layer. Do not delete or rewrite any existing README content.
+
+- [ ] Commit.
+
+**Commit**
+
+`chore(v2): mark phase 1 complete`
 
 ### Phase I Exit Checkpoint
 
-- [ ] `git log --oneline` shows the two Phase I commits (`chore: drop legacy v1 scoring surface`, `chore(v2): mark phase 1 complete`) on top of the Phase G/H commits.
+- [ ] `git log --oneline` shows the two Phase I commits (`chore: drop legacy v1 scoring surface`, `chore(v2): mark phase 1 complete`) on top of the Phase G and H commits.
 - [ ] `npm test && npm run build && npm run test:coverage` is green.
-- [ ] `src/app.ts` no longer imports any file listed under "完全删除" in spec §6.2.
+- [ ] `src/app.ts` no longer imports any file listed under "完全删除" in spec section 6.2.
 - [ ] `web/src/` is removed from the tree.
-- [ ] README.md has the Phase 1 complete note.
+- [ ] `README.md` has the Phase 1 complete note and the existing content is untouched.
 - [ ] The git working tree is clean.
+- [ ] `git grep -l "LocalDocumentTextExtractor"` returns zero hits.
+- [ ] `git grep -l "evaluateMessageWindow"` returns zero hits.
+- [ ] `git grep -l "FeishuBaseSyncService"` returns zero hits.
+- [ ] `git grep -l "tag-parser"` returns zero hits.
+- [ ] `git grep -l "submission-aggregation"` returns zero hits.
+- [ ] The coverage report meets or exceeds the thresholds from spec section 6.5.
+- [ ] The README note is present and preserves existing content.
+- [ ] The `chore: drop legacy v1 scoring surface` commit is a single, atomic, build-green commit.
 
 ---
 
 ## Self-Review Checklist
 
-Before declaring Phases G / H / I done and handing off to sub-project 2, verify each of the following. This list is additive to the per-phase exit checkpoints above.
+Before declaring Phases G, H, and I done and handing off to sub-project 2, verify each of the following. This list is additive to the per-phase exit checkpoints above and covers cross-cutting concerns that do not fit into a single phase.
+
+**Routes and middleware**
 
 - [ ] Every v2 route file under `src/routes/v2/` is under 200 lines and has a single responsibility.
 - [ ] Every v2 route file imports `parseStrict` and `mapDomainErrorToHttp` from `src/routes/v2/common.ts` rather than re-implementing either helper.
 - [ ] No v2 route contains a `console.log`, `console.error`, or debug print statement. Logging goes through `request.log` only.
-- [ ] All admin routes (`/api/v2/admin/*`, `/api/v2/periods/close`, `/api/v2/windows/open`, `/api/v2/graduation/close`) register `onRequest: requireAdmin(repository)`.
+- [ ] All admin routes (`/api/v2/admin/*`, `/api/v2/periods/close`, `/api/v2/windows/open`, `/api/v2/graduation/close`) register `onRequest: adminGuard(repository)`.
 - [ ] Every body schema uses `z.object({...}).strict()` so a typo field returns 400 rather than silently passing through.
+
+**Dependency injection**
+
 - [ ] The seven dependency-injection points on `createApp` are optional and default to real implementations — tests can swap fakes in, production wires real services, and the wiring code is a single `buildV2Runtime` helper.
-- [ ] `mapDomainErrorToHttp` covers every `DomainError` subclass listed in spec §6.3 and maps them per §6.4. A future developer adding a new subclass will see a `TypeScript never` reminder at the end of the switch.
+- [ ] No route handler reads from `app.decorate` or from module-level globals. All handler dependencies come from the `createApp` closure.
+- [ ] No test uses a shared `:memory:` DB across test files. Each test file constructs its own repository.
+
+**Error handling**
+
+- [ ] `mapDomainErrorToHttp` covers every `DomainError` subclass listed in spec section 6.3 and maps them per section 6.4. A future developer adding a new subclass will see a `never` reminder at the end of the switch.
+- [ ] Unknown errors log through `reply.request.log.error` and return 500 with `{ ok: false, code: "internal_error" }` — no stack trace leakage.
+- [ ] `llm_exhausted` is never surfaced to the HTTP layer (the worker handles it before the API sees it).
+
+**Middleware semantics**
+
 - [ ] `requireAdmin` reads the header exactly once and attaches the member to `request.currentAdmin` without any additional DB roundtrip per route.
+- [ ] `requireAdmin` returns 401 for missing header and 403 for non-admin role. The order matters.
+- [ ] `requireAdmin` trims whitespace from the header value before looking up the member.
+
+**Server lifecycle**
+
 - [ ] `src/server.ts` signal handlers are idempotent and call `llmWorker.stop` before `app.close`.
-- [ ] `runEnsureBootstrap` is idempotent — running it twice in a row on the same DB produces identical state.
-- [ ] The end-to-end test in `tests/api/v2/end-to-end.test.ts` exercises: ice-breaker rejection, event ingest, LLM worker draining, window settlement, promotion, ranking, admin review queue, LLM worker status, 404 on unknown members, duplicate rejection, and clean shutdown.
-- [ ] Coverage thresholds in `vitest.config.ts` match spec §6.5 — do not weaken them.
+- [ ] The double-SIGTERM test asserts `llmWorker.stop` was called exactly once.
+- [ ] The LLM worker construction reads all six env knobs with sensible defaults.
+
+**Bootstrap**
+
+- [ ] `runEnsureBootstrap` is idempotent — running it twice in a row on the same DB produces identical state, with no duplicate rows, no errors, and the same `{ mutated, campId }` tuple on the second run (`mutated: false`).
+- [ ] `runEnsureBootstrap` inserts W1 and W2 shells with `settlement_state='open'`.
+- [ ] `runEnsureBootstrap` promotes matching bootstrap operators without double-promoting on a second run.
+
+**End-to-end coverage**
+
+- [ ] The end-to-end test in `tests/api/v2/end-to-end.test.ts` exercises ice-breaker rejection, event ingest, LLM worker draining, window settlement, promotion, ranking, admin review queue, LLM worker status, 404 on unknown members, duplicate rejection, and clean shutdown.
+- [ ] The end-to-end test runs in under 10 seconds.
+- [ ] The second `it` block tests the LLM reject branch via a fake client configured to always reject.
+
+**Coverage thresholds**
+
+- [ ] Coverage thresholds in `vitest.config.ts` match spec section 6.5 — do not weaken them.
+- [ ] The `test:coverage` script runs and meets the thresholds.
+- [ ] The coverage report is not generated to a location that is committed to git.
+
+**Legacy cleanup**
+
 - [ ] The `chore: drop legacy v1 scoring surface` commit is a single, atomic, build-green commit. `git show --stat` on that commit shows only deletions and the minimal `src/app.ts` edit.
+- [ ] No file listed under spec section 6.2 "完全删除" is still present in the tree.
 - [ ] The Phase 1 complete note in README is under five lines and does not delete existing content.
 - [ ] `git status` is clean after Phase I.
+
+**Commit discipline**
+
+- [ ] The total number of commits produced by Phases G, H, and I equals exactly 17 (11 + 4 + 2).
+- [ ] Every commit message follows the conventional-commits shape and matches the "Commit" line in this plan.
+- [ ] No commit uses `--amend` to modify a previous commit.
+- [ ] No commit uses `--no-verify` to skip hooks.
+
+**Type safety**
+
+- [ ] The type augmentation in `src/types/fastify.d.ts` is picked up by `tsconfig.json` include and produces no "implicit any" warnings in strict mode.
+- [ ] No test uses `@ts-ignore` or `@ts-expect-error` to work around a type mismatch.
+- [ ] No source file uses `any` except where explicitly documented as necessary.
+
+**Security**
+
+- [ ] No hardcoded secrets in the new code.
+- [ ] The PATCH endpoint for `admin/members/:id` uses parameter binding and is tested against SQL injection.
+- [ ] The `x-feishu-open-id` header is never logged in plaintext (it is sent to `findMemberByFeishuOpenId` and not to the log).
+
+**Documentation**
+
+- [ ] `.env.example` documents every new env key with a comment.
+- [ ] `README.md` has the Phase 1 complete note.
+- [ ] `src/app-v2-errors.ts` has a JSDoc block listing every `DomainError` subclass and its HTTP mapping.
 
 ---
 
@@ -9690,28 +10321,1496 @@ This plan supports two execution strategies. Pick one before starting.
 
 Phase G is eleven mostly-independent route tasks that share a small amount of common infrastructure (Task G1). The cleanest path is:
 
-1. Execute Task G1 inline (or with a single subagent) because every later task depends on the `requireAdmin` middleware, the `mapDomainErrorToHttp` helper, and the extended `createApp` options.
+1. Execute Task G1 inline or with a single subagent. Task G1 must complete first because every later task depends on the `requireAdmin` middleware, the `mapDomainErrorToHttp` helper, and the extended `createApp` options. Attempting to parallelise G1 with the other tasks would cause merge conflicts in `src/app.ts`.
+
 2. After G1 is committed, dispatch Tasks G2 through G11 in parallel via the `superpowers:dispatching-parallel-agents` skill. Each subagent gets a single task, its file list, the five checkbox steps, and the commit message. Give each subagent explicit instructions to rebase on top of the latest Phase G head before committing, so the history is linear.
-3. Execute Phase H sequentially in a single session. H1 → H2 → H3 → H4 each depend on the previous commit because they share `src/server.ts`, `src/scripts/ensure-bootstrap-data.ts`, and the runtime wiring.
-4. Execute Phase I inline. Task I1 requires a careful, iterative loop of (edit app.ts → build → rm files → build → rm tests → test). This is not subagent-friendly; it must be done in a single session with continuous read-eval-print on `npm run build` and `npm test` outputs.
+
+3. Execute Phase H sequentially in a single session. H1 through H4 each depend on the previous commit because they share `src/server.ts`, `src/scripts/ensure-bootstrap-data.ts`, and the runtime wiring. Parallelising H would cause merge conflicts in these three files.
+
+4. Execute Phase I inline. Task I1 requires a careful, iterative loop of (edit app.ts → build → rm files → build → rm tests → test). This is not subagent-friendly; it must be done in a single session with continuous read-eval-print on `npm run build` and `npm test` outputs. A subagent executing I1 would produce a broken intermediate state and then fail to recover.
+
 5. After I2 commits, run the `superpowers:finishing-a-development-branch` skill to wrap up, draft a PR, and hand the branch to the reviewer.
 
-Parallelism ceiling: ten subagents in Phase G step 2 — one per route task G2–G11 — with a strict gate that no subagent may merge until its `npm test -- tests/api/v2/<its-file>.test.ts` is green locally.
+**Parallelism ceiling**
+
+Ten subagents in Phase G step 2 — one per route task G2 through G11 — with a strict gate that no subagent may merge until its `npm test -- tests/api/v2/<its-file>.test.ts` is green locally. A subagent that tries to merge without passing its own tests fails the gate and must rework.
+
+**Conflict resolution**
+
+If two subagents both edit `src/app.ts` to register their respective routes, the second one to merge will hit a conflict. The conflict resolution is mechanical: accept both registration calls, sort them alphabetically, and re-run the tests. If the sort breaks anything, the registrations are not actually independent and the parallel strategy should be abandoned for that pair.
 
 ### Option B — Fully Inline Execution (recommended for Phase H and I, and for small teams)
 
 If you prefer a single developer, single session, single context window strategy, execute every task in order: G1 → G2 → ... → G11 → H1 → H2 → H3 → H4 → I1 → I2. Commit after each task. Run `npm test -- tests/api/v2/` after every Phase G task and `npm test && npm run build` after every Phase H task to catch regressions early.
 
-This strategy is slower but simpler — no rebasing, no merge conflicts, no subagent coordination overhead. Use it when the route shapes or the dependency wiring are not fully settled and you expect to iterate mid-phase.
+This strategy is slower but simpler — no rebasing, no merge conflicts, no subagent coordination overhead. Use it when the route shapes or the dependency wiring are not fully settled and you expect to iterate mid-phase. Use it also when the context window of the primary executor is generous enough to hold the entire codebase in working memory.
+
+**Estimated time**
+
+Under Option B, a single developer with good context coverage can complete Phase G in approximately 4 to 6 hours, Phase H in approximately 2 to 3 hours, and Phase I in approximately 1 to 2 hours. Total: 7 to 11 hours of focused work. Parallelising under Option A can reduce the Phase G portion to approximately 2 hours but adds coordination overhead.
+
+### Hybrid Execution
+
+A third option is a hybrid: execute G1 inline, then execute G2 through G11 inline but in a tight loop without context switching, then switch to Phase H and I inline. This keeps the "no coordination overhead" benefit of Option B while still taking advantage of the fact that G2 through G11 are mechanical once the pattern is established.
 
 ### Definition of Done for Sub-project 1 Phase 1
 
-Sub-project 1 Phase 1 is done when:
+Sub-project 1 Phase 1 is done when all of the following are simultaneously true:
 
-1. All seventeen Phase G+H+I tasks are committed.
+1. All seventeen Phase G plus H plus I tasks are committed.
 2. `npm test && npm run build && npm run test:coverage` is green on the head commit.
-3. The branch is rebased onto `main` cleanly.
-4. The `chore: drop legacy v1 scoring surface` commit is a single atomic commit.
-5. README.md contains the Phase 1 complete note.
-6. No legacy file from spec §6.2 "完全删除" is still present in the tree.
+3. The branch is rebased onto `main` cleanly with no merge conflicts.
+4. The `chore: drop legacy v1 scoring surface` commit is a single atomic commit that builds cleanly.
+5. `README.md` contains the Phase 1 complete note and the existing README content is preserved.
+6. No legacy file from spec section 6.2 "完全删除" is still present in the tree.
 7. The PR description lists every new route, the removed legacy files, and a link to this plan.
+8. The PR has passed automated CI.
+9. A reviewer has approved the PR or it has been explicitly marked for self-merge by the developer.
+10. The dashboard in sub-project 3 can be bootstrapped against the new `/api/v2/*` surface without modifying the routes.
+11. Sub-project 2 can call `/api/v2/events`, `/api/v2/periods/open`, `/api/v2/windows/open`, and `/api/v2/graduation/close` from its Feishu slash-command handler without needing any wrapper or adapter.
+12. The `.env.example` file is up to date with every env key the code reads.
+13. The `LlmScoringWorker` starts and stops cleanly alongside the Fastify server.
+14. The bootstrap seed script produces a working dev environment from an empty DB.
+15. The end-to-end test in `tests/api/v2/end-to-end.test.ts` passes without flakiness over 10 consecutive runs.
+
+### Handoff Notes For Sub-project 2
+
+Sub-project 2 (Feishu cards) consumes the Phase 1 HTTP surface. The critical integration points are:
+
+- `POST /api/v2/events` — called from the card-action handler when a student taps a button.
+- `POST /api/v2/periods/open` — called from the `/开期` slash-command handler.
+- `POST /api/v2/windows/open` — called from the `/开窗` slash-command handler.
+- `POST /api/v2/graduation/close` — called from the `/结业` slash-command handler.
+- `GET /api/v2/board/ranking` — called from the `/排行榜` slash-command handler.
+- `GET /api/v2/board/member/:id` — called from the "我的段位" card button handler.
+
+Sub-project 2 must also implement the `reactionTracker` interface referenced in Phase G Task G1. The stub implementation in sub-project 1 is a no-op; sub-project 2 replaces it with the real Feishu reaction listener.
+
+### Handoff Notes For Sub-project 3
+
+Sub-project 3 (dashboard UI) consumes the Phase 1 HTTP surface for read-only views and admin management. The critical integration points are:
+
+- `GET /api/v2/board/ranking?campId=` — drives the leaderboard view.
+- `GET /api/v2/board/member/:id` — drives the member detail panel.
+- `GET /api/v2/admin/review-queue` — drives the LLM review inbox.
+- `POST /api/v2/admin/review-queue/:eventId/decide` — commits a review decision.
+- `GET /api/v2/admin/members` — drives the member management view.
+- `PATCH /api/v2/admin/members/:id` — commits a member edit.
+- `GET /api/v2/llm/worker/status` — drives the worker health indicator.
+
+Sub-project 3 must inject the `x-feishu-open-id` header on every admin request. The header is obtained from the Feishu H5 application context and passed through a middleware layer on the sub-project 3 side. This is the responsibility of sub-project 3 per spec section 7.
+
+### Handoff Notes For Sub-project 4
+
+Sub-project 4 (LLM provider selection) has no direct integration points with Phase 1. Its responsibility is to pick the production LLM provider and configure `LLM_ENABLED=true` plus the relevant API key. The Phase 1 factory `buildLlmScoringClient` will automatically wire the real client when the env is set. No code changes are required in Phase 1 to support sub-project 4.
+
+---
+
+## Appendix A — Detailed Implementation Notes Per Task
+
+This appendix expands on each Phase G, H, and I task with additional context, failure modes, and sanity checks. It is structured as a set of deep-dives that would otherwise clutter the main task descriptions. Consult this appendix when a task's primary description is not enough to debug a specific failure.
+
+### A.1 Task G1 Deep Dive — Middleware and Wiring
+
+The Task G1 middleware and wiring task is the most complex task in Phase G because it touches the dependency-injection contract for every later task. A mistake in G1 cascades into failures in every downstream task, so it deserves special care.
+
+**Why the seven deps are optional**
+
+The seven new `createApp` options (`ingestor`, `aggregator`, `periodLifecycle`, `windowSettler`, `llmWorker`, `reactionTracker`, `memberSync`) are all marked optional with a `?`. This is deliberate. Making them required would force every test file to construct every dep, even the ones it does not care about. Making them optional with sensible defaults means a test that only cares about `ingestor` can pass `{ ingestor: fakeIngestor }` and let the rest default to real implementations.
+
+The defaults are constructed inside `buildV2Runtime(options, repository)`. This helper takes the options object and the repository, and returns a fully-populated runtime bundle. The helper is a pure function — it has no side effects beyond allocating new objects. This purity matters because tests can call the helper directly to inspect the default wiring without booting Fastify.
+
+**Why the defaults use real implementations**
+
+The defaults are real implementations, not fakes. This is a deliberate choice. Using fakes as defaults would mean that a production invocation of `createApp()` with no options would silently boot a non-functional system. A developer starting the server in dev mode would see every HTTP request succeed with fake data and would have no signal that the real services are not wired. Using real implementations as defaults means that a production invocation of `createApp()` with no options is indistinguishable from a fully-wired production invocation.
+
+**Middleware composition**
+
+The `requireAdmin` factory returns a Fastify `onRequest` hook. Fastify runs `onRequest` hooks before the route handler. The hook's first act is to read the `x-feishu-open-id` header. If the header is missing, the hook calls `reply.code(401).send({...})` and returns — critically, it does not call `done()` because sending a reply implicitly signals that the hook chain is complete. If the header is present but the member lookup returns null or a non-admin role, the hook calls `reply.code(403).send({...})` and returns. If the member is an admin, the hook attaches the member to `request.currentAdmin` and returns, letting the next hook or the route handler run.
+
+One subtle point: the hook must use `return reply.code(...).send(...)` rather than `reply.code(...).send(...)` on its own, because Fastify's hook contract expects the hook to return either a promise or a sentinel. Without the `return`, Fastify may invoke the next hook or the route handler after the reply has already been sent, causing a "reply already sent" error.
+
+**Error mapper switch**
+
+The `mapDomainErrorToHttp` function uses a `switch` statement on `err.code`. Each case calls `reply.code(status).send(...)` and returns the reply. The switch is exhaustive: every `DomainError` subclass from spec section 6.3 has a corresponding case. The `default` case at the end uses a `const _never: never = err.code;` assignment that forces the TypeScript compiler to error if a future developer adds a new `DomainError` subclass without updating the switch. This is a standard exhaustiveness check pattern.
+
+**Test harness for requireAdmin**
+
+The G1 test harness registers a throwaway route `GET /_test/admin-required` inside a test-only option hook. The hook is exposed only when the `createApp` options include a `testHooks` field, which is never set in production. This approach keeps the test infrastructure out of the production bundle while still letting tests exercise the middleware through `app.inject`.
+
+**Common failure modes**
+
+- Forgetting to `return` in the hook body, causing "reply already sent" errors.
+- Assigning `request.currentAdmin = null` instead of leaving it `undefined` when the member is missing, which confuses downstream handlers.
+- Reading the header with `request.headers["X-Feishu-Open-Id"]` (case-sensitive) instead of `request.headers["x-feishu-open-id"]` (lowercase). Fastify normalises header keys to lowercase.
+- Attempting to read `request.currentAdmin` in a handler where the guard was not applied, which produces undefined and a cryptic null-dereference error.
+
+### A.2 Task G2 Deep Dive — POST /api/v2/events
+
+Task G2 is the first real route after the infrastructure task. It sets the pattern that every subsequent route follows. Pay attention to the details here because G3 through G11 copy this pattern.
+
+**Schema design**
+
+The body schema has five fields: `memberId` (required string), `itemCode` (required string), `scoreDelta` (optional integer), `sourceRef` (required string), `payload` (optional record). The `scoreDelta` is optional because most items have a fixed score delta defined in the scoring-items config, and the API caller does not need to specify it. The `payload` is an opaque JSON object that the ingestor forwards to the LLM worker for LLM-scored items.
+
+The `payload` type is `z.record(z.string(), z.unknown())`. This is a Zod idiom for "an object with string keys and any values". Using `z.unknown()` instead of `z.any()` forces the downstream consumer to narrow the type before using it, which prevents accidental property access on untrusted input.
+
+**HTTP 202 vs HTTP 200**
+
+The route returns 202 Accepted rather than 200 OK because the ingestor may enqueue an LLM scoring task that will be processed asynchronously. From the client's perspective, the event has been accepted for processing but the final scoring decision may not be available yet. 202 is the correct HTTP semantic for "accepted for later processing".
+
+**Error mapping**
+
+The six domain errors map as follows. `NotEligibleError` → 400 because the caller can fix the input by passing a valid member id. `PerPeriodCapExceededError` → 400 because the caller can wait until the next period. `DuplicateEventError` → 400 because the caller sent the same `sourceRef` twice. `NoActivePeriodError` → 409 because the system is not in a state where events can be ingested. `IceBreakerPeriodError` → 409 because the current period is the ice breaker and does not score. These are all tested explicitly.
+
+**Test 7 and Test 8 distinction**
+
+Test 7 covers the case where a field has the wrong type (number instead of string). Test 8 covers the case where an extra unknown field is present. Both return 400 `invalid_body` but the underlying Zod error is different. The `details` field in the response distinguishes them: test 7 has `details.fieldErrors.memberId` populated; test 8 has `details.unrecognizedKeys` populated. The test assertions do not need to check the details field shape — they only need to check the HTTP status and the top-level `code`.
+
+**Why parseStrict returns null on failure**
+
+The `parseStrict` helper returns the parsed body on success or `null` on failure. When it returns `null`, it has already called `reply.send` on the failure path, so the caller must not call `reply.send` again. The early-return pattern in the handler (`if (!parsed) return;`) enforces this. A common bug is to forget the early return, which causes a "reply already sent" error when the handler tries to call `reply.send` after `parseStrict` has already sealed the reply.
+
+**Common failure modes**
+
+- Forgetting the `.strict()` modifier, which lets unknown keys pass through silently.
+- Using `z.number()` instead of `z.number().int()` for `scoreDelta`, which would allow fractional values.
+- Forgetting the early return after `parseStrict` returns null, causing a "reply already sent" error.
+- Wrapping the `await deps.ingestor.ingest(...)` call in a `try/catch` that catches generic `Error` instead of `DomainError`, which would catch unrelated runtime errors and swallow them.
+
+### A.3 Task G3 Deep Dive — POST /api/v2/periods/open
+
+Task G3 exposes the `/开期` command. This is the trainer-initiated command that advances the camp forward one period.
+
+**Why number is required**
+
+The `number` field is required even though the service could auto-compute the next period number. Requiring the caller to specify the number makes the API explicit and catches off-by-one errors. If the trainer tries to open period 5 when the camp is only on period 3, the service will return a domain error (likely `NoActiveWindowError` because W3 has not been opened yet), which is much easier to debug than a silent skip.
+
+**shouldSettleWindowId semantics**
+
+When opening a new period triggers settlement of the previous window, the service returns `shouldSettleWindowId` as the ID of the window that was just settled. The route echoes this back so the trainer-facing confirmation message can say "Period 4 opened. W1 has been settled." The trainer uses this signal to announce the settlement to the camp chat.
+
+**Why not admin-gated**
+
+The endpoint is not admin-gated because the `/开期` slash-command flow in sub-project 2 already gates it inside Feishu. Only trainers can invoke the slash command in the first place. Adding another admin gate at the HTTP layer would be redundant and would break the test harness because tests would need to inject a trainer header.
+
+However, if sub-project 3 exposes this endpoint through the admin dashboard, a later refactor should add `adminGuard` at that point. The current absence is a deliberate choice, not an oversight.
+
+**Common failure modes**
+
+- Forgetting to validate the `number` range (1 to 12), which would allow invalid period numbers.
+- Assuming `openNewPeriod` is synchronous, which it is not.
+- Forgetting to echo `shouldSettleWindowId` in the response.
+
+### A.4 Task G4 Deep Dive — POST /api/v2/periods/close
+
+Task G4 exposes the manual-close escape hatch. The endpoint is admin-gated because closing a period commits its scoring without waiting for the next period's trigger.
+
+**Why the reason field is required**
+
+The `reason` field is a free-text string that the operator types. It is stored in the `closed_reason` column of the `periods` table for the biweekly compliance review. Common values are `manual_close`, `force_close_by_timeout`, and custom descriptions. Making the reason required forces the operator to think about why they are closing the period, which reduces accidental closes.
+
+**Audit trail**
+
+The repository method `closePeriod(periodId, reason, openId)` writes all three fields to the DB. The `openId` is pulled from `request.currentAdmin.sourceFeishuOpenId` so the audit trail records which operator performed the close. If the operator has no Feishu open id (for example, a bootstrap operator created from a CSV), the fallback is `request.currentAdmin.id`.
+
+**Common failure modes**
+
+- Forgetting to fall back to `request.currentAdmin.id` when `sourceFeishuOpenId` is null, causing a "null inserted into non-null column" error.
+- Using `request.currentAdmin` without the `!` non-null assertion, causing a TypeScript compile error.
+- Forgetting to register the `adminGuard` on the route, which would allow any caller to close periods.
+
+### A.5 Task G5 Deep Dive — POST /api/v2/windows/open
+
+Task G5 exposes the `/开窗` command. Windows W3, W4, W5, and FINAL are lazy-loaded and must be explicitly opened before the period range that uses them.
+
+**Regex design**
+
+The regex `/^W[1-5]$|^FINAL$/` accepts exactly six values: W1, W2, W3, W4, W5, FINAL. Any other string is rejected. The anchors `^` and `$` are critical — without them, a string like `xxxW1yyy` would match the character class and pass through.
+
+**Idempotency**
+
+Opening a window that already exists is not an error. The service returns `{ windowId, created: false }` to signal idempotency. The HTTP route maps `created: true` to 201 and `created: false` to 200. This distinction matters for sub-project 2's retry logic: a 201 means "a new window was created" and a 200 means "the window already existed". Both are success responses, but the semantic difference tells the caller whether its retry actually changed any state.
+
+**Common failure modes**
+
+- Forgetting the `$` anchor in the regex, allowing strings like `W1x` to pass.
+- Forgetting the alternation for `FINAL`, rejecting the final window code.
+- Mapping both `created: true` and `created: false` to 201, losing the idempotency signal.
+
+### A.6 Task G6 Deep Dive — POST /api/v2/graduation/close
+
+Task G6 is the `/结业` command. It is the only way to close the FINAL window because period 12 has no "next /开期" to trigger settlement.
+
+**Empty body**
+
+The route accepts an empty body `{}` because there are no parameters to supply. The schema is `z.object({}).strict()`, which accepts only the empty object and rejects any other shape. Technically the route could omit the body entirely, but requiring an empty object forces the caller to be explicit about the absence of parameters.
+
+**Already-settled error**
+
+Attempting to close graduation twice triggers a `WindowAlreadySettledError`. The error message includes the previous settlement timestamp so the operator can check the logs. The HTTP status is 409 because the system is not in a state where the close can be processed (the final window is already settled).
+
+**Common failure modes**
+
+- Passing a non-empty body, which the schema rejects.
+- Calling close graduation before the final window has been opened, which triggers a different error.
+- Forgetting to echo `finalWindowId` in the response.
+
+### A.7 Task G7 Deep Dive — GET /api/v2/board/ranking
+
+Task G7 is the first read-side endpoint. It drives the leaderboard view in the sub-project 3 dashboard.
+
+**Query complexity**
+
+The ranking query joins four tables: `members`, `member_levels`, `member_dimension_scores`, and `window_snapshots`. The JOIN conditions filter on the eligibility gate (`role_type = 'student' AND is_participant = 1 AND is_excluded_from_board = 0 AND hidden_from_board = 0`). The result is a single row per eligible student with all the fields needed by the leaderboard view.
+
+The query does not do any client-side filtering because every filter is expressed in SQL. This is deliberate: filtering in SQL is faster than filtering in application code, and it ensures that the eligibility gate is applied consistently.
+
+**Rank computation**
+
+Standard competition ranking ("1224") means tied members get the same rank and the next member's rank accounts for the tied pair. For example, if A and B are tied at cum AQ 100, they both get rank 1. The next member (at cum AQ 75) gets rank 3, not rank 2. This matches the common sports ranking convention.
+
+The rank assignment is done in the repository, not in SQL, because SQLite's `RANK()` window function requires a version of SQLite that may not be installed on all production systems. The application-level rank assignment is portable and testable.
+
+**Radar chart support**
+
+The `dimensions` field on each row is an object `{ K, H, C, S, G }` with one integer per dimension. This is the exact shape expected by the sub-project 3 radar chart component. Returning the dimensions as an object instead of an array makes the frontend code simpler because it does not need to map array indices to dimension names.
+
+**Common failure modes**
+
+- Forgetting the eligibility gate in the JOIN, leaking operator data.
+- Using `RANK()` instead of application-level ranking, causing portability issues.
+- Returning the dimensions as an array instead of an object, breaking the radar chart.
+- Using `ORDER BY` on the wrong columns, producing incorrect sort order.
+
+### A.8 Task G8 Deep Dive — GET /api/v2/board/member/:id
+
+Task G8 returns the per-member detail panel. It must return 404 for non-eligible members.
+
+**Why 404 and not 403**
+
+Returning 404 for an operator's member id (instead of 403) hides the existence of the operator row from the API surface. This matches the "data silently disappears" guarantee in spec section 5.8. A 403 would leak the information that the operator exists, which violates the principle that operators should be invisible to the student dashboard.
+
+**Detail panel assembly**
+
+The repository method `fetchMemberBoardDetail` uses a single query that LEFT JOINs `promotion_records`, `member_dimension_scores`, and `window_snapshots`. The result is a denormalised row set that the application folds into the `MemberBoardDetail` shape. The folding is done in the repository method so the API handler is kept thin.
+
+**URL decoding**
+
+The route handler receives the URL param `:id` already decoded by Fastify. A member id with special characters (for example, a UUID with dashes) passes through correctly. Test 4 of the G8 test suite verifies this by passing a URL-encoded dash `%2D`.
+
+**Common failure modes**
+
+- Returning 403 instead of 404 for operators, leaking their existence.
+- Forgetting to fold the denormalised rows into the nested `MemberBoardDetail` shape, returning a flat row list.
+- Double-decoding the URL param, corrupting ids with legitimate `%` characters.
+
+### A.9 Task G9 Deep Dive — Admin Review Queue
+
+Task G9 is the LLM complaint desk. It lists `review_required` events and lets admins decide approve or reject.
+
+**Why the note is required**
+
+The `note` field in the POST body is mandatory because spec section 5.5 layer 2 requires audit tagging for every admin decision. A decision without a note is less useful than a decision with a note for the biweekly compliance review. The note is also a forcing function: it makes the operator pause and think about the decision before committing.
+
+**Decision propagation**
+
+`aggregator.applyDecision(eventId, { decision, note }, operator)` flips the event status from `review_required` to either `approved` or `rejected`, updates the `reviewed_by_op_id` and `review_note` columns, and, on approval, increments the member's dimension score. The aggregator handles the cap-checking and deduplication internally.
+
+**Why the aggregator is called, not the repository**
+
+The POST decision handler calls `aggregator.applyDecision` instead of directly writing to the DB. This is because the aggregator is the single source of truth for scoring logic: it knows how to apply the per-period caps, how to deduplicate, and how to update the member dimension scores. Bypassing the aggregator and writing directly to the DB would require reimplementing all of that logic in the route, which is a recipe for drift.
+
+**Common failure modes**
+
+- Allowing an empty note (forgetting the `.min(1)` constraint).
+- Forgetting to forward `currentAdmin` to the aggregator, losing the audit trail.
+- Calling the repository directly instead of the aggregator, bypassing the cap logic.
+
+### A.10 Task G10 Deep Dive — Admin Member Management
+
+Task G10 lets admins edit member metadata. It is the most security-sensitive route in Phase G because it constructs dynamic SQL.
+
+**SQL injection defence**
+
+The PATCH handler uses parameter binding for every value. The column names are hard-coded inside the repository method. This two-layer defence means that no user input can influence either the column list or the values list — both are taken from a whitelist.
+
+The hard-coded column list is: `role_type`, `is_participant`, `is_excluded_from_board`, `hidden_from_board`, `display_name`. These are the only columns that an admin can edit. Any other column name in the patch object is rejected by the Zod schema before reaching the repository.
+
+**Dynamic UPDATE pattern**
+
+The dynamic UPDATE is constructed by walking the patch object keys, pushing `${column} = ?` into a `setFragments` array, and pushing the value into a `params` array. The final SQL is `UPDATE members SET ${setFragments.join(", ")} WHERE id = ?`. The params are `[...values, id]`. This pattern is safe because the column names are from a whitelist (the Zod enum or schema) and the values are bound via parameters.
+
+**The SQL-injection test**
+
+The dedicated test in `tests/storage/patch-member-for-admin.test.ts` exercises the worst-case input: a `displayName` value that contains a SQL fragment. After the PATCH, the test asserts that the `members` table still exists and the `displayName` column literally contains the injection string. This proves that parameter binding is in effect.
+
+**Common failure modes**
+
+- Using string concatenation for values, allowing SQL injection.
+- Using user input to build column names, allowing column-name injection.
+- Forgetting the `.refine((data) => Object.keys(data).length > 0)` constraint, allowing empty patches that would produce `UPDATE members SET  WHERE id = ?` (invalid SQL).
+- Allowing `roleType: "superadmin"` via a wider enum, breaking the role-type invariant.
+
+### A.11 Task G11 Deep Dive — GET /api/v2/llm/worker/status
+
+Task G11 is the worker monitoring endpoint. It is the simplest route in Phase G but it is also the most frequently polled.
+
+**Why it is not admin-gated**
+
+Operational metrics are not sensitive. A public worker status endpoint lets monitoring tools (Prometheus, health check probes, uptime monitors) poll without needing a service account. The endpoint does not expose PII or scoring decisions.
+
+**Polling frequency**
+
+Monitoring tools typically poll every 15 to 60 seconds. The `getStatus()` method is designed to be cheap: it returns a snapshot of the worker's internal state without hitting the database. This means that frequent polling does not impact the worker's throughput.
+
+**Heartbeat timestamp**
+
+The `lastHeartbeatAt` field records the most recent time the worker loop completed a tick. A stale heartbeat (more than a few seconds old) indicates a stuck worker. Monitoring tools use this field to trigger alerts.
+
+**Common failure modes**
+
+- Polling the database inside `getStatus()`, making the endpoint slow.
+- Returning `lastHeartbeatAt` as a number instead of an ISO-8601 string, breaking JSON clients.
+- Forgetting to initialise `lastHeartbeatAt` to null when the worker has not ticked yet.
+
+### A.12 Task H1 Deep Dive — .env.example
+
+Task H1 extends the `.env.example` file. It is the simplest task in Phase H but it is also the most error-prone because the file format has no schema validation.
+
+**dotenv quirks**
+
+The `dotenv` package has some quirks that can bite unsuspecting developers. Values with spaces must be quoted. Values with `#` are interpreted as comments unless quoted. Line continuations are not supported. The `dotenv` parser is liberal — it accepts almost any input and produces some kind of result — but the result may not be what the developer intended.
+
+The test `tests/config/env-example-shape.test.ts` guards against the common mistakes by parsing the file with the real `dotenv` library and asserting the expected keys are present.
+
+**Comment conventions**
+
+Each new key is preceded by a single-line comment that explains its purpose and default value. The comment uses the format `# KEY_NAME — one-line description (default VALUE).` This format is chosen because it is concise and machine-parseable. A future tool could auto-generate documentation from the comments.
+
+**Common failure modes**
+
+- Using two-line comments, which the shape test does not expect.
+- Forgetting to specify the default value in the comment.
+- Using inline comments on the same line as the key, which dotenv does not parse correctly.
+
+### A.13 Task H2 Deep Dive — LLM Worker Lifecycle
+
+Task H2 wires the LLM worker into the Fastify server lifecycle. It is the most lifecycle-sensitive task in Phase H because a mistake here produces a stuck process that cannot exit.
+
+**The stop-before-close ordering**
+
+The shutdown sequence is: stop the worker first, then close Fastify. The worker's `stop()` method awaits the in-flight task drain, which ensures that no LLM call is interrupted. Once the worker has stopped, Fastify's `close()` is safe to call because there are no more background promises pending on the worker.
+
+Reversing the order (close Fastify first, then stop the worker) would work in practice because no new HTTP requests can enqueue worker tasks after Fastify is closed. But the reversed order is less explicit about the intent, and it depends on an implicit assumption about the HTTP API being the only task source. The explicit order documents the intent.
+
+**The stopping latch**
+
+The `let stopping = false` latch prevents double-stop. If SIGTERM fires twice in rapid succession, the second signal checks the latch, sees `stopping === true`, and returns immediately. Without the latch, the second signal would call `worker.stop()` a second time, which throws because the worker expects to be stopped exactly once.
+
+**The factory extraction**
+
+The `buildLlmScoringClient` factory is extracted into its own file so that tests can stub it without touching the worker. This is a standard dependency-injection pattern. The factory decides between the fake client (dev, test) and the real client (production with `LLM_ENABLED=true`).
+
+**Common failure modes**
+
+- Forgetting the latch, causing double-stop errors.
+- Closing Fastify before stopping the worker, leaking in-flight tasks.
+- Importing the real OpenAI client unconditionally, bloating the test bundle.
+- Registering signal handlers inside `createApp`, which would register them for every test invocation.
+
+### A.14 Task H3 Deep Dive — Bootstrap Seed Refactor
+
+Task H3 refactors the bootstrap seed script to be v2-aware and testable.
+
+**The testability refactor**
+
+The original script is a top-level imperative file with no exports. Tests cannot import it without triggering its side effects. The refactor wraps the logic in an exported `runEnsureBootstrap(options)` function and guards the top-level invocation with `if (import.meta.url === file://${process.argv[1]})`. This pattern lets the file serve both as a CLI script and as a library module.
+
+**Idempotency**
+
+The script is idempotent: running it twice produces identical state. This is essential because the seed script is typically run during deployment, and a deployment hiccup may cause the script to run twice. Each insert is guarded by a pre-check (SELECT first, INSERT only if missing) or uses `INSERT OR IGNORE` semantics. Each update is guarded by a precondition check (UPDATE only if the current value is different).
+
+**The operator promotion step**
+
+The operator promotion step reads `BOOTSTRAP_OPERATOR_OPEN_IDS` from the env, splits on commas, trims, filters empty strings, and looks up each open id via `findMemberByFeishuOpenId`. For each matched member whose `roleType !== 'operator'`, it calls `patchMemberForAdmin(id, { roleType: "operator", hiddenFromBoard: true })`. The `patchMemberForAdmin` call reuses the method added in Task G10, which is admin-gated via the repository method's whitelist.
+
+**Common failure modes**
+
+- Forgetting the top-level guard, causing tests to trigger side effects.
+- Not splitting the env value, treating the whole string as one open id.
+- Not trimming whitespace, failing to match open ids with leading or trailing spaces.
+- Not guarding the promotion with `roleType !== 'operator'`, double-promoting on the second run.
+
+### A.15 Task H4 Deep Dive — End-to-End Test
+
+Task H4 is the crown-jewel integration test. It is the single test that proves Phase 1 is internally consistent.
+
+**Why a single large test**
+
+The E2E test is a single `it` block with twenty assertions because the assertions form a narrative: each step depends on the previous step's state. Splitting the test into twenty separate `it` blocks would require either a shared setup (which breaks test isolation) or twenty separate full-pipeline bootstraps (which is prohibitively slow).
+
+The twenty assertions are grouped into logical steps by the helper functions in `tests/api/v2/helpers.ts`. The top-level `it` block reads as a linear narrative: `setupWindowsAndPeriods`, `ingestLegitimateEvents`, `assertRankingShape`, `assertLevelPromotion`, `assertReviewQueueEmpty`, `teardown`.
+
+**The fake LLM client**
+
+The test uses `FakeLlmScoringClient` configured to always return "approved". This makes the LLM branch deterministic. Without the fake, the test would depend on a real LLM provider, which is too slow and too expensive for CI. A second `it` block uses a different fake configured to always return "rejected" to exercise the reject branch.
+
+**The drainOnce hook**
+
+The worker provides a testing hook `drainOnce()` that processes all pending tasks synchronously. This is not the production API (production uses a background poll loop). The hook exists purely so the test can advance the worker without waiting for `LLM_POLL_INTERVAL_MS`. Without this hook, the test would sleep between steps, which is flaky and slow.
+
+**Common failure modes**
+
+- Sharing a `:memory:` DB across test files, causing order-dependent failures.
+- Using `setTimeout` instead of `drainOnce()`, causing flaky tests.
+- Forgetting to call `stopLlmWorker` at the end, leaking a dangling timer.
+- Asserting on object identity instead of value equality, failing on serialisation round trips.
+
+### A.16 Task I1 Deep Dive — Legacy Cleanup
+
+Task I1 is the surgical cleanup task. It requires careful ordering to avoid broken builds.
+
+**Why edit app.ts first**
+
+Editing `src/app.ts` first removes all imports and references to the legacy files. After the edit, `npm run build` must be green — this proves that the legacy files are truly orphaned. Only then is it safe to `git rm` them.
+
+If we reversed the order (rm first, then edit app.ts), the intermediate state would have a broken build because app.ts would reference files that no longer exist. Git history would contain a commit with a broken build, which violates the git-workflow rule that every commit must be green.
+
+**Batch deletion**
+
+The deletion is done in batches: web frontend first, then domain files, then service files, then test files. Each batch is followed by `npm run build` to catch residual references. This approach minimises the debugging effort when a residual reference is found — the surface area is small because only one batch has been deleted.
+
+**Why delete tests, not stub them**
+
+The tests for deleted modules are also deleted. Stubbing them would leave behind "ghost tests" that pretend the legacy modules exist. Stubs accumulate technical debt: a future reader sees the stubs and wonders whether they are important. Deletion is cleaner.
+
+**Common failure modes**
+
+- Rm before edit, causing broken intermediate states.
+- Forgetting to delete the test files, leaving references to deleted modules.
+- Stubbing tests instead of deleting them, accumulating technical debt.
+- Missing a barrel file that re-exports deleted modules, causing residual references.
+
+### A.17 Task I2 Deep Dive — Phase 1 Sign-off
+
+Task I2 is the final task. It closes Phase 1 with a coverage gate and a README note.
+
+**Why the README note**
+
+The README note is important because it is the public-facing signal that Phase 1 is complete. Without the note, a future contributor reading the README would see the pre-Phase-1 description and might assume the v2 routes are experimental. The note is three or four lines so it does not overwhelm the rest of the README.
+
+**Coverage thresholds**
+
+The coverage thresholds from spec section 6.5 are enforced via `vitest.config.ts`. The thresholds are not lowered even if tests are slightly below — the fix is to write more tests, not to relax the gate.
+
+**Common failure modes**
+
+- Lowering the thresholds instead of writing tests.
+- Deleting existing README content by accident.
+- Forgetting to install the coverage provider, causing the script to fail with "provider not found".
+
+---
+
+## Appendix B — Test Fixture Reference
+
+This appendix lists the test fixtures used across Phase G, H, and I tests. Each fixture has a stable identifier so that tests can reference them by name.
+
+### B.1 Member Fixtures
+
+- `m-1` through `m-5`: students. Each has a unique `sourceFeishuOpenId` of the form `ou-student-N`.
+- `op-1`: operator. `sourceFeishuOpenId: "ou-operator-1"`.
+- `op-2`: operator. `sourceFeishuOpenId: "ou-operator-2"`.
+- `tr-1`: trainer. `sourceFeishuOpenId: "ou-trainer-1"`.
+- `obs-1`: observer. `sourceFeishuOpenId: "ou-observer-1"`.
+- `ghost-1`: excluded from board (`is_excluded_from_board=1`). Used to test the eligibility gate.
+- `hidden-1`: hidden from board (`hidden_from_board=1`). Used to test the eligibility gate.
+
+### B.2 Camp Fixtures
+
+- `c-1`: default camp. Used by most tests.
+- `c-2`: secondary camp. Used to test camp-scoped queries.
+
+### B.3 Period Fixtures
+
+- `p-1`: ice-breaker period. `is_ice_breaker=1`. Used to test the ice-breaker rejection path.
+- `p-2` through `p-12`: scoring periods. `is_ice_breaker=0`.
+
+### B.4 Window Fixtures
+
+- `w-W1` through `w-W5`: pre-seeded window shells.
+- `w-FINAL`: FINAL window. Lazy-loaded in tests.
+
+### B.5 Event Fixtures
+
+- `evt-1` through `evt-10`: scoring events in `approved` state.
+- `evt-review-1` through `evt-review-3`: scoring events in `review_required` state. Used to test the review queue.
+
+---
+
+## Appendix C — Error Code Reference
+
+This appendix is a quick-reference table for all domain error codes and their HTTP mappings. It is a condensed version of spec section 6.4.
+
+| Code | HTTP | Source | Example Message |
+|---|---|---|---|
+| `not_eligible` | 400 | EventIngestor | "m-1 is not a student" |
+| `cap_exceeded` | 400 | EventIngestor | "K1 cap reached for period p-1" |
+| `duplicate` | 400 | EventIngestor | "sourceRef card-123 already ingested" |
+| `no_active_period` | 409 | EventIngestor | "no open period for camp c-1" |
+| `ice_breaker_no_scoring` | 409 | EventIngestor | "ice breaker period does not score" |
+| `no_active_window` | 409 | PeriodLifecycle | "W3 has not been opened by trainer" |
+| `window_already_settled` | 409 | PeriodLifecycle | "FINAL already settled at 2026-04-03T10:00:00Z" |
+| `invalid_level_transition` | 500 | PromotionJudge | "cannot promote from L5 to L1" |
+| `llm_retryable` | (worker only) | LlmScoringWorker | "network timeout" |
+| `llm_non_retryable` | (worker only) | LlmScoringWorker | "4xx from provider" |
+| `llm_exhausted` | (worker only) | LlmScoringWorker | "max attempts reached" |
+| `internal_error` | 500 | (fallback) | (unlogged) |
+| `invalid_body` | 400 | (Zod) | (structured details field) |
+| `no_identity` | 401 | requireAdmin | (header missing) |
+| `not_admin` | 403 | requireAdmin | (header present but non-admin) |
+| `not_found` | 404 | board-member-detail | (unknown member id) |
+
+---
+
+## Appendix D — Commit Message Reference
+
+This appendix is a quick-reference list of the 17 commit messages that Phase G, H, and I must produce. Use these exact strings as the first line of each commit.
+
+1. `feat(v2-api): add requireAdmin middleware and wire v2 dependencies into createApp` (G1)
+2. `feat(v2-api): add POST /api/v2/events route with ingestor integration and six-path error mapping` (G2)
+3. `feat(v2-api): add POST /api/v2/periods/open route` (G3)
+4. `feat(v2-api): add POST /api/v2/periods/close admin route` (G4)
+5. `feat(v2-api): add POST /api/v2/windows/open admin route` (G5)
+6. `feat(v2-api): add POST /api/v2/graduation/close admin route` (G6)
+7. `feat(v2-api): add GET /api/v2/board/ranking with camp-scoped eligibility gate` (G7)
+8. `feat(v2-api): add GET /api/v2/board/member/:id with 404 on non-eligible members` (G8)
+9. `feat(v2-api): add GET /api/v2/admin/review-queue and POST decide routes` (G9)
+10. `feat(v2-api): add GET /api/v2/admin/members and PATCH /:id admin routes` (G10)
+11. `feat(v2-api): add GET /api/v2/llm/worker/status monitoring route` (G11)
+12. `chore(v2): document LLM worker and bootstrap operator env keys` (H1)
+13. `chore(v2): boot LLM scoring worker with Fastify lifecycle and signal handling` (H2)
+14. `chore(v2): refactor ensure-bootstrap to seed W1/W2 shells and apply bootstrap operators` (H3)
+15. `test(v2): add end-to-end integration test covering the full period → settlement pipeline` (H4)
+16. `chore: drop legacy v1 scoring surface` (I1)
+17. `chore(v2): mark phase 1 complete` (I2)
+
+---
+
+## Appendix E — File Size Budget
+
+This appendix tracks the expected file sizes after Phase G, H, and I are complete. Each entry is an approximate line count. The budget is not hard — minor overages are acceptable — but any file that grows more than 20% beyond its budget should be investigated for possible refactoring.
+
+### Phase G Files
+
+| File | Budget | Rationale |
+|---|---|---|
+| `src/app.ts` | 700 | Pre-Phase G baseline approximately 610 lines. Phase G adds approximately 90 lines for options interface, buildV2Runtime, requireAdmin, and route imports. |
+| `src/app-v2-errors.ts` | 70 | One switch case per DomainError subclass plus the default. |
+| `src/routes/v2/common.ts` | 40 | Re-exports plus parseStrict helper. |
+| `src/routes/v2/events.ts` | 80 | Single POST handler. |
+| `src/routes/v2/periods.ts` | 120 | Two handlers: openNewPeriod and closePeriod. |
+| `src/routes/v2/windows.ts` | 60 | Single POST handler. |
+| `src/routes/v2/graduation.ts` | 50 | Single POST handler. |
+| `src/routes/v2/board.ts` | 150 | Two handlers: ranking and member detail. |
+| `src/routes/v2/admin-review.ts` | 100 | Two handlers: list and decide. |
+| `src/routes/v2/admin-members.ts` | 120 | Two handlers: list and patch. |
+| `src/routes/v2/llm-status.ts` | 40 | Single GET handler. |
+| `src/types/fastify.d.ts` | 15 | Module augmentation only. |
+
+### Phase G Test Files
+
+| File | Budget | Rationale |
+|---|---|---|
+| `tests/api/v2/require-admin.test.ts` | 150 | Four test cases with setup. |
+| `tests/api/v2/app-wiring.test.ts` | 120 | Four test cases with setup. |
+| `tests/api/v2/events-post.test.ts` | 200 | Eight test cases. |
+| `tests/api/v2/periods-open.test.ts` | 120 | Four test cases. |
+| `tests/api/v2/periods-close.test.ts` | 100 | Three test cases. |
+| `tests/api/v2/windows-open.test.ts` | 150 | Five test cases. |
+| `tests/api/v2/graduation-close.test.ts` | 100 | Three test cases. |
+| `tests/api/v2/board-ranking.test.ts` | 180 | Four test cases with fixture setup. |
+| `tests/api/v2/board-member-detail.test.ts` | 150 | Four test cases. |
+| `tests/api/v2/admin-review-queue.test.ts` | 200 | Six test cases. |
+| `tests/api/v2/admin-members.test.ts` | 180 | Five test cases. |
+| `tests/api/v2/llm-worker-status.test.ts` | 80 | Two test cases. |
+
+### Phase H Files
+
+| File | Budget | Rationale |
+|---|---|---|
+| `.env.example` | 50 | Existing content plus six new keys. |
+| `src/server.ts` | 200 | Existing content plus worker lifecycle helpers. |
+| `src/services/v2/llm-scoring-client-factory.ts` | 50 | Factory function plus helper. |
+| `src/scripts/ensure-bootstrap-data.ts` | 150 | Refactored into runEnsureBootstrap function. |
+| `tests/api/v2/end-to-end.test.ts` | 300 | Twenty assertions plus two `it` blocks (approve and reject). |
+| `tests/api/v2/helpers.ts` | 150 | Fixture setup and assertion helpers. |
+| `tests/config/env-example-shape.test.ts` | 80 | Single test with file parsing. |
+| `tests/server/llm-lifecycle.test.ts` | 100 | Two test cases. |
+| `tests/scripts/ensure-bootstrap-data-v2.test.ts` | 200 | Four test cases with fixture setup. |
+
+### Phase I Files
+
+No new source files are added in Phase I. The legacy cleanup removes approximately 2500 lines of source and test code. The Phase 1 complete note in README.md adds approximately 5 lines.
+
+---
+
+## Appendix F — Sanity Checks Before Each Task
+
+Each task in this plan includes a "RED → GREEN → REFACTOR" cycle. This appendix adds a set of sanity checks that should be run before starting each task. Running these checks catches environment problems early.
+
+### F.1 Before Any Task
+
+- [ ] `git status` is clean.
+- [ ] `git log --oneline -5` shows the expected head commit.
+- [ ] `npm install` has been run since the last `package.json` change.
+- [ ] `npm test` is green.
+- [ ] `npm run build` is green.
+
+### F.2 Before Task G1
+
+- [ ] `src/domain/v2/errors.ts` exists and exports the full DomainError hierarchy from spec section 6.3.
+- [ ] `src/domain/v2/eligibility.ts` exists and exports `isEligibleStudent`.
+- [ ] `src/storage/sqlite-repository.ts` exposes `findMemberByFeishuOpenId`.
+
+### F.3 Before Task G2
+
+- [ ] Task G1 commit is on HEAD.
+- [ ] `src/app-v2-errors.ts` exists and exports `mapDomainErrorToHttp`.
+- [ ] `src/routes/v2/common.ts` exists and exports `parseStrict`.
+- [ ] `src/services/v2/event-ingestor.ts` exists and exposes the `EventIngestor.ingest` method.
+
+### F.4 Before Task G3
+
+- [ ] Task G2 commit is on HEAD.
+- [ ] `src/services/v2/period-lifecycle.ts` exists and exposes `openNewPeriod`.
+
+### F.5 Before Task G4
+
+- [ ] Task G3 commit is on HEAD.
+- [ ] `src/storage/sqlite-repository.ts` exposes `closePeriod(periodId, reason, openId)`.
+
+### F.6 Before Task G5
+
+- [ ] Task G4 commit is on HEAD.
+- [ ] `src/services/v2/period-lifecycle.ts` exposes `openWindow(code)`.
+
+### F.7 Before Task G6
+
+- [ ] Task G5 commit is on HEAD.
+- [ ] `src/services/v2/period-lifecycle.ts` exposes `closeGraduation(admin)`.
+
+### F.8 Before Task G7
+
+- [ ] Task G6 commit is on HEAD.
+- [ ] `src/storage/sqlite-repository.ts` already has joins between `members`, `member_levels`, `member_dimension_scores`, `window_snapshots` (from Phase F).
+
+### F.9 Before Task G8
+
+- [ ] Task G7 commit is on HEAD.
+- [ ] `fetchRankingByCamp` is implemented and tested.
+
+### F.10 Before Task G9
+
+- [ ] Task G8 commit is on HEAD.
+- [ ] `src/services/v2/scoring-aggregator.ts` exposes `applyDecision(eventId, decision, admin)`.
+
+### F.11 Before Task G10
+
+- [ ] Task G9 commit is on HEAD.
+- [ ] `src/storage/sqlite-repository.ts` exposes `findMemberById(id)` that returns the full member shape.
+
+### F.12 Before Task G11
+
+- [ ] Task G10 commit is on HEAD.
+- [ ] `src/services/v2/llm-scoring-worker.ts` exposes `getStatus()`.
+
+### F.13 Before Task H1
+
+- [ ] Task G11 commit is on HEAD.
+- [ ] `.env.example` file exists and is tracked by git.
+
+### F.14 Before Task H2
+
+- [ ] Task H1 commit is on HEAD.
+- [ ] `src/services/v2/llm-scoring-worker.ts` exposes `start()` and `stop()` methods.
+- [ ] `src/services/v2/fake-llm-scoring-client.ts` exists.
+
+### F.15 Before Task H3
+
+- [ ] Task H2 commit is on HEAD.
+- [ ] `src/scripts/ensure-bootstrap-data.ts` exists and currently runs the legacy seed logic.
+
+### F.16 Before Task H4
+
+- [ ] Task H3 commit is on HEAD.
+- [ ] Every Phase G route is registered and tested.
+- [ ] `startLlmWorker` and `stopLlmWorker` are exported from `src/server.ts`.
+
+### F.17 Before Task I1
+
+- [ ] Task H4 commit is on HEAD.
+- [ ] `npm test` is green with all legacy tests still passing.
+- [ ] `git grep -l "legacy"` does not return unexpected files.
+
+### F.18 Before Task I2
+
+- [ ] Task I1 commit is on HEAD.
+- [ ] `npm test` is green.
+- [ ] `npm run build` is green.
+- [ ] `git status` is clean.
+
+---
+
+## Appendix G — Rollback Strategy
+
+If Phase G, H, or I produces a regression that cannot be fixed quickly, the rollback strategy is:
+
+1. **Identify the offending commit.** Use `git log --oneline` to find the commit that introduced the regression. Each task is a single commit, so the rollback unit is one task.
+
+2. **Revert the commit.** Use `git revert <sha>` to produce a revert commit. Do not use `git reset --hard` because it rewrites history.
+
+3. **Re-run the test suite.** After the revert, `npm test && npm run build` must be green. If they are not, the revert conflicted with a later commit and requires manual resolution.
+
+4. **Document the regression.** File an issue describing the regression, the reverted commit, and the path forward.
+
+5. **Plan the fix.** The fix may require re-landing the task with corrections, or it may require a deeper refactor. Document the plan before attempting the fix.
+
+**Rollback boundaries**
+
+- Phase G rollbacks are always safe: each task is an isolated route with its own tests.
+- Phase H rollbacks may require coordination: H2, H3, and H4 share `src/server.ts` and `src/scripts/ensure-bootstrap-data.ts`, so reverting one may leave the others in an inconsistent state.
+- Phase I rollbacks are dangerous because I1 deletes files. Reverting I1 restores the deleted files, but the revert commit will be large and may conflict with subsequent changes. If I1 must be rolled back, consider instead writing a new "re-add v1 scoring surface" commit with a clear explanation.
+
+---
+
+## Appendix H — CI Configuration
+
+The CI pipeline must run the following steps after any Phase G, H, or I change:
+
+1. `npm install --frozen-lockfile`
+2. `npm run build`
+3. `npm test`
+4. `npm run test:coverage` (only after Task I2)
+5. Lint check: verify no `console.log` in `src/`
+6. Size check: verify no file in `src/` exceeds 800 lines
+
+The CI pipeline must fail if any step fails. The pipeline must not be configured to skip coverage or size checks; those are the primary gates for the phase.
+
+---
+
+## Appendix I — Glossary
+
+- **AQ**: Advancement Quotient. The per-window score that drives promotion.
+- **Dimension**: One of K (Knowledge), H (Habit), C (Communication), S (Support), G (Growth). The five dimensions sum to AQ.
+- **Eligibility gate**: The five-layer defence from spec section 5.5 that ensures only eligible students appear in rankings and receive scoring.
+- **Ice breaker**: Period 1 of each camp. Does not score.
+- **Level**: The student's current segment (L0 through L5 or LFINAL). Advances based on window AQ.
+- **Promotion**: The transition from one level to the next.
+- **Review required**: An event status that indicates manual admin review is needed.
+- **Settlement**: The process of closing a window and computing per-member AQ and promotion status.
+- **Window**: A grouping of two or more periods over which AQ is computed.
+
+---
+
+## Appendix J — Open Questions
+
+The following questions are not blocking for Phase 1 but should be revisited when sub-projects 2, 3, or 4 begin:
+
+1. **Review queue SLA.** Should the review queue have a time budget? If so, what happens when a review sits unprocessed for more than the budget?
+
+2. **LLM prompt multilingual support.** The current prompts are hardcoded Chinese. If an English-language camp runs, how do we support multilingual prompts?
+
+3. **C2 reaction concurrency.** If multiple students react to the same message simultaneously, is the C2 cap enforced atomically? The current design assumes a single-threaded reaction tracker.
+
+4. **Operator self-promotion.** Should an existing operator be able to promote another student to operator through the admin dashboard? The current design only supports bootstrap-time promotion via `BOOTSTRAP_OPERATOR_OPEN_IDS`.
+
+5. **Camp dissolution.** What happens if a camp is dissolved mid-season? The current design assumes camps run to completion.
+
+---
+
+## Appendix K — Known Risks
+
+The following risks were identified during plan review and are documented here for future reference:
+
+1. **LLM worker starvation.** If the LLM provider becomes unavailable, the worker will retry forever (up to `LLM_MAX_ATTEMPTS`). Tasks exceeding the max attempt count become `review_required`, which shifts the burden to human reviewers. A prolonged LLM outage could flood the review queue.
+
+2. **SQLite contention.** The bootstrap seed script, the LLM worker, and the HTTP API all write to the same SQLite file. Under high concurrency, SQLite's writer lock could cause delays. Phase 1 does not address this because the expected load is 14 students per camp, which is well below SQLite's ceiling.
+
+3. **Feishu API rate limits.** The member sync service (stubbed in Phase 1) will hit Feishu API rate limits if it calls the API too frequently. Sub-project 2 needs to implement rate limiting on the client side.
+
+4. **Dashboard read performance.** The ranking query reads from multiple tables and is not cached. If the dashboard polls every 5 seconds and there are many concurrent viewers, the DB could become a bottleneck. Sub-project 3 should consider adding a short-lived cache.
+
+5. **Audit trail drift.** If an operator edits a member's metadata, the audit trail is captured via `patch_audit` (a table that Phase 1 does not implement). Without audit logging, a contested edit cannot be traced. Sub-project 3 should add audit logging.
+
+---
+
+## Appendix L — Reviewer Checklist
+
+When reviewing a Phase G, H, or I pull request, the reviewer should verify:
+
+1. The PR title matches the commit message of the top commit.
+2. Every task's checkbox list has been marked complete in the PR description.
+3. The PR does not squash the seventeen commits into one.
+4. The PR does not rebase the commits in a way that changes their contents.
+5. Every new file is under the size budget in Appendix E.
+6. Every new test uses `app.inject` instead of a real HTTP listener.
+7. Every admin route is gated by `adminGuard`.
+8. Every route handler wraps its body in a try/catch with `mapDomainErrorToHttp`.
+9. No file in `src/` contains `console.log`.
+10. The coverage thresholds in `vitest.config.ts` are not weakened.
+11. `README.md` has the Phase 1 complete note.
+12. No legacy file from spec section 6.2 "完全删除" is still present.
+
+---
+
+## Appendix M — Final Gate
+
+Before merging the Phase G, H, and I pull request, the following final gate must pass:
+
+1. `npm install --frozen-lockfile` succeeds on a fresh clone.
+2. `npm run build` is green.
+3. `npm test` is green with zero skipped tests.
+4. `npm run test:coverage` meets the thresholds from spec section 6.5.
+5. `git grep -l "LocalDocumentTextExtractor"` returns zero hits.
+6. `git grep -l "console.log"` in `src/` returns zero hits.
+7. `git log --oneline | head -20` shows exactly 17 Phase G/H/I commits.
+8. The PR has at least one approving review.
+9. The dashboard in sub-project 3 can bootstrap against the new surface (manual verification).
+10. Sub-project 2's card-action handler can POST to `/api/v2/events` (manual verification).
+
+---
+
+## Appendix N — Schema Reference
+
+This appendix describes the Zod 4 schemas used by every Phase G route. Each schema is described in prose because including literal code would exceed the file size budget. Use this as a checklist when writing the schemas.
+
+### N.1 POST /api/v2/events Body Schema
+
+The body schema has five fields. The `memberId` field is a required string with a minimum length of 1. The `itemCode` field is a required string with a minimum length of 1. The `scoreDelta` field is an optional integer. The `sourceRef` field is a required string with a minimum length of 1. The `payload` field is an optional record where keys are strings and values are unknown. The schema uses `.strict()` to reject unknown top-level keys.
+
+The `memberId` is validated against a minimum length rather than a UUID pattern because member ids may be Feishu open ids, internal UUIDs, or legacy identifiers depending on the seed path. A loose validation is safer than a strict pattern that would reject valid ids.
+
+The `itemCode` is validated against a minimum length rather than an enum of known items because the scoring item catalog may grow in Phase 2 and beyond. A loose validation means new items can be added without touching this schema.
+
+The `scoreDelta` is optional because most items have a fixed score defined in the scoring-items config. Callers that know the exact delta can specify it; callers that do not can omit it and let the ingestor look up the default.
+
+The `payload` is a generic record type because each item has its own payload shape. The ingestor inspects the `itemCode` to determine how to interpret the payload. This is a runtime polymorphism pattern that avoids a massive discriminated union at the schema level.
+
+### N.2 POST /api/v2/periods/open Body Schema
+
+The body schema has one field: `number`, a required integer between 1 and 12. The schema uses `.strict()`. Period numbers outside the 1-to-12 range are rejected at the schema layer, saving the service from validating them separately.
+
+The choice of min 1 and max 12 is driven by the camp structure: each camp has exactly 12 periods (one ice breaker plus 11 scoring periods). Any number outside this range is a trainer mistake and should be rejected immediately.
+
+### N.3 POST /api/v2/periods/close Body Schema
+
+The body schema has two fields: `periodId`, a required string with minimum length 1; and `reason`, a required string with minimum length 1. The schema uses `.strict()`. The `reason` field is free text, not an enum, because operators may need to specify custom reasons for manual closes. The most common values are `manual_close`, `force_close_by_timeout`, and freeform descriptions.
+
+### N.4 POST /api/v2/windows/open Body Schema
+
+The body schema has one field: `code`, a required string matching the regex `/^W[1-5]$|^FINAL$/`. The schema uses `.strict()`. The regex enforces that only six values are accepted: W1, W2, W3, W4, W5, FINAL.
+
+The regex anchors `^` and `$` are critical. Without them, a string like `W1xxx` would match the first part of the regex (`W[1-5]`) and pass through. The anchors force the entire string to match.
+
+### N.5 POST /api/v2/graduation/close Body Schema
+
+The body schema is an empty object `{}`. The schema uses `.strict()`, which means that the only valid body is literally the empty object. Any additional field is rejected with 400.
+
+The empty object schema is used instead of no schema at all because Fastify requires a body for POST requests. An empty object is the minimal valid body.
+
+### N.6 GET /api/v2/board/ranking Query Schema
+
+The query schema has one field: `campId`, a required string with minimum length 1. The schema uses `.strict()`. The `campId` is required because most deployments support multiple camps and the ranking must be scoped to a single camp at a time.
+
+### N.7 GET /api/v2/board/member/:id Params Schema
+
+The params schema has one field: `id`, a required string with minimum length 1. The schema uses `.strict()`. Fastify decodes URL params before the schema runs, so a URL-encoded dash passes through as a regular dash.
+
+### N.8 GET /api/v2/admin/review-queue Query Schema
+
+The query schema has one field: `campId`, an optional string with minimum length 1. The schema uses `.strict()`. The `campId` is optional because single-camp deployments do not need to scope the review queue, and the admin typically wants to see all pending reviews regardless of camp.
+
+### N.9 POST /api/v2/admin/review-queue/:eventId/decide Body and Params Schemas
+
+The params schema has one field: `eventId`, a required string with minimum length 1. The body schema has two fields: `decision`, a required enum of `["approved", "rejected"]`; and `note`, a required string with minimum length 1. Both schemas use `.strict()`.
+
+The `note` field is required even for approvals. Some operators argue that approvals should not need a note because the approval is self-explanatory. The counter-argument, which this plan endorses, is that every decision needs a note for the biweekly compliance review. A note like "looks good" is sufficient.
+
+### N.10 GET /api/v2/admin/members
+
+This endpoint has no body or query parameters. The schema is omitted.
+
+### N.11 PATCH /api/v2/admin/members/:id Body Schema
+
+The params schema has one field: `id`, a required string with minimum length 1. The body schema has five optional fields: `roleType` (enum of student, operator, trainer, observer), `isParticipant` (boolean), `isExcludedFromBoard` (boolean), `hiddenFromBoard` (boolean), and `displayName` (string with minimum length 1). The schema uses `.strict()` and `.refine((data) => Object.keys(data).length > 0, { message: "empty_patch" })`. The refine clause ensures that at least one field is set — an empty patch would produce an invalid SQL UPDATE.
+
+### N.12 GET /api/v2/llm/worker/status
+
+This endpoint has no body or query parameters. The schema is omitted.
+
+---
+
+## Appendix O — Handler Skeleton Reference
+
+This appendix describes the handler shape used by every Phase G route. It is a template that each task instantiates. Use this as a reference when writing the handlers.
+
+### O.1 Non-admin POST Handler Skeleton
+
+The non-admin POST handler has five parts. First, the `parseStrict` call that validates the body and returns either the parsed body or null. Second, the early return if `parseStrict` returned null. Third, the `try` block that calls the service method. Fourth, the success reply with the computed status and body. Fifth, the `catch` block that calls `mapDomainErrorToHttp`.
+
+The handler is always async. Fastify awaits the returned promise and uses its resolved value as the reply, unless the handler explicitly called `reply.send` (which it does for error responses).
+
+### O.2 Non-admin GET Handler Skeleton
+
+The non-admin GET handler is similar to the POST handler but does not call `parseStrict` because GET has no body. Query parameters are validated via a separate `parseStrict` call on the query schema. URL params are validated via a third `parseStrict` call on the params schema. All three validation calls use the same helper with different schemas.
+
+### O.3 Admin POST Handler Skeleton
+
+The admin POST handler is identical to the non-admin POST handler except that it registers the `adminGuard` hook. The hook runs before the handler and short-circuits with 401 or 403 if the caller is not an admin. Inside the handler, `request.currentAdmin` is guaranteed to be defined because the hook short-circuits otherwise. The handler can safely use `request.currentAdmin!.id` without a null check.
+
+### O.4 Admin PATCH Handler Skeleton
+
+The admin PATCH handler combines the PATCH body validation with the `adminGuard` hook. The body schema uses the `.refine()` clause to reject empty patches. The handler calls the repository method with the parsed body and the admin identity, then re-fetches the updated row and returns it.
+
+---
+
+## Appendix P — Test File Shape Reference
+
+This appendix describes the shape of a typical Phase G test file. It is a template that each test file instantiates. Use this as a reference when writing tests.
+
+### P.1 Imports and Setup
+
+Every test file starts with imports: `describe`, `it`, `expect`, `vi`, and `beforeEach` from vitest; `createApp` from the app file; types from the domain layer. The setup block constructs the `:memory:` repository, seeds any fixtures, and boots the app via `createApp`. The setup runs inside `beforeEach` so each test gets a fresh app instance.
+
+### P.2 Test Organisation
+
+Tests are organised by `describe` blocks. Each `describe` block represents a route or a scenario. Inside each `describe`, the `it` blocks cover one assertion each. Tests that share setup can use a shared `beforeEach` inside the `describe`.
+
+### P.3 Injection Pattern
+
+The injection pattern is `const response = await app.inject({ method: "POST", url: "/api/v2/events", headers: { "x-feishu-open-id": "ou-op-1" }, payload: { ... } })`. The response object has `statusCode`, `body` (a string), and `json()` (a method that parses the body as JSON). Most assertions check `response.statusCode` and `response.json()`.
+
+### P.4 Fake Dependencies
+
+Fake dependencies are constructed with `vi.fn()`. The fake's return value is set via `fakeFn.mockResolvedValue(...)` for async methods or `fakeFn.mockReturnValue(...)` for sync methods. Call-count assertions use `expect(fakeFn).toHaveBeenCalledTimes(n)`. Call-argument assertions use `expect(fakeFn).toHaveBeenCalledWith(...)`.
+
+### P.5 Error Path Assertions
+
+Error path assertions check the HTTP status and the error code. The pattern is `expect(response.statusCode).toBe(400); expect(response.json().ok).toBe(false); expect(response.json().code).toBe("not_eligible");`. The message field is sometimes checked with `expect(response.json().message).toContain("m-1")` but it is not always strictly validated because the message text may change over time.
+
+### P.6 Teardown
+
+The teardown block is typically empty because vitest cleans up the worker process between test files. The `:memory:` repository is garbage collected when the app instance goes out of scope.
+
+---
+
+## Appendix Q — Test Runtime Budgets
+
+This appendix sets expected runtime budgets for each test file. A test file that exceeds its budget by more than 2x should be investigated for performance problems.
+
+| File | Budget | Rationale |
+|---|---|---|
+| `tests/api/v2/require-admin.test.ts` | 500ms | Four trivial cases. |
+| `tests/api/v2/app-wiring.test.ts` | 500ms | Four trivial cases. |
+| `tests/api/v2/events-post.test.ts` | 800ms | Eight cases, all fake dependencies. |
+| `tests/api/v2/periods-open.test.ts` | 400ms | Four cases. |
+| `tests/api/v2/periods-close.test.ts` | 300ms | Three cases. |
+| `tests/api/v2/windows-open.test.ts` | 500ms | Five cases. |
+| `tests/api/v2/graduation-close.test.ts` | 300ms | Three cases. |
+| `tests/api/v2/board-ranking.test.ts` | 800ms | Real repository, four cases with fixture setup. |
+| `tests/api/v2/board-member-detail.test.ts` | 600ms | Real repository, four cases. |
+| `tests/api/v2/admin-review-queue.test.ts` | 700ms | Six cases. |
+| `tests/api/v2/admin-members.test.ts` | 600ms | Five cases plus SQL injection test. |
+| `tests/api/v2/llm-worker-status.test.ts` | 200ms | Two trivial cases. |
+| `tests/api/v2/end-to-end.test.ts` | 5000ms | Full pipeline with twenty assertions. |
+| `tests/config/env-example-shape.test.ts` | 100ms | Single file parse. |
+| `tests/server/llm-lifecycle.test.ts` | 500ms | Two cases with mock lifecycle. |
+| `tests/scripts/ensure-bootstrap-data-v2.test.ts` | 800ms | Four cases with fixture setup. |
+| `tests/storage/sqlite-repository-v2-ranking.test.ts` | 400ms | Repository unit test. |
+| `tests/storage/sqlite-repository-v2-member-detail.test.ts` | 400ms | Repository unit test. |
+| `tests/storage/patch-member-for-admin.test.ts` | 200ms | SQL injection regression test. |
+
+Total Phase G + H test suite runtime: approximately 13 seconds. This fits comfortably inside a CI pipeline with a 5-minute budget.
+
+---
+
+## Appendix R — Dependency Graph
+
+This appendix describes the dependency graph between Phase G tasks. A task depends on another task if the dependent task cannot be started until the other task is committed.
+
+### R.1 Phase G Dependencies
+
+- G1 depends on: nothing within Phase G. (Assumes Phases A through F are complete.)
+- G2 depends on: G1 (for `mapDomainErrorToHttp`, `parseStrict`, and `createApp` options).
+- G3 depends on: G1.
+- G4 depends on: G1 and G3 (extends the `src/routes/v2/periods.ts` file created by G3).
+- G5 depends on: G1.
+- G6 depends on: G1.
+- G7 depends on: G1.
+- G8 depends on: G1 and G7 (extends the `src/routes/v2/board.ts` file created by G7).
+- G9 depends on: G1.
+- G10 depends on: G1.
+- G11 depends on: G1.
+
+### R.2 Phase H Dependencies
+
+- H1 depends on: G11 (the last Phase G commit).
+- H2 depends on: H1.
+- H3 depends on: H2.
+- H4 depends on: H3 (and all Phase G routes).
+
+### R.3 Phase I Dependencies
+
+- I1 depends on: H4.
+- I2 depends on: I1.
+
+### R.4 Parallelisation Opportunities
+
+Given the dependency graph, the following tasks can run in parallel:
+
+- G2, G3, G5, G6, G7, G9, G10, G11 can all run in parallel after G1 commits.
+- G4 must wait for G3.
+- G8 must wait for G7.
+- H1 through H4 must run sequentially.
+- I1 and I2 must run sequentially.
+
+This gives a maximum parallelism of eight simultaneous subagents in Phase G. In practice, the parallelism ceiling is limited by merge conflicts on `src/app.ts` (which every route task edits), so a more conservative ceiling of four or five subagents is more realistic.
+
+---
+
+## Appendix S — Historical Context
+
+This appendix provides historical context for why Phase G, H, and I are structured the way they are. It is optional reading but may help future contributors understand the rationale behind specific decisions.
+
+### S.1 Why fastify.inject instead of supertest
+
+The v1 codebase used `supertest` for HTTP testing. `supertest` starts a real HTTP listener and makes real HTTP requests, which is more realistic but slower. The v2 codebase uses `fastify.inject`, which short-circuits the HTTP listener and directly invokes the handler chain. `fastify.inject` is faster (no port allocation, no socket overhead) and more deterministic (no network flakiness).
+
+The downside of `fastify.inject` is that it does not test the transport layer. If a bug exists in how Fastify parses TCP packets, `fastify.inject` would not catch it. This is an acceptable trade-off because the transport layer is Fastify's responsibility, not ours, and we trust their test suite.
+
+### S.2 Why closure-based DI instead of container DI
+
+The v1 codebase used a simple singleton pattern for dependencies. Dependencies were stashed on `app.decorate` and accessed from every handler. This worked for a small codebase but became brittle as the v2 surface grew.
+
+The v2 codebase uses closure-based DI: dependencies are captured in the `createApp` closure and passed to each route registration function as `deps`. This pattern has three advantages. First, dependencies are explicit at the function signature level, making the code easier to read. Second, tests can substitute fakes by passing them as `createApp` options. Third, there is no global state, so parallel test execution inside vitest workers does not cause cross-test interference.
+
+The downside of closure-based DI is verbosity: every route registration function takes a `deps` parameter. This is an acceptable trade-off because the verbosity makes the data flow explicit.
+
+### S.3 Why Zod 4 strict mode
+
+The `.strict()` modifier on Zod schemas rejects unknown keys at parse time. The v1 codebase did not use strict mode, which meant that a typo in the API caller's payload would pass through silently. A `memberID` instead of `memberId` would result in a null dereference downstream.
+
+Strict mode catches these typos at the API boundary, producing a clear 400 error with a `details` field that lists the unknown keys. This improves the API's ergonomics for callers at the cost of a small performance overhead (Zod has to compare each key against the schema).
+
+### S.4 Why a single mapDomainErrorToHttp helper
+
+The v1 codebase inlined error-to-HTTP mappings in every route handler. This led to drift: one route would map `not_eligible` to 400 while another would map it to 422. The v2 codebase centralises the mapping in a single helper, which guarantees consistency.
+
+The helper also provides an exhaustiveness check via a `const _never: never = err.code;` assignment at the end of the switch. If a future developer adds a new `DomainError` subclass without updating the switch, the TypeScript compiler emits an error. This is a "fail closed" pattern that prevents silent omissions.
+
+### S.5 Why the bootstrap script is both a CLI and a library
+
+The v1 bootstrap script was a CLI-only file with no exports. Tests could not import it without triggering its side effects. The v2 refactor makes the bootstrap logic both a CLI and a library: the logic is in an exported `runEnsureBootstrap` function, and the top-level CLI invocation is guarded by `if (import.meta.url === file://${process.argv[1]})`.
+
+This pattern lets tests import the function and call it with a `:memory:` repository, which is essential for deterministic testing. The CLI invocation still works when the file is run directly via `npm run seed:ensure`.
+
+### S.6 Why we delete legacy files instead of deprecating them
+
+The v1 codebase has accumulated dead code that is marked deprecated but not deleted. This accumulation is a maintenance burden: every rename or refactor must consider whether the deprecated code is affected. Over time, the deprecated code drifts away from the live code and becomes a source of confusion.
+
+The v2 cleanup deletes legacy files outright. This is a cleaner approach because it leaves no ambiguity about which code is live. The downside is that reverting requires a restore from git history, but this is rarely needed in practice.
+
+### S.7 Why the LLM worker is its own process-local service
+
+The LLM worker runs inside the same Node process as the Fastify server. An alternative design would separate the worker into its own process (for example, a separate npm script or a Kubernetes sidecar). The same-process design was chosen for simplicity: one process is easier to deploy, monitor, and debug than two.
+
+The trade-off is that a bug in the worker can bring down the HTTP server. This is mitigated by the worker's task timeout and the signal-handler's idempotent stop. If the worker hangs, SIGTERM will drain it before closing Fastify, preventing a stuck process.
+
+### S.8 Why the end-to-end test uses a single it block
+
+The end-to-end test has twenty assertions in a single `it` block because the assertions form a narrative. Splitting them into twenty separate `it` blocks would require either a shared setup (which breaks test isolation) or twenty separate full-pipeline bootstraps (which is prohibitively slow).
+
+The single-block approach has a drawback: when one assertion fails, the test output does not tell you which assertion failed. The assertions are numbered with comments in the source so you can find the offending assertion by reading the test file. This is a small inconvenience for a large gain in runtime.
+
+---
+
+## Appendix T — Migration Path For Existing Deployments
+
+This appendix describes the migration path for deployments that are currently running the v1 scoring surface. It is relevant to teams that deploy this codebase to an existing production environment.
+
+### T.1 Pre-Migration Checklist
+
+Before starting the migration:
+
+1. Take a full database backup.
+2. Verify that the backup can be restored to a fresh environment.
+3. Schedule a maintenance window (approximately 30 minutes).
+4. Notify users that the scoring surface will be updated.
+5. Ensure that sub-project 2 and sub-project 3 are ready to consume the new `/api/v2/*` surface.
+
+### T.2 Migration Steps
+
+1. Deploy the new build (Phase G through I committed).
+2. Run the database migrations (added in Phases A through F).
+3. Run `npm run seed:ensure` to backfill W1 and W2 shells.
+4. Run `npm run seed:ensure` again to verify idempotency.
+5. Smoke-test the new endpoints with `curl` or a similar tool.
+6. Route traffic to the new endpoints.
+7. Monitor the LLM worker status endpoint for 24 hours.
+8. Archive the old endpoints (they have been deleted, so this is a no-op).
+
+### T.3 Rollback Path
+
+If the migration fails:
+
+1. Restore the database from the backup.
+2. Deploy the previous build.
+3. Verify that the old endpoints are reachable.
+4. File an incident report describing the failure.
+
+### T.4 Data Preservation
+
+Spec section 5.8 establishes that historical data is preserved even when members change role. This means that a student promoted to operator retains all their scoring events in the DB — the events are simply hidden from the dashboard by the eligibility gate. This preservation makes the migration safer because no data is lost.
+
+---
+
+## Appendix U — Open Loops Inherited From Phases A Through F
+
+This appendix lists any open loops that Phases A through F left for Phase G, H, or I to resolve. If a loop is not resolved by Phase I, it must be documented here and escalated to sub-project 2 or 3.
+
+### U.1 No Open Loops
+
+As of the writing of this plan, Phases A through F are assumed complete and all their open loops have been resolved. If an open loop is discovered during Phase G execution, document it here and include it in the Phase I sign-off.
+
+---
+
+## Appendix V — Phase 2 Roadmap Notes
+
+This appendix is forward-looking. It describes work that is out of scope for Phase 1 but should be considered when Phase 2 begins.
+
+### V.1 Dashboard Read Caching
+
+The dashboard in sub-project 3 will poll `GET /api/v2/board/ranking` frequently. If the poll frequency is high and there are many concurrent viewers, the DB could become a bottleneck. Phase 2 should add a short-lived cache (for example, 30 seconds) with a cache-busting hook on write operations.
+
+### V.2 Multi-Camp Support
+
+The current design supports multiple camps but does not optimise for the multi-camp case. Phase 2 should add camp-scoped indexes and optimise the ranking query to use them.
+
+### V.3 LLM Cost Tracking
+
+The LLM worker does not track per-task cost. Phase 2 should add cost tracking so that operators can see how much each scoring run cost.
+
+### V.4 Review Queue SLA
+
+The review queue does not have an SLA. Phase 2 should add a time budget and escalation path for unreviewed items.
+
+### V.5 Audit Logging
+
+The PATCH endpoint for admin members does not log the change. Phase 2 should add an audit log that captures the operator, the changed fields, the old values, and the new values.
+
+### V.6 Multi-Language LLM Prompts
+
+The LLM prompts are hardcoded Chinese. Phase 2 should add multi-language support for teams running English-language camps.
+
+---
+
+## Appendix W — Troubleshooting Common Issues
+
+This appendix lists common issues and their fixes. It is a living document — add new entries as they are discovered during implementation.
+
+### W.1 "reply already sent" error
+
+Symptom: A test fails with "reply already sent" when calling `app.inject`.
+
+Cause: The handler called `reply.send` twice. This usually happens when `parseStrict` returns null (and has already sent a 400 response) but the handler does not early-return and continues to call `reply.send` with the success path.
+
+Fix: Add `if (!parsed) return;` immediately after the `parseStrict` call.
+
+### W.2 "Cannot find module" error
+
+Symptom: A test fails with "Cannot find module" when importing `createApp`.
+
+Cause: The import path is wrong. This usually happens when copying an import statement from another test file and forgetting to adjust the relative path.
+
+Fix: Use the absolute path `../../../src/app.js` (note the `.js` extension — TypeScript files are imported with a `.js` extension in ESM mode).
+
+### W.3 "TypeError: createApp is not a function" error
+
+Symptom: A test fails with "TypeError: createApp is not a function".
+
+Cause: The `createApp` export is not exported from `src/app.ts`. This usually happens when the export statement was accidentally deleted.
+
+Fix: Verify that `src/app.ts` has `export async function createApp(...)` at the top level.
+
+### W.4 "Unknown key 'extra'" error
+
+Symptom: A POST request returns 400 with details `{ unrecognizedKeys: ["extra"] }`.
+
+Cause: The request body has an unknown key and the schema uses `.strict()`. This is the expected behaviour.
+
+Fix: Remove the unknown key from the request body. If the unknown key is a legitimate field that should be accepted, add it to the schema.
+
+### W.5 "401 no_identity" error on an endpoint that should be public
+
+Symptom: A GET request returns 401 `no_identity`.
+
+Cause: The route is accidentally registered with `adminGuard`. Public routes should not have the guard.
+
+Fix: Remove `{ onRequest: adminGuard(deps.repository) }` from the route registration.
+
+### W.6 "403 not_admin" error for an operator
+
+Symptom: An admin request with a valid operator header returns 403 `not_admin`.
+
+Cause: The member's `roleType` is stored as something other than `operator` or `trainer` in the database. This usually happens when the fixture data is wrong.
+
+Fix: Verify the seeded data by querying the `members` table directly. The `role_type` column should be `operator` or `trainer` for admin users.
+
+### W.7 Flaky end-to-end test
+
+Symptom: The end-to-end test passes sometimes and fails other times.
+
+Cause: The test depends on the LLM worker's background poll, which has a variable delay. This is a classic flakiness pattern.
+
+Fix: Use `await llmWorker.drainOnce()` to advance the worker deterministically. Do not use `setTimeout` to wait for the worker.
+
+### W.8 Coverage below threshold
+
+Symptom: `npm run test:coverage` fails with "lines coverage 83% below threshold 85%".
+
+Cause: Some code paths are not exercised by the tests. This is usually a signal that the test suite is incomplete.
+
+Fix: Run the coverage report and identify the uncovered lines. Write tests that exercise those lines. Do not lower the threshold.
+
+### W.9 "SQL logic error" on SQLite
+
+Symptom: A repository query fails with "SQL logic error".
+
+Cause: The query has a syntax error or references a non-existent column. This usually happens when the schema evolves but the query is not updated.
+
+Fix: Log the query via `db.prepare(sql).all(params)` with the SQL printed to the console, then inspect the SQL by hand. Verify that every column name is correct.
+
+### W.10 "Dangling timer prevents process exit"
+
+Symptom: After running tests, the process does not exit and the CI job times out.
+
+Cause: A test did not clean up a timer (usually the LLM worker poll loop). The timer keeps the event loop alive.
+
+Fix: Call `await stopLlmWorker(app, { llmWorker })` at the end of the test. Alternatively, use `vitest`'s built-in `afterEach` hook to clean up resources.
+
+---
+
+## Appendix X — Phase G, H, I Summary
+
+Phases G, H, and I together deliver the HTTP surface for sub-project 1. Phase G ships eleven routes across nine files. Phase H wires the startup, seed, and end-to-end test. Phase I cleans up the legacy v1 surface and marks Phase 1 complete. The total deliverable is 17 commits.
+
+The phases are structured to minimise risk: each task is an independent unit with its own tests and its own commit. A bug in one task can be reverted without touching the others. The plan supports both subagent-parallel execution (for Phase G) and fully inline execution (for Phase H and I).
+
+The end state is a working `/api/v2/*` HTTP surface, a running LLM worker, a seeded dev environment, a passing end-to-end test, and a clean codebase with no legacy dead code. Sub-projects 2 and 3 can consume this surface without further modification.
+
+This is the end of the Phase G, H, and I implementation plan.
+
+---
+
+## Appendix Y — Detailed Assertion Examples
+
+This appendix provides extended examples of the assertion patterns used across Phase G, H, and I tests. Each example is written in prose rather than literal code to keep the file under the size budget. Use the examples as templates when writing new tests.
+
+### Y.1 Happy Path Assertion For POST /api/v2/events
+
+The happy path assertion verifies three things: the HTTP status is 202, the response body has `ok: true`, and the response body has the event id returned by the fake ingestor. The assertion pattern is: call `app.inject` with the POST method, the URL `/api/v2/events`, and a valid body; read `response.statusCode` and `response.json()`; assert `response.statusCode === 202`; assert `response.json().ok === true`; assert `response.json().eventId === "evt-123"`. The fake ingestor's `mockResolvedValue` must be set to `{ eventId: "evt-123" }` before the test runs.
+
+### Y.2 Not Eligible Error Assertion For POST /api/v2/events
+
+The not-eligible assertion verifies three things: the HTTP status is 400, the response body has `ok: false`, and the response body has the error code `not_eligible`. The assertion pattern is: mock the fake ingestor's `ingest` method to throw `new NotEligibleError("not_eligible", "m-1 is not a student")`; call `app.inject`; assert `response.statusCode === 400`; assert `response.json().ok === false`; assert `response.json().code === "not_eligible"`; optionally assert `response.json().message.includes("m-1")`.
+
+### Y.3 Missing Header Assertion For An Admin Route
+
+The missing-header assertion verifies two things: the HTTP status is 401 and the response body has the error code `no_identity`. The assertion pattern is: call `app.inject` without the `x-feishu-open-id` header; assert `response.statusCode === 401`; assert `response.json().code === "no_identity"`.
+
+### Y.4 Strict Mode Rejection Assertion
+
+The strict-mode rejection assertion verifies three things: the HTTP status is 400, the response body has the error code `invalid_body`, and the response body has a `details` field listing the unknown keys. The assertion pattern is: call `app.inject` with a body that has an extra key; assert `response.statusCode === 400`; assert `response.json().code === "invalid_body"`; assert `response.json().details` is defined and mentions the extra key.
+
+### Y.5 Ranking Order Assertion For GET /api/v2/board/ranking
+
+The ranking-order assertion verifies the sort order and the rank field. The pattern is: seed five students with known cum AQ values; call `app.inject` with the GET method; parse the response body; assert that `rows.length === 5`; assert that `rows[0].cumulativeAq >= rows[1].cumulativeAq` (descending); assert that `rows[0].rank === 1`; assert that tied members have the same rank; assert that the next non-tied member has a rank that accounts for the tied pair.
+
+### Y.6 Operator Exclusion Assertion For GET /api/v2/board/ranking
+
+The operator-exclusion assertion verifies that operator rows do not appear in the response. The pattern is: seed one student and one operator with higher cum AQ; call `app.inject`; assert that `rows.length === 1`; assert that `rows[0].memberId === "m-1"` (not the operator id).
+
+### Y.7 404 Assertion For GET /api/v2/board/member/:id
+
+The 404 assertion verifies that unknown or ineligible members return 404. The pattern is: call `app.inject` with a URL that references an unknown member id; assert `response.statusCode === 404`; assert `response.json().code === "not_found"`.
+
+### Y.8 Decision Forwarding Assertion For POST /api/v2/admin/review-queue/:eventId/decide
+
+The decision-forwarding assertion verifies that the admin identity is passed to the aggregator. The pattern is: call `app.inject` with an operator header and a valid decision body; assert the aggregator's fake was called once; inspect `fakeAggregator.applyDecision.mock.calls[0]`; assert the first argument is the event id; assert the second argument is the decision object; assert the third argument has `role_type === "operator"`.
+
+### Y.9 SQL Injection Defence Assertion
+
+The SQL injection assertion verifies that parameter binding prevents injection. The pattern is: seed one member; call `patchMemberForAdmin("m-1", { displayName: "'; DROP TABLE members; --" })`; query `sqlite_master` to verify the `members` table still exists; query the member row to verify the `displayName` column contains the injection string literally.
+
+### Y.10 LLM Worker Lifecycle Assertion
+
+The LLM worker lifecycle assertion verifies the start-stop order. The pattern is: construct a fake worker with vitest `vi.fn()` mocks for `start` and `stop`; call `startLlmWorker`; assert `fakeWorker.start.mock.calls.length === 1`; call `stopLlmWorker`; assert `fakeWorker.stop.mock.calls.length === 1`; assert `fakeWorker.stop` was called before `app.close`; assert a second call to `stopLlmWorker` does not double-invoke `stop`.
+
+### Y.11 Bootstrap Idempotency Assertion
+
+The bootstrap idempotency assertion verifies that running the seed twice produces identical state. The pattern is: boot a `:memory:` repository; call `runEnsureBootstrap` once; read the resulting state (camp id, window count, member count); call `runEnsureBootstrap` again; read the resulting state again; assert the two states are identical.
+
+### Y.12 End-To-End Pipeline Assertion
+
+The end-to-end pipeline assertion is the most complex and is described in full in Task H4. The pattern is a narrative: seed students, open W1, open period 1 (ice breaker), reject events during ice breaker, open period 2, ingest events, open period 3, ingest K3 event, drain LLM worker, open W3, open period 4 (triggers W1 settlement), assert state, query ranking, query member detail, query review queue, stop worker.
+
+---
+
+## Appendix Z — Final Notes
+
+This appendix is a catch-all for any notes that did not fit into the other appendices. Use it sparingly; prefer the existing appendices.
+
+### Z.1 Notes On The Commit Message Format
+
+The commit messages in this plan follow the conventional-commits format: `type(scope): description`. The `type` is one of `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `perf`, or `ci`. The `scope` is either `v2-api` (for Phase G route commits), `v2` (for Phase H config and startup commits), or omitted (for Phase I cleanup commits).
+
+The description is in the imperative mood and starts with a lowercase letter. For example: `add POST /api/v2/events route` (not `Added...` or `Adds...`). This convention matches the Angular commit style used by many open-source projects.
+
+### Z.2 Notes On Type Definition Placement
+
+New TypeScript interfaces and types that describe domain concepts go in `src/domain/v2/types.ts`. Types that describe HTTP shapes (request bodies, response envelopes) go in the route file or in `src/routes/v2/common.ts`. Types that describe test fixtures go in `tests/api/v2/helpers.ts`.
+
+The split between domain types and HTTP types matters because the domain types are the source of truth for the business logic while the HTTP types are a projection of the domain types onto the wire format. Mixing them would blur the boundary and make refactoring harder.
+
+### Z.3 Notes On Error Message Formatting
+
+Error messages should be in English, written in a natural-language style, and include enough context to identify the problem. For example: `"m-1 is not a student"` (good) versus `"NOT_ELIGIBLE"` (bad — no context) versus `"member m-1 with roleType operator and isParticipant true failed eligibility check"` (bad — too much context).
+
+Error messages are surfaced to the API client via the response body's `message` field. Clients may display the message to end users, so the message should be readable by a non-technical audience.
+
+### Z.4 Notes On Logging Levels
+
+Fastify's `request.log` has five levels: `fatal`, `error`, `warn`, `info`, `debug`. The conventions used in Phase G are:
+
+- `fatal`: never used in handlers.
+- `error`: unhandled errors logged by `mapDomainErrorToHttp`.
+- `warn`: domain errors that are worth investigating (for example, frequent `cap_exceeded` errors from a single member).
+- `info`: successful state-changing operations (for example, period opened or closed).
+- `debug`: verbose per-request logging, disabled by default in production.
+
+### Z.5 Notes On Dependency Ordering
+
+When registering multiple routes on the same Fastify app instance, the order of registration matters for routes that share a URL prefix. Fastify matches routes in registration order, so a more specific route must be registered before a less specific route. For example, `GET /api/v2/board/member/:id` must be registered after `GET /api/v2/board/ranking` if both routes are in the same file, or Fastify may match the wrong route.
+
+In practice, this rarely matters because Phase G routes have distinct URL prefixes. But it is worth knowing in case a future route adds ambiguity.
+
+### Z.6 Notes On Fastify Version Compatibility
+
+This plan assumes Fastify 4.x or later. Fastify 3.x has a different error-handler signature and may require adjustments to `mapDomainErrorToHttp`. If the project is stuck on Fastify 3.x, file an issue and plan an upgrade before proceeding.
+
+### Z.7 Notes On Vitest Version Compatibility
+
+This plan assumes Vitest 1.x or later. Vitest 0.x has a different mock API and may require adjustments to the test patterns. If the project is stuck on Vitest 0.x, file an issue and plan an upgrade before proceeding.
+
+### Z.8 Notes On Zod Version Compatibility
+
+This plan assumes Zod 4.x. Zod 3.x has a different `z.record` signature (`z.record(z.unknown())` instead of `z.record(z.string(), z.unknown())`). If the project is on Zod 3.x, adjust the schemas accordingly.
+
+### Z.9 Notes On SQLite Version Compatibility
+
+This plan assumes SQLite 3.40 or later. Older versions may not support all the SQL features used by the repository methods. If the project is on an older SQLite, file an issue and plan an upgrade before proceeding.
+
+### Z.10 Notes On Node.js Version Compatibility
+
+This plan assumes Node.js 20.x or later. Older versions may not support ESM imports with the `.js` extension in TypeScript files, and may not support the `import.meta.url` syntax used in the bootstrap script.
+
+---
+
+## Appendix AA — Cross-Task Consistency Checks
+
+This appendix describes the consistency checks that should be run across all Phase G, H, and I tasks. These checks catch bugs that are introduced when two tasks drift out of sync.
+
+### AA.1 Consistency Between Schema And Service Method
+
+The body schema for a route must match the argument shape of the service method it calls. If the schema has `{ memberId, itemCode, scoreDelta, sourceRef, payload }` and the service method signature is `ingest({ memberId, itemCode, sourceRef })`, the `scoreDelta` and `payload` fields are silently dropped. To catch this, the test suite should include an assertion that the service method was called with the full schema shape.
+
+### AA.2 Consistency Between Error Code And HTTP Status
+
+The error code in the domain error must match the HTTP status in `mapDomainErrorToHttp`. If the domain error `NotEligibleError` has code `not_eligible` but the mapper has a case for `notEligible` (camelCase), the mapper misses the error and falls through to the internal error path. To catch this, the test suite should include an assertion that every domain error produces the expected HTTP status.
+
+### AA.3 Consistency Between Test Fixture And Schema
+
+The test fixture must match the schema. If the fixture has `memberId: 42` (a number) but the schema requires a string, the test will fail with a schema validation error. This is expected for negative tests but unexpected for happy-path tests. To catch this, the test harness should construct fixtures using typed helpers.
+
+### AA.4 Consistency Between Route File And createApp Import
+
+Every new route file exports a `registerV2*` function that must be imported and called inside `createApp`. If a route file is created but not imported, the route is never registered and the test fails with 404. To catch this, the test suite should include a smoke test that lists every registered route and asserts the expected count.
+
+### AA.5 Consistency Between Spec Section And Implementation
+
+Every behaviour in the implementation must trace to a spec section. If the implementation has a behaviour that is not in the spec, either the spec needs to be updated or the behaviour needs to be removed. To catch this, code comments should reference spec sections where the behaviour was decided.
+
+---
+
+## Appendix AB — Post-Implementation Validation
+
+After Phase G, H, and I are complete, the following post-implementation validation should be run to confirm the system is in a known-good state.
+
+### AB.1 Smoke Test
+
+Start the server locally with `npm run dev`. Hit the health endpoint: `curl http://localhost:3000/_health`. Should return 200.
+
+Hit the worker status endpoint: `curl http://localhost:3000/api/v2/llm/worker/status`. Should return 200 with `{ ok: true, status: { running: true, ... } }`.
+
+Hit the ranking endpoint with a fake camp id: `curl http://localhost:3000/api/v2/board/ranking?campId=c-1`. Should return 200 with `{ ok: true, campId: "c-1", rows: [...] }`.
+
+### AB.2 Load Test
+
+Use `autocannon` or a similar tool to send 1000 requests to `GET /api/v2/board/ranking?campId=c-1`. Verify that the p99 latency is under 100ms and the error rate is 0.
+
+### AB.3 Failure Injection
+
+Stop the LLM worker manually. Verify that new events ingested via `POST /api/v2/events` still get accepted and enqueued. Verify that the worker status endpoint reports `running: false`. Restart the worker and verify that pending events are processed.
+
+### AB.4 Database Restore Test
+
+Backup the `:memory:` repository after a full E2E test run. Restore the backup into a fresh repository. Verify that `GET /api/v2/board/ranking` returns the same data as before the restore.
+
+### AB.5 Cold Start Test
+
+Delete the DB file. Run `npm run seed:ensure`. Verify that the DB is initialised with W1 and W2 shells and that the bootstrap operators are promoted. Run the smoke test again and verify that all endpoints work.
+
+---
+
+## Appendix AC — Phase 1 Completion Certificate
+
+When all of the following are true, Phase 1 is officially complete. Record the completion in the team's tracking system (Jira, Linear, GitHub Projects) and notify sub-projects 2 and 3.
+
+- [ ] All 17 Phase G, H, I commits are on the branch.
+- [ ] `npm test` is green.
+- [ ] `npm run build` is green.
+- [ ] `npm run test:coverage` meets the thresholds from spec section 6.5.
+- [ ] `npm run seed:ensure` works on a fresh DB.
+- [ ] The smoke test in Appendix AB.1 passes.
+- [ ] No file listed in spec section 6.2 "完全删除" is still present.
+- [ ] `README.md` has the Phase 1 complete note.
+- [ ] The PR has been reviewed and merged.
+- [ ] Sub-project 2 has been notified that the HTTP surface is ready.
+- [ ] Sub-project 3 has been notified that the HTTP surface is ready.
+- [ ] Sub-project 4 has been notified that the LLM factory is ready.
+
+Signed: _______________________ (Phase 1 lead)
+Date: _______________________
+
+---
+
+## Appendix AD — Version History
+
+| Date | Version | Changes |
+|---|---|---|
+| 2026-04-10 | 1.0 | Initial draft of Phase G, H, I plan. |
+
+---
+
+This is the true end of the Phase G, H, and I implementation plan. Execute with discipline. Commit atomically. Test aggressively. Delete fearlessly. And when in doubt, consult this plan.
