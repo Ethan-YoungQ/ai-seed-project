@@ -176,6 +176,141 @@ CREATE TABLE IF NOT EXISTS announcement_jobs (
   triggered_by TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS v2_periods (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  is_ice_breaker INTEGER NOT NULL DEFAULT 0,
+  started_at TEXT NOT NULL,
+  ended_at TEXT,
+  opened_by_op_id TEXT,
+  closed_reason TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(camp_id, number)
+);
+CREATE INDEX IF NOT EXISTS idx_v2_periods_camp_started ON v2_periods (camp_id, started_at DESC);
+
+CREATE TABLE IF NOT EXISTS v2_windows (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  code TEXT NOT NULL,
+  first_period_id TEXT,
+  last_period_id TEXT,
+  is_final INTEGER NOT NULL DEFAULT 0,
+  settlement_state TEXT NOT NULL DEFAULT 'open',
+  settled_at TEXT,
+  created_at TEXT NOT NULL,
+  UNIQUE(camp_id, code)
+);
+
+CREATE TABLE IF NOT EXISTS v2_card_interactions (
+  id TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL,
+  period_id TEXT NOT NULL,
+  card_type TEXT NOT NULL,
+  action_name TEXT NOT NULL,
+  action_payload TEXT,
+  feishu_message_id TEXT,
+  feishu_card_version TEXT,
+  received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_v2_card_interactions_member_period_type
+  ON v2_card_interactions (member_id, period_id, card_type);
+CREATE INDEX IF NOT EXISTS idx_v2_card_interactions_feishu_msg
+  ON v2_card_interactions (feishu_message_id);
+
+CREATE TABLE IF NOT EXISTS v2_scoring_item_events (
+  id TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL,
+  period_id TEXT NOT NULL,
+  item_code TEXT NOT NULL,
+  dimension TEXT NOT NULL,
+  score_delta INTEGER NOT NULL,
+  source_type TEXT NOT NULL,
+  source_ref TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  llm_task_id TEXT,
+  reviewed_by_op_id TEXT,
+  review_note TEXT,
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  UNIQUE(member_id, period_id, item_code, source_ref)
+);
+CREATE INDEX IF NOT EXISTS idx_v2_scoring_events_member_period_status
+  ON v2_scoring_item_events (member_id, period_id, status);
+CREATE INDEX IF NOT EXISTS idx_v2_scoring_events_status_decided
+  ON v2_scoring_item_events (status, decided_at);
+
+CREATE TABLE IF NOT EXISTS v2_member_dimension_scores (
+  member_id TEXT NOT NULL,
+  period_id TEXT NOT NULL,
+  dimension TEXT NOT NULL,
+  period_score INTEGER NOT NULL DEFAULT 0,
+  event_count INTEGER NOT NULL DEFAULT 0,
+  last_event_at TEXT,
+  PRIMARY KEY (member_id, period_id, dimension)
+);
+CREATE INDEX IF NOT EXISTS idx_v2_dim_scores_period_dim
+  ON v2_member_dimension_scores (period_id, dimension, period_score DESC);
+
+CREATE TABLE IF NOT EXISTS v2_window_snapshots (
+  id TEXT PRIMARY KEY,
+  window_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  window_aq INTEGER NOT NULL,
+  cumulative_aq INTEGER NOT NULL,
+  k_score INTEGER NOT NULL,
+  h_score INTEGER NOT NULL,
+  c_score INTEGER NOT NULL,
+  s_score INTEGER NOT NULL,
+  g_score INTEGER NOT NULL,
+  growth_bonus INTEGER NOT NULL DEFAULT 0,
+  consec_missed_on_entry INTEGER NOT NULL DEFAULT 0,
+  snapshot_at TEXT NOT NULL,
+  UNIQUE(window_id, member_id)
+);
+CREATE INDEX IF NOT EXISTS idx_v2_window_snapshots_member
+  ON v2_window_snapshots (member_id, window_id);
+
+CREATE TABLE IF NOT EXISTS v2_member_levels (
+  member_id TEXT PRIMARY KEY,
+  current_level INTEGER NOT NULL DEFAULT 1,
+  level_attained_at TEXT NOT NULL,
+  last_window_id TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS v2_promotion_records (
+  id TEXT PRIMARY KEY,
+  window_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  evaluated_at TEXT NOT NULL,
+  from_level INTEGER NOT NULL,
+  to_level INTEGER NOT NULL,
+  promoted INTEGER NOT NULL,
+  path_taken TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  UNIQUE(window_id, member_id)
+);
+
+CREATE TABLE IF NOT EXISTS v2_llm_scoring_tasks (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  provider TEXT NOT NULL,
+  model TEXT NOT NULL,
+  prompt_text TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 3,
+  result_json TEXT,
+  error_reason TEXT,
+  enqueued_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_v2_llm_tasks_status_enqueued
+  ON v2_llm_scoring_tasks (status, enqueued_at);
 `;
 
 function asBoolean(value: number) {
@@ -236,6 +371,8 @@ export class SqliteRepository {
     ensureColumn(this.db, "raw_events", "document_parse_reason", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "members", "display_name", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "members", "avatar_url", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "members", "source_feishu_open_id", "TEXT NOT NULL DEFAULT ''");
+    ensureColumn(this.db, "members", "hidden_from_board", "INTEGER NOT NULL DEFAULT 0");
     ensureColumn(this.db, "submission_candidates", "event_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "submission_candidates", "message_id", "TEXT NOT NULL DEFAULT ''");
     ensureColumn(this.db, "submission_candidates", "file_key", "TEXT NOT NULL DEFAULT ''");
