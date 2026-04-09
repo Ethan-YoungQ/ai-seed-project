@@ -12,3 +12,8 @@ output
 .trae
 skills
 skills-lock.json
+.worktrees
+.run
+tmp-*.log
+.tmp-*.log
+logs/
