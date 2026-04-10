@@ -84,7 +84,7 @@ export type CardHandler = (
 /** Repository interface for card handlers */
 export interface CardHandlerDeps {
   repo: {
-    findMemberByOpenId(openId: string): Promise<MemberLite | null>;
+    findMemberByOpenId(openId: string): MemberLite | null;
     insertPeerReviewVote(vote: Partial<PeerReviewVote>): Promise<PeerReviewVote>;
     insertReactionTrackedMessage(
       msg: Partial<ReactionTrackedMessageRow>
@@ -96,11 +96,12 @@ export interface CardHandlerDeps {
     insertCardInteraction(
       interaction: Partial<CardInteractionRow>
     ): Promise<CardInteractionRow>;
-    findLiveCard(messageId: string): Promise<LiveCardRow | null>;
+    findLiveCard(cardType: CardType, chatId: string): LiveCardRow | null;
     updateLiveCardState(
       id: string,
-      stateJson: unknown
-    ): Promise<LiveCardRow>;
+      stateJson: unknown,
+      patchedAt: string
+    ): void;
     insertLiveCard(card: Partial<LiveCardRow>): Promise<LiveCardRow>;
     closeLiveCard(
       id: string,
