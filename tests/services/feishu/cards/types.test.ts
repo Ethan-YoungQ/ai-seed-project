@@ -12,8 +12,6 @@ import {
   LiveCardRow,
   MemberLite,
   PeerReviewVote,
-  QuizSelection,
-  ReactionTrackedMessageRow,
   ReviewQueueState,
   emptyDailyCheckinState,
 } from "../../../../src/services/feishu/cards/types";
