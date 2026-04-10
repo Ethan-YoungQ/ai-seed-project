@@ -19,6 +19,7 @@ import { evaluateMessageWindow } from "./services/scoring/evaluate-window.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
 import { SqliteRepository } from "./storage/sqlite-repository.js";
 import { registerV2EventsRoute } from "./routes/v2/events.js";
+import { registerV2PeriodsOpenRoute, registerV2PeriodsCloseRoute } from "./routes/v2/periods.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -677,6 +678,8 @@ export async function createApp(options?: {
   };
   // v2 route registration
   registerV2EventsRoute(app, v2);
+  registerV2PeriodsOpenRoute(app, v2);
+  registerV2PeriodsCloseRoute(app, v2);
 
   return app;
 }
