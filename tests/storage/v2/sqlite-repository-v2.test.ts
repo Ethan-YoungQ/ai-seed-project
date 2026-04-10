@@ -641,3 +641,191 @@ describe("SqliteRepository v2 llm_scoring_tasks", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 scoring_item_events", () => {
+  test("insert + findBySourceRef + sums + updateStatus", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "member-student-01";
+    const periodId = `period-${campId}-2`;
+
+    repo.insertPeriod({
+      id: periodId,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    // approved event (non-LLM path)
+    const e1Id = randomUUID();
+    repo.insertScoringItemEvent({
+      id: e1Id,
+      memberId,
+      periodId,
+      itemCode: "K1",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceType: "card_interaction",
+      sourceRef: "card-k1-001",
+      status: "approved",
+      llmTaskId: null,
+      createdAt: "2026-04-11T08:00:00.000Z",
+      decidedAt: "2026-04-11T08:00:00.000Z"
+    });
+
+    // pending event (LLM-bound)
+    const e2Id = randomUUID();
+    repo.insertScoringItemEvent({
+      id: e2Id,
+      memberId,
+      periodId,
+      itemCode: "K3",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceType: "card_interaction",
+      sourceRef: "card-k3-001",
+      status: "pending",
+      llmTaskId: null,
+      createdAt: "2026-04-11T09:00:00.000Z",
+      decidedAt: null
+    });
+
+    // findEventBySourceRef returns the matching row
+    const byRef = repo.findEventBySourceRef(memberId, periodId, "K1", "card-k1-001");
+    expect(byRef?.id).toBe(e1Id);
+    expect(byRef?.status).toBe("approved");
+
+    // sums
+    expect(repo.sumApprovedScoreDelta(memberId, periodId, "K1")).toBe(3);
+    expect(repo.sumPendingScoreDelta(memberId, periodId, "K3")).toBe(3);
+    expect(repo.sumApprovedScoreDelta(memberId, periodId, "K3")).toBe(0);
+
+    // unique constraint on (memberId, periodId, itemCode, sourceRef)
+    expect(() =>
+      repo.insertScoringItemEvent({
+        id: randomUUID(),
+        memberId,
+        periodId,
+        itemCode: "K1",
+        dimension: "K",
+        scoreDelta: 3,
+        sourceType: "card_interaction",
+        sourceRef: "card-k1-001",
+        status: "approved",
+        llmTaskId: null,
+        createdAt: "2026-04-11T10:00:00.000Z",
+        decidedAt: "2026-04-11T10:00:00.000Z"
+      })
+    ).toThrow(/UNIQUE/);
+
+    // updateEventStatus
+    repo.updateEventStatus({
+      id: e2Id,
+      status: "approved",
+      decidedAt: "2026-04-11T11:00:00.000Z",
+      reviewNote: null,
+      reviewedByOpId: null
+    });
+    expect(repo.sumApprovedScoreDelta(memberId, periodId, "K3")).toBe(3);
+    expect(repo.sumPendingScoreDelta(memberId, periodId, "K3")).toBe(0);
+
+    repo.close();
+  });
+
+  test("listReviewRequiredEvents returns review_required rows with JOINed memberName and llmReason", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "member-student-01";
+    const periodId = `period-${campId}-2`;
+
+    repo.insertPeriod({
+      id: periodId,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    // Seed an LLM task that the review_required event will link to. The
+    // review queue card needs the LLM reason for display, so the repo
+    // JOINs this row and exposes `llmReason` on the return shape.
+    const taskId = randomUUID();
+    const eventId = randomUUID();
+    repo.insertScoringItemEvent({
+      id: eventId,
+      memberId,
+      periodId,
+      itemCode: "K4",
+      dimension: "K",
+      scoreDelta: 4,
+      sourceType: "card_interaction",
+      sourceRef: "card-k4-001",
+      status: "review_required",
+      llmTaskId: taskId,
+      createdAt: "2026-04-11T12:00:00.000Z",
+      decidedAt: null
+    });
+    // Pre-populate the task with a failed/borderline result so the
+    // review-queue renderer can surface the reason.
+    repo.insertLlmTask({
+      id: taskId,
+      eventId,
+      provider: "glm",
+      model: "glm-4.5-flash",
+      promptText: "evaluate K4 submission ...",
+      enqueuedAt: "2026-04-11T12:00:01.000Z",
+      maxAttempts: 3
+    });
+    repo.claimNextPendingTask("2026-04-11T12:00:05.000Z");
+    repo.markTaskSucceeded(taskId, {
+      pass: false,
+      score: 0,
+      reason: "不清楚修正了什么 AI 错误,描述过于空泛",
+      raw: { decision: "fail" }
+    });
+
+    // An unrelated approved event must NOT appear in the queue.
+    repo.insertScoringItemEvent({
+      id: randomUUID(),
+      memberId,
+      periodId,
+      itemCode: "K4",
+      dimension: "K",
+      scoreDelta: 4,
+      sourceType: "card_interaction",
+      sourceRef: "card-k4-002",
+      status: "approved",
+      llmTaskId: null,
+      createdAt: "2026-04-11T12:30:00.000Z",
+      decidedAt: "2026-04-11T12:30:00.000Z"
+    });
+
+    // Object-argument signature with pagination; used by Phase G9
+    // review-queue card and by any admin API that lists review items.
+    const queue = repo.listReviewRequiredEvents({ campId, limit: 10, offset: 0 });
+    expect(queue).toHaveLength(1);
+    expect(queue[0].sourceRef).toBe("card-k4-001");
+    expect(queue[0].memberName).toBeTruthy();
+    expect(queue[0].memberId).toBe(memberId);
+    expect(queue[0].llmTaskId).toBe(taskId);
+    expect(queue[0].llmReason).toContain("空泛");
+
+    // countReviewRequiredEvents powers pagination on the review queue card.
+    expect(repo.countReviewRequiredEvents({ campId })).toBe(1);
+
+    // Calling without a campId lists across all camps (single-camp ok).
+    const unscoped = repo.listReviewRequiredEvents({ limit: 10, offset: 0 });
+    expect(unscoped).toHaveLength(1);
+
+    repo.close();
+  });
+});

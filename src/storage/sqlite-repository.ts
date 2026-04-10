@@ -418,6 +418,56 @@ export interface CardInteractionRecord {
   receivedAt: string;
 }
 
+export type ScoringEventStatus =
+  | "pending"
+  | "approved"
+  | "rejected"
+  | "review_required";
+
+export interface ScoringItemEventRecord {
+  id: string;
+  memberId: string;
+  periodId: string;
+  itemCode: string;
+  dimension: string;
+  scoreDelta: number;
+  sourceType: string;
+  sourceRef: string;
+  status: ScoringEventStatus;
+  llmTaskId: string | null;
+  reviewedByOpId: string | null;
+  reviewNote: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+/**
+ * Review queue row shape. This is a *view* projection that JOINs
+ * `v2_scoring_item_events` with `members` (for `memberName`) and with
+ * `v2_llm_scoring_tasks` (for `llmReason` parsed out of `result_json`).
+ * The review queue card (Phase G9) uses exactly these fields — adding
+ * new fields here requires updating that card's template too.
+ */
+export interface ReviewRequiredEventRow {
+  eventId: string;
+  memberId: string;
+  memberName: string;
+  periodId: string;
+  itemCode: string;
+  dimension: string;
+  scoreDelta: number;
+  sourceType: string;
+  sourceRef: string;
+  llmTaskId: string | null;
+  /**
+   * The `reason` field parsed out of the latest `llm_scoring_tasks.result_json`
+   * for this event. `null` if no task is linked or the task has no parsed
+   * result yet. The review-queue card displays this verbatim to the operator.
+   */
+  llmReason: string | null;
+  createdAt: string;
+}
+
 export type LlmTaskStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface LlmScoringTaskRecord {
@@ -807,6 +857,207 @@ export class SqliteRepository {
         row.feishu_card_version === null ? null : String(row.feishu_card_version),
       receivedAt: String(row.received_at)
     }));
+  }
+
+  insertScoringItemEvent(input: {
+    id: string;
+    memberId: string;
+    periodId: string;
+    itemCode: string;
+    dimension: string;
+    scoreDelta: number;
+    sourceType: string;
+    sourceRef: string;
+    status: ScoringEventStatus;
+    llmTaskId: string | null;
+    createdAt: string;
+    decidedAt: string | null;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_scoring_item_events
+          (id, member_id, period_id, item_code, dimension, score_delta,
+           source_type, source_ref, status, llm_task_id, reviewed_by_op_id,
+           review_note, created_at, decided_at)
+         VALUES (@id, @memberId, @periodId, @itemCode, @dimension, @scoreDelta,
+                 @sourceType, @sourceRef, @status, @llmTaskId, NULL, NULL,
+                 @createdAt, @decidedAt)`
+      )
+      .run(input);
+  }
+
+  findEventBySourceRef(
+    memberId: string,
+    periodId: string,
+    itemCode: string,
+    sourceRef: string
+  ): ScoringItemEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_scoring_item_events
+         WHERE member_id = ? AND period_id = ? AND item_code = ? AND source_ref = ?
+         LIMIT 1`
+      )
+      .get(memberId, periodId, itemCode, sourceRef) as
+      | Record<string, unknown>
+      | undefined;
+    return row ? this.mapScoringEventRow(row) : undefined;
+  }
+
+  sumApprovedScoreDelta(
+    memberId: string,
+    periodId: string,
+    itemCode: string
+  ): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(score_delta), 0) AS total
+         FROM v2_scoring_item_events
+         WHERE member_id = ? AND period_id = ? AND item_code = ? AND status = 'approved'`
+      )
+      .get(memberId, periodId, itemCode) as { total: number };
+    return Number(row.total);
+  }
+
+  sumPendingScoreDelta(
+    memberId: string,
+    periodId: string,
+    itemCode: string
+  ): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(score_delta), 0) AS total
+         FROM v2_scoring_item_events
+         WHERE member_id = ? AND period_id = ? AND item_code = ? AND status = 'pending'`
+      )
+      .get(memberId, periodId, itemCode) as { total: number };
+    return Number(row.total);
+  }
+
+  updateEventStatus(input: {
+    id: string;
+    status: ScoringEventStatus;
+    decidedAt: string;
+    reviewNote: string | null;
+    reviewedByOpId: string | null;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE v2_scoring_item_events
+         SET status = @status, decided_at = @decidedAt,
+             review_note = @reviewNote, reviewed_by_op_id = @reviewedByOpId
+         WHERE id = @id`
+      )
+      .run(input);
+  }
+
+  listReviewRequiredEvents(args: {
+    campId?: string;
+    limit: number;
+    offset: number;
+  }): ReviewRequiredEventRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+           e.id            AS event_id,
+           e.member_id     AS member_id,
+           m.display_name  AS member_name,
+           e.period_id     AS period_id,
+           e.item_code     AS item_code,
+           e.dimension     AS dimension,
+           e.score_delta   AS score_delta,
+           e.source_type   AS source_type,
+           e.source_ref    AS source_ref,
+           e.llm_task_id   AS llm_task_id,
+           t.result_json   AS llm_result_json,
+           e.created_at    AS created_at
+         FROM v2_scoring_item_events e
+         INNER JOIN v2_periods p ON p.id = e.period_id
+         LEFT JOIN members m ON m.id = e.member_id
+         LEFT JOIN v2_llm_scoring_tasks t ON t.id = e.llm_task_id
+         WHERE e.status = 'review_required'
+           AND (@campId IS NULL OR p.camp_id = @campId)
+         ORDER BY e.created_at ASC
+         LIMIT @limit OFFSET @offset`
+      )
+      .all({
+        campId: args.campId ?? null,
+        limit: args.limit,
+        offset: args.offset
+      }) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapReviewRequiredRow(row));
+  }
+
+  countReviewRequiredEvents(args: { campId?: string }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total
+         FROM v2_scoring_item_events e
+         INNER JOIN v2_periods p ON p.id = e.period_id
+         WHERE e.status = 'review_required'
+           AND (@campId IS NULL OR p.camp_id = @campId)`
+      )
+      .get({ campId: args.campId ?? null }) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
+  private mapReviewRequiredRow(row: Record<string, unknown>): ReviewRequiredEventRow {
+    const rawResultJson =
+      row.llm_result_json === null || row.llm_result_json === undefined
+        ? null
+        : String(row.llm_result_json);
+    let llmReason: string | null = null;
+    if (rawResultJson) {
+      try {
+        const parsed = JSON.parse(rawResultJson) as { reason?: unknown };
+        if (parsed && typeof parsed.reason === "string") {
+          llmReason = parsed.reason;
+        }
+      } catch {
+        // malformed JSON → leave null; the review queue card will show
+        // "(no reason available)" in the renderer.
+      }
+    }
+    const memberName =
+      row.member_name === null || row.member_name === undefined
+        ? "(未知学员)"
+        : String(row.member_name);
+    return {
+      eventId: String(row.event_id),
+      memberId: String(row.member_id),
+      memberName,
+      periodId: String(row.period_id),
+      itemCode: String(row.item_code),
+      dimension: String(row.dimension),
+      scoreDelta: Number(row.score_delta),
+      sourceType: String(row.source_type),
+      sourceRef: String(row.source_ref),
+      llmTaskId:
+        row.llm_task_id === null || row.llm_task_id === undefined
+          ? null
+          : String(row.llm_task_id),
+      llmReason,
+      createdAt: String(row.created_at)
+    };
+  }
+
+  private mapScoringEventRow(row: Record<string, unknown>): ScoringItemEventRecord {
+    return {
+      id: String(row.id),
+      memberId: String(row.member_id),
+      periodId: String(row.period_id),
+      itemCode: String(row.item_code),
+      dimension: String(row.dimension),
+      scoreDelta: Number(row.score_delta),
+      sourceType: String(row.source_type),
+      sourceRef: String(row.source_ref),
+      status: String(row.status) as ScoringEventStatus,
+      llmTaskId: row.llm_task_id === null ? null : String(row.llm_task_id),
+      reviewedByOpId: row.reviewed_by_op_id === null ? null : String(row.reviewed_by_op_id),
+      reviewNote: row.review_note === null ? null : String(row.review_note),
+      createdAt: String(row.created_at),
+      decidedAt: row.decided_at === null ? null : String(row.decided_at)
+    };
   }
 
   insertLlmTask(input: {
