@@ -43,7 +43,7 @@ export function NavBar() {
   return (
     <nav style={navStyle} aria-label="主导航">
       <Link to="/" style={logoStyle} aria-label="返回排行榜首页">
-        HBU AI 看板
+        HBU AI奇点玩家
       </Link>
       <div style={linksStyle}>
         <Link to="/status" style={statusLinkStyle} className="nav-version">
