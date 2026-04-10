@@ -1038,3 +1038,55 @@ describe("SqliteRepository v2 window_snapshots", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 member_levels", () => {
+  test("getMemberLevel defaults to 1 when no row exists", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    const level = repo.getMemberLevel("member-student-01");
+    expect(level.currentLevel).toBe(1);
+    expect(level.lastWindowId).toBeNull();
+
+    repo.close();
+  });
+
+  test("upsertMemberLevel writes then reads back", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertWindowShell({
+      code: "W1",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    const w1 = repo.findWindowByCode(campId, "W1")!;
+
+    repo.upsertMemberLevel({
+      memberId: "member-student-01",
+      currentLevel: 2,
+      levelAttainedAt: "2026-04-20T00:00:00.000Z",
+      lastWindowId: w1.id,
+      updatedAt: "2026-04-20T00:00:00.000Z"
+    });
+
+    const level = repo.getMemberLevel("member-student-01");
+    expect(level.currentLevel).toBe(2);
+    expect(level.lastWindowId).toBe(w1.id);
+    expect(level.levelAttainedAt).toBe("2026-04-20T00:00:00.000Z");
+
+    // upsert again (promotion to Lv3)
+    repo.upsertMemberLevel({
+      memberId: "member-student-01",
+      currentLevel: 3,
+      levelAttainedAt: "2026-04-30T00:00:00.000Z",
+      lastWindowId: w1.id,
+      updatedAt: "2026-04-30T00:00:00.000Z"
+    });
+    expect(repo.getMemberLevel("member-student-01").currentLevel).toBe(3);
+
+    repo.close();
+  });
+});

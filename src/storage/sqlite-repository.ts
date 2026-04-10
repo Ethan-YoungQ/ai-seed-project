@@ -468,6 +468,14 @@ export interface ReviewRequiredEventRow {
   createdAt: string;
 }
 
+export interface MemberLevelRecord {
+  memberId: string;
+  currentLevel: number;
+  levelAttainedAt: string | null;
+  lastWindowId: string | null;
+  updatedAt: string | null;
+}
+
 export interface WindowSnapshotRecord {
   id: string;
   windowId: string;
@@ -1235,6 +1243,52 @@ export class SqliteRepository {
       consecMissedOnEntry: Number(row.consec_missed_on_entry),
       snapshotAt: String(row.snapshot_at)
     };
+  }
+
+  getMemberLevel(memberId: string): MemberLevelRecord {
+    const row = this.db
+      .prepare(`SELECT * FROM v2_member_levels WHERE member_id = ?`)
+      .get(memberId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return {
+        memberId,
+        currentLevel: 1,
+        levelAttainedAt: null,
+        lastWindowId: null,
+        updatedAt: null
+      };
+    }
+
+    return {
+      memberId: String(row.member_id),
+      currentLevel: Number(row.current_level),
+      levelAttainedAt:
+        row.level_attained_at === null ? null : String(row.level_attained_at),
+      lastWindowId: row.last_window_id === null ? null : String(row.last_window_id),
+      updatedAt: row.updated_at === null ? null : String(row.updated_at)
+    };
+  }
+
+  upsertMemberLevel(input: {
+    memberId: string;
+    currentLevel: number;
+    levelAttainedAt: string;
+    lastWindowId: string | null;
+    updatedAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_member_levels
+          (member_id, current_level, level_attained_at, last_window_id, updated_at)
+         VALUES (@memberId, @currentLevel, @levelAttainedAt, @lastWindowId, @updatedAt)
+         ON CONFLICT(member_id) DO UPDATE SET
+           current_level = @currentLevel,
+           level_attained_at = @levelAttainedAt,
+           last_window_id = @lastWindowId,
+           updated_at = @updatedAt`
+      )
+      .run(input);
   }
 
   insertLlmTask(input: {
