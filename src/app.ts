@@ -19,6 +19,15 @@ import { registerV2BoardRoutes } from "./routes/v2/board.js";
 import { registerV2AdminReviewRoutes } from "./routes/v2/admin-review.js";
 import { registerV2AdminMembersRoutes } from "./routes/v2/admin-members.js";
 import { registerV2LlmStatusRoute } from "./routes/v2/llm-status.js";
+import { feishuCardsPlugin } from "./services/feishu/cards/router.js";
+import { CardActionDispatcher } from "./services/feishu/cards/card-action-dispatcher.js";
+import {
+  cardRepoAdapter,
+  ingestorAdapter,
+  aggregatorAdapter,
+  feishuClientAdapter,
+  currentVersionFor
+} from "./services/feishu/cards/adapters.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -241,6 +250,36 @@ export async function createApp(options?: {
   registerV2AdminReviewRoutes(app, v2);
   registerV2AdminMembersRoutes(app, v2);
   registerV2LlmStatusRoute(app, v2);
+
+  // ---------------------------------------------------------------------------
+  // Sub-project 2: Feishu card protocol
+  // Adapters are lazy stubs — they throw only when methods are called, not
+  // during construction, so buildApp() completes without throwing.
+  // ---------------------------------------------------------------------------
+  const cardDispatcher = new CardActionDispatcher({
+    repo: cardRepoAdapter(repository),
+    ingestor: ingestorAdapter(v2.ingestor),
+    aggregator: aggregatorAdapter(v2.aggregator),
+    feishuClient: feishuClientAdapter(feishuApiClient),
+    adminApiClient: {
+      patchMember: async () => { throw new Error("adminApiClient.patchMember not yet implemented"); },
+      listMembers: async () => { throw new Error("adminApiClient.listMembers not yet implemented"); }
+    },
+    config: {
+      groupChatId: feishuConfig?.botChatId ?? "",
+      campId: "default",
+      cardVersionCurrent: process.env.FEISHU_CARD_VERSION_CURRENT ?? "v1",
+      cardVersionLegacy: process.env.FEISHU_CARD_VERSION_LEGACY ?? "v0",
+      radarImageBaseUrl: process.env.RADAR_IMAGE_BASE_URL ?? "http://localhost:3000"
+    },
+    requestReappeal: async () => { throw new Error("requestReappeal not yet implemented"); },
+    clock: () => new Date(),
+    uuid: () => crypto.randomUUID()
+  });
+  await app.register(feishuCardsPlugin, {
+    dispatcher: cardDispatcher,
+    currentVersion: currentVersionFor
+  });
 
   return app;
 }
