@@ -18,6 +18,7 @@ import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-r
 import { evaluateMessageWindow } from "./services/scoring/evaluate-window.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
 import { SqliteRepository } from "./storage/sqlite-repository.js";
+import { registerV2EventsRoute } from "./routes/v2/events.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -674,7 +675,8 @@ export async function createApp(options?: {
     reactionTracker: options?.reactionTracker ?? null,
     memberSync: options?.memberSync ?? null,
   };
-  void v2; // route registration will consume this in subsequent tasks
+  // v2 route registration
+  registerV2EventsRoute(app, v2);
 
   return app;
 }
