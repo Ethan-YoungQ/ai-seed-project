@@ -12,7 +12,7 @@ const NEON_COLOR = "#00ff88";
 const INACTIVE_COLOR = "#2a2a5a";
 const LINE_COLOR = "#2a2a5a";
 
-export function TimelineNode({ windowId, aq, isActive = false, isFirst = false, isLast = false }: TimelineNodeProps) {
+export function TimelineNode({ windowId, aq, isActive = false, isFirst: _isFirst = false, isLast = false }: TimelineNodeProps) {
   const nodeColor = isActive ? NEON_COLOR : "#8888aa";
 
   const wrapperStyle: CSSProperties = {

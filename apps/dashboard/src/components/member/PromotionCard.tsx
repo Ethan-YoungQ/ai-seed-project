@@ -1,6 +1,6 @@
 import { CSSProperties } from "react";
 import { useNavigate } from "react-router";
-import { getLevelConfig, getPromotionDirection } from "../../lib/levels";
+import { getPromotionDirection } from "../../lib/levels";
 import { LevelPill } from "../ui/LevelPill";
 import { NeonCard } from "../ui/NeonCard";
 
@@ -32,9 +32,6 @@ export function PromotionCard({ promotion, memberId }: PromotionCardProps) {
   const navigate = useNavigate();
   const direction = getPromotionDirection(promotion.fromLevel, promotion.toLevel);
   const dirConfig = DIRECTION_CONFIG[direction];
-  const fromConfig = getLevelConfig(promotion.fromLevel);
-  const toConfig = getLevelConfig(promotion.toLevel);
-
   const reasonExcerpt = truncateReason(promotion.reason);
 
   const handleClick = () => {

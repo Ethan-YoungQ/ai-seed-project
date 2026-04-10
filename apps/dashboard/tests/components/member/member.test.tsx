@@ -1,4 +1,4 @@
-import { describe, test, expect, vi } from "vitest";
+import { describe, test, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { MemberHero } from "../../../src/components/member/MemberHero";
@@ -61,9 +61,7 @@ describe("DimensionBreakdown component", () => {
   const dims = { K: 80, H: 60, C: 70, S: 50, G: 90 };
 
   test("renders 5 dimension rows", () => {
-    const { container } = render(<DimensionBreakdown dimensions={dims} />);
-    // Each DimensionRow renders its label text
-    const rows = container.querySelectorAll("[style]");
+    render(<DimensionBreakdown dimensions={dims} />);
     // We just verify 5 dimension labels appear
     const labels = ["知识", "实操", "创造力", "社交", "成长"];
     labels.forEach((label) => {
