@@ -333,3 +333,62 @@ describe("SqliteRepository v2 windows", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 card_interactions", () => {
+  test("insert + list by member/period", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "member-student-01";
+
+    repo.insertPeriod({
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    const interactionA = {
+      id: randomUUID(),
+      memberId,
+      periodId: `period-${campId}-2`,
+      cardType: "daily_checkin" as const,
+      actionName: "submit_k3_summary",
+      actionPayload: JSON.stringify({ text: "today I learned ..." }),
+      feishuMessageId: "om_msg_001",
+      feishuCardVersion: "v1",
+      receivedAt: "2026-04-11T08:00:00.000Z"
+    };
+    const interactionB = {
+      id: randomUUID(),
+      memberId,
+      periodId: `period-${campId}-2`,
+      cardType: "quiz" as const,
+      actionName: "answer_k2",
+      actionPayload: JSON.stringify({ score: 8 }),
+      feishuMessageId: "om_msg_002",
+      feishuCardVersion: "v1",
+      receivedAt: "2026-04-11T09:00:00.000Z"
+    };
+    repo.insertCardInteraction(interactionA);
+    repo.insertCardInteraction(interactionB);
+
+    const all = repo.listCardInteractionsForMember(memberId, `period-${campId}-2`);
+    expect(all).toHaveLength(2);
+
+    const onlyQuiz = repo.listCardInteractionsForMember(
+      memberId,
+      `period-${campId}-2`,
+      "quiz"
+    );
+    expect(onlyQuiz).toHaveLength(1);
+    expect(onlyQuiz[0].actionName).toBe("answer_k2");
+    expect(onlyQuiz[0].actionPayload).toContain("score");
+
+    repo.close();
+  });
+});

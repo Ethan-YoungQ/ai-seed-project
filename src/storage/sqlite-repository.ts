@@ -406,6 +406,18 @@ export interface WindowRecord {
   createdAt: string;
 }
 
+export interface CardInteractionRecord {
+  id: string;
+  memberId: string;
+  periodId: string;
+  cardType: string;
+  actionName: string;
+  actionPayload: string | null;
+  feishuMessageId: string | null;
+  feishuCardVersion: string | null;
+  receivedAt: string;
+}
+
 export class SqliteRepository {
   private readonly db: Database.Database;
 
@@ -712,6 +724,57 @@ export class SqliteRepository {
       settledAt: row.settled_at === null ? null : String(row.settled_at),
       createdAt: String(row.created_at)
     };
+  }
+
+  insertCardInteraction(input: {
+    id: string;
+    memberId: string;
+    periodId: string;
+    cardType: string;
+    actionName: string;
+    actionPayload: string | null;
+    feishuMessageId: string | null;
+    feishuCardVersion: string | null;
+    receivedAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_card_interactions
+          (id, member_id, period_id, card_type, action_name, action_payload,
+           feishu_message_id, feishu_card_version, received_at)
+         VALUES (@id, @memberId, @periodId, @cardType, @actionName, @actionPayload,
+                 @feishuMessageId, @feishuCardVersion, @receivedAt)`
+      )
+      .run(input);
+  }
+
+  listCardInteractionsForMember(
+    memberId: string,
+    periodId: string,
+    cardType?: string
+  ): CardInteractionRecord[] {
+    const sql = cardType
+      ? `SELECT * FROM v2_card_interactions
+         WHERE member_id = ? AND period_id = ? AND card_type = ?
+         ORDER BY received_at ASC`
+      : `SELECT * FROM v2_card_interactions
+         WHERE member_id = ? AND period_id = ?
+         ORDER BY received_at ASC`;
+    const rows = (cardType
+      ? this.db.prepare(sql).all(memberId, periodId, cardType)
+      : this.db.prepare(sql).all(memberId, periodId)) as Array<Record<string, unknown>>;
+    return rows.map((row) => ({
+      id: String(row.id),
+      memberId: String(row.member_id),
+      periodId: String(row.period_id),
+      cardType: String(row.card_type),
+      actionName: String(row.action_name),
+      actionPayload: row.action_payload === null ? null : String(row.action_payload),
+      feishuMessageId: row.feishu_message_id === null ? null : String(row.feishu_message_id),
+      feishuCardVersion:
+        row.feishu_card_version === null ? null : String(row.feishu_card_version),
+      receivedAt: String(row.received_at)
+    }));
   }
 
   close() {
