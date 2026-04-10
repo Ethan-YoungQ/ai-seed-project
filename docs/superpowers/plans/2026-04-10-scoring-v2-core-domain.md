@@ -4818,6 +4818,39 @@ const cases: JudgeCase[] = [
     expectPath: "none"
   },
   {
+    // Regression test for plan review M6: boostedSnapshot must derive
+    // windowAq/cumulativeAq from the per-dim deltas rather than a blind
+    // `+25`. This snapshot models the edge case where gScore has already
+    // absorbed a growth-bonus contribution: gScore=5 = 3 base points + 2
+    // growth_bonus (persisted separately in v2_window_snapshots but
+    // collapsed into gScore by the time the snapshot reaches the judge).
+    // windowAq equals the sum of per-dim fields (14), matching how the
+    // settler computes it at snapshot time. The boosted snapshot must
+    // end up at windowAq = 39, cumulativeAq = 39, and per-dim scores
+    // {K:8, H:7, C:7, S:7, G:10}.
+    name: "final_bonus with growth-bonus baked into gScore: boostedSnapshot derives aggregate from per-dim diff",
+    setup: input({
+      currentLevel: 1,
+      isFinal: true,
+      hasClosingShowcaseBonus: true,
+      snapshot: snapshot({
+        windowAq: 14,
+        cumulativeAq: 14,
+        kScore: 3,
+        hScore: 2,
+        cScore: 2,
+        sScore: 2,
+        gScore: 5
+      })
+    }),
+    // Lv1→Lv2 primary path passes because boosted dims K=8, H=7, C=7, S=7, G=10
+    // all meet the Lv2 minimum (spec §3.6 Lv2 primary requires
+    // windowAq ≥ 30 AND at least 2 dims ≥ 5). windowAq = 14 + 25 = 39 ≥ 30.
+    expectPromoted: true,
+    expectToLevel: 2,
+    expectPath: "final_bonus"
+  },
+  {
     name: "Lv2->Lv3 discount 0.15 dimCountRelax=0 still needs 2 dims>=10",
     setup: input({
       currentLevel: 2,
@@ -5419,15 +5452,46 @@ function tryAlternate(targetLevel: LevelValue, ctx: PathContext): PathResult {
   }
 }
 
+/**
+ * Applies the spec §3.7 final-bonus boost: +5 to every per-dimension
+ * score, with the aggregate `windowAq` and `cumulativeAq` derived from
+ * the boosted per-dim fields rather than a blind +25.
+ *
+ * The blind `+25` version (initial plan draft) double-counted in the
+ * edge case where `windowAq` already included a non-zero `growthBonus`
+ * baked into `gScore`, making the final-bonus retry falsely pass for
+ * near-Lv5 students with a large growth bonus. See plan review M6.
+ *
+ * Invariant after boost:
+ *   boosted.windowAq  === (snap.kScore + 5) + (snap.hScore + 5)
+ *                        + (snap.cScore + 5) + (snap.sScore + 5)
+ *                        + (snap.gScore + 5)
+ *                        - (snap.kScore + snap.hScore + snap.cScore + snap.sScore + snap.gScore)
+ *                        + snap.windowAq
+ *                      === snap.windowAq + 25
+ * i.e. the net effect on `windowAq` is still +25, but it's computed as
+ * the difference between boosted per-dim totals and the original per-dim
+ * totals, which remains correct even if `snap.windowAq` already includes
+ * growth-bonus contributions on `gScore`.
+ */
 function boostedSnapshot(snap: WindowSnapshotLike): WindowSnapshotLike {
+  const boostedK = snap.kScore + 5;
+  const boostedH = snap.hScore + 5;
+  const boostedC = snap.cScore + 5;
+  const boostedS = snap.sScore + 5;
+  const boostedG = snap.gScore + 5;
+  const originalDimSum =
+    snap.kScore + snap.hScore + snap.cScore + snap.sScore + snap.gScore;
+  const boostedDimSum = boostedK + boostedH + boostedC + boostedS + boostedG;
+  const dimDelta = boostedDimSum - originalDimSum; // always 25
   return {
-    windowAq: snap.windowAq + 25,
-    cumulativeAq: snap.cumulativeAq + 25,
-    kScore: snap.kScore + 5,
-    hScore: snap.hScore + 5,
-    cScore: snap.cScore + 5,
-    sScore: snap.sScore + 5,
-    gScore: snap.gScore + 5
+    windowAq: snap.windowAq + dimDelta,
+    cumulativeAq: snap.cumulativeAq + dimDelta,
+    kScore: boostedK,
+    hScore: boostedH,
+    cScore: boostedC,
+    sScore: boostedS,
+    gScore: boostedG
   };
 }
 
