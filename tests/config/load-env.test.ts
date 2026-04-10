@@ -79,10 +79,15 @@ describe("loadLocalEnv", () => {
       "LLM_FILE_EXTRACTOR",
       "LLM_FILE_MODEL",
       "LLM_FILE_PARSER_TOOL_TYPE",
+      "LLM_MAX_ATTEMPTS",
       "LLM_MAX_INPUT_CHARS",
+      "LLM_POLL_INTERVAL_MS",
       "LLM_PROVIDER",
+      "LLM_RATE_LIMIT_PER_SEC",
+      "LLM_TASK_TIMEOUT_MS",
       "LLM_TEXT_MODEL",
       "LLM_TIMEOUT_MS",
+      "BOOTSTRAP_OPERATOR_OPEN_IDS",
       "PORT"
     ];
 
