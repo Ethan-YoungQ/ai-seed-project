@@ -472,6 +472,16 @@ CREATE INDEX IF NOT EXISTS idx_feishu_live_cards_active
 CREATE INDEX IF NOT EXISTS idx_feishu_live_cards_expires
   ON feishu_live_cards(expires_at)
   WHERE closed_reason IS NULL;
+
+CREATE TABLE IF NOT EXISTS feishu_card_patch_deadletters (
+  id TEXT PRIMARY KEY,
+  card_type TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  attempts INTEGER NOT NULL,
+  enqueued_at TEXT NOT NULL,
+  resolved_at TEXT
+);
 `;
 
 function asBoolean(value: number) {
