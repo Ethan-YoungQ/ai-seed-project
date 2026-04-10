@@ -108,7 +108,10 @@ export interface CardHandlerDeps {
       reason: "expired" | "period_closed" | "replaced_by_new"
     ): Promise<LiveCardRow>;
     findEventById(eventId: string): Promise<ScoringEventLite | null>;
-    listReviewRequiredEvents(): Promise<ReviewQueueEventRow[]>;
+    listReviewRequiredEvents(opts?: {
+      limit?: number;
+      offset?: number;
+    }): Promise<ReviewQueueEventRow[]>;
     countReviewRequiredEvents(): Promise<number>;
   };
   ingestor: {
