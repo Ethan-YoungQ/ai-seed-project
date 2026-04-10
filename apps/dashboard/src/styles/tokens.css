@@ -1,0 +1,21 @@
+:root {
+  --bg-base: #0a0a1a;
+  --bg-surface: #12122a;
+  --bg-elevated: #1a1a3a;
+  --text-primary: #e0e0ff;
+  --text-secondary: #8888aa;
+  --border-glow: #2a2a5a;
+  --dim-k: #00ff88;
+  --dim-h: #ff6b35;
+  --dim-c: #a855f7;
+  --dim-s: #06b6d4;
+  --dim-g: #fbbf24;
+  --level-1: #6b7280;
+  --level-2: #22c55e;
+  --level-3: #3b82f6;
+  --level-4: #a855f7;
+  --level-5: #f59e0b;
+  --accent: #ff2d78;
+  --font-display: 'Press Start 2P', monospace;
+  --font-mono: 'JetBrains Mono', monospace;
+}

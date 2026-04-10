@@ -17,3 +17,5 @@ skills-lock.json
 tmp-*.log
 .tmp-*.log
 logs/
+dist-dashboard/
+apps/dashboard/node_modules/
