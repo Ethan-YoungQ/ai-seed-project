@@ -21,6 +21,7 @@ import { SqliteRepository } from "./storage/sqlite-repository.js";
 import { registerV2EventsRoute } from "./routes/v2/events.js";
 import { registerV2PeriodsOpenRoute, registerV2PeriodsCloseRoute } from "./routes/v2/periods.js";
 import { registerV2WindowsOpenRoute } from "./routes/v2/windows.js";
+import { registerV2GraduationCloseRoute } from "./routes/v2/graduation.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -682,6 +683,7 @@ export async function createApp(options?: {
   registerV2PeriodsOpenRoute(app, v2);
   registerV2PeriodsCloseRoute(app, v2);
   registerV2WindowsOpenRoute(app, v2);
+  registerV2GraduationCloseRoute(app, v2);
 
   return app;
 }
