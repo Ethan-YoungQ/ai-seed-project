@@ -1060,6 +1060,107 @@ export class SqliteRepository {
     };
   }
 
+  incrementMemberDimensionScore(input: {
+    memberId: string;
+    periodId: string;
+    dimension: string;
+    delta: number;
+    eventAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_member_dimension_scores
+          (member_id, period_id, dimension, period_score, event_count, last_event_at)
+         VALUES (@memberId, @periodId, @dimension, @delta, 1, @eventAt)
+         ON CONFLICT(member_id, period_id, dimension) DO UPDATE SET
+           period_score = period_score + @delta,
+           event_count = event_count + 1,
+           last_event_at = @eventAt`
+      )
+      .run(input);
+  }
+
+  decrementMemberDimensionScore(input: {
+    memberId: string;
+    periodId: string;
+    dimension: string;
+    delta: number;
+    eventAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_member_dimension_scores
+          (member_id, period_id, dimension, period_score, event_count, last_event_at)
+         VALUES (@memberId, @periodId, @dimension, -@delta, 0, @eventAt)
+         ON CONFLICT(member_id, period_id, dimension) DO UPDATE SET
+           period_score = period_score - @delta,
+           event_count = MAX(event_count - 1, 0),
+           last_event_at = @eventAt`
+      )
+      .run(input);
+  }
+
+  fetchMemberDimensionScores(
+    memberId: string,
+    periodId: string
+  ): Record<string, number> {
+    const rows = this.db
+      .prepare(
+        `SELECT dimension, period_score FROM v2_member_dimension_scores
+         WHERE member_id = ? AND period_id = ?`
+      )
+      .all(memberId, periodId) as Array<{ dimension: string; period_score: number }>;
+    const result: Record<string, number> = {};
+    for (const row of rows) {
+      result[row.dimension] = Number(row.period_score);
+    }
+    return result;
+  }
+
+  fetchDimensionCumulativeForRanking(
+    campId: string,
+    dimension: string,
+    memberIds: string[]
+  ): Array<{ memberId: string; cumulativeScore: number }> {
+    if (memberIds.length === 0) {
+      return [];
+    }
+    const placeholders = memberIds.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT ds.member_id AS member_id, COALESCE(SUM(ds.period_score), 0) AS total
+         FROM v2_member_dimension_scores ds
+         INNER JOIN v2_periods p ON p.id = ds.period_id
+         WHERE p.camp_id = ? AND ds.dimension = ?
+           AND ds.member_id IN (${placeholders})
+         GROUP BY ds.member_id
+         ORDER BY total DESC, ds.member_id ASC`
+      )
+      .all(campId, dimension, ...memberIds) as Array<{
+      member_id: string;
+      total: number;
+    }>;
+
+    // Include zeroed members explicitly so ranking stays stable.
+    const byMember = new Map<string, number>();
+    for (const row of rows) {
+      byMember.set(String(row.member_id), Number(row.total));
+    }
+    const result: Array<{ memberId: string; cumulativeScore: number }> = memberIds.map(
+      (mid) => ({
+        memberId: mid,
+        cumulativeScore: byMember.get(mid) ?? 0
+      })
+    );
+    result.sort((a, b) => {
+      if (b.cumulativeScore !== a.cumulativeScore) {
+        return b.cumulativeScore - a.cumulativeScore;
+      }
+      return a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0;
+    });
+    return result;
+  }
+
   insertLlmTask(input: {
     id: string;
     eventId: string;

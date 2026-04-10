@@ -829,3 +829,121 @@ describe("SqliteRepository v2 scoring_item_events", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 member_dimension_scores", () => {
+  test("increment + decrement + fetch", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "member-student-01";
+    const periodId = `period-${campId}-2`;
+
+    repo.insertPeriod({
+      id: periodId,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    // empty → fetch returns empty
+    expect(repo.fetchMemberDimensionScores(memberId, periodId)).toEqual({});
+
+    repo.incrementMemberDimensionScore({
+      memberId,
+      periodId,
+      dimension: "K",
+      delta: 3,
+      eventAt: "2026-04-11T08:00:00.000Z"
+    });
+    repo.incrementMemberDimensionScore({
+      memberId,
+      periodId,
+      dimension: "K",
+      delta: 4,
+      eventAt: "2026-04-11T09:00:00.000Z"
+    });
+    repo.incrementMemberDimensionScore({
+      memberId,
+      periodId,
+      dimension: "H",
+      delta: 5,
+      eventAt: "2026-04-11T10:00:00.000Z"
+    });
+
+    const scores = repo.fetchMemberDimensionScores(memberId, periodId);
+    expect(scores.K).toBe(7);
+    expect(scores.H).toBe(5);
+    expect(scores.C).toBeUndefined();
+
+    // decrement
+    repo.decrementMemberDimensionScore({
+      memberId,
+      periodId,
+      dimension: "K",
+      delta: 3,
+      eventAt: "2026-04-11T11:00:00.000Z"
+    });
+    expect(repo.fetchMemberDimensionScores(memberId, periodId).K).toBe(4);
+
+    repo.close();
+  });
+
+  test("fetchDimensionCumulativeForRanking aggregates across periods", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    const p2 = `period-${campId}-2`;
+    const p3 = `period-${campId}-3`;
+    for (const [pid, num] of [
+      [p2, 2],
+      [p3, 3]
+    ] as Array<[string, number]>) {
+      repo.insertPeriod({
+        id: pid,
+        campId,
+        number: num,
+        isIceBreaker: false,
+        startedAt: `2026-04-1${num}T00:00:00.000Z`,
+        openedByOpId: null,
+        createdAt: `2026-04-1${num}T00:00:00.000Z`,
+        updatedAt: `2026-04-1${num}T00:00:00.000Z`
+      });
+    }
+
+    const alice = "member-student-01";
+    const bob = "member-student-02";
+    for (const m of [alice, bob]) {
+      repo.incrementMemberDimensionScore({
+        memberId: m,
+        periodId: p2,
+        dimension: "K",
+        delta: 5,
+        eventAt: "2026-04-12T00:00:00.000Z"
+      });
+    }
+    repo.incrementMemberDimensionScore({
+      memberId: alice,
+      periodId: p3,
+      dimension: "K",
+      delta: 7,
+      eventAt: "2026-04-13T00:00:00.000Z"
+    });
+
+    const ranking = repo.fetchDimensionCumulativeForRanking(campId, "K", [
+      alice,
+      bob
+    ]);
+    // Alice: 5 + 7 = 12, Bob: 5
+    expect(ranking).toEqual([
+      { memberId: alice, cumulativeScore: 12 },
+      { memberId: bob, cumulativeScore: 5 }
+    ]);
+
+    repo.close();
+  });
+});
