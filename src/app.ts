@@ -19,6 +19,52 @@ import { evaluateMessageWindow } from "./services/scoring/evaluate-window.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
 import { SqliteRepository } from "./storage/sqlite-repository.js";
 
+// ---------------------------------------------------------------------------
+// v2 admin middleware
+// ---------------------------------------------------------------------------
+
+function readOpenIdHeader(request: { headers: Record<string, unknown> }): string | null {
+  const raw = request.headers["x-feishu-open-id"];
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function requireAdmin(repository: SqliteRepository) {
+  return async function adminHook(
+    request: import("fastify").FastifyRequest,
+    reply: import("fastify").FastifyReply
+  ) {
+    const openId = readOpenIdHeader(request);
+    if (!openId) {
+      return reply.code(401).send({ ok: false, code: "no_identity" });
+    }
+    const member = repository.findMemberByFeishuOpenId(openId);
+    if (
+      !member ||
+      (member.roleType !== "operator" && member.roleType !== "trainer")
+    ) {
+      return reply.code(403).send({ ok: false, code: "not_admin" });
+    }
+    request.currentAdmin = member;
+  };
+}
+
+// ---------------------------------------------------------------------------
+// v2 dependency bundle
+// ---------------------------------------------------------------------------
+
+export interface V2Runtime {
+  repository: SqliteRepository;
+  ingestor: unknown;
+  aggregator: unknown;
+  periodLifecycle: unknown;
+  windowSettler: unknown;
+  llmWorker: unknown;
+  reactionTracker: unknown;
+  memberSync: unknown;
+}
+
 const memberPatchSchema = z.object({
   isParticipant: z.boolean().optional(),
   isExcludedFromBoard: z.boolean().optional(),
@@ -66,6 +112,14 @@ export async function createApp(options?: {
   documentTextExtractor?: DocumentTextExtractor;
   baseSyncService?: NoopBaseSyncService | FeishuBaseSyncService;
   wsRuntime?: FeishuWsRuntime;
+  // v2 dependency injection
+  ingestor?: unknown;
+  aggregator?: unknown;
+  periodLifecycle?: unknown;
+  windowSettler?: unknown;
+  llmWorker?: unknown;
+  reactionTracker?: unknown;
+  memberSync?: unknown;
 }) {
   loadLocalEnv();
   const app = Fastify({
@@ -606,6 +660,21 @@ export async function createApp(options?: {
       });
     }
   });
+
+  // ---------------------------------------------------------------------------
+  // v2 runtime wiring — each dep can be injected or defaults to a stub
+  // ---------------------------------------------------------------------------
+  const v2: V2Runtime = {
+    repository,
+    ingestor: options?.ingestor ?? null,
+    aggregator: options?.aggregator ?? null,
+    periodLifecycle: options?.periodLifecycle ?? null,
+    windowSettler: options?.windowSettler ?? null,
+    llmWorker: options?.llmWorker ?? null,
+    reactionTracker: options?.reactionTracker ?? null,
+    memberSync: options?.memberSync ?? null,
+  };
+  void v2; // route registration will consume this in subsequent tasks
 
   return app;
 }
