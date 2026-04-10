@@ -311,6 +311,30 @@ CREATE TABLE IF NOT EXISTS v2_llm_scoring_tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_v2_llm_tasks_status_enqueued
   ON v2_llm_scoring_tasks (status, enqueued_at);
+
+CREATE TABLE IF NOT EXISTS peer_review_votes (
+  id TEXT PRIMARY KEY,
+  peer_review_session_id TEXT NOT NULL,
+  voter_member_id TEXT NOT NULL,
+  voted_member_id TEXT NOT NULL,
+  voted_at TEXT NOT NULL,
+  UNIQUE (peer_review_session_id, voter_member_id, voted_member_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_peer_review_votes_session
+  ON peer_review_votes (peer_review_session_id);
+
+CREATE TABLE IF NOT EXISTS reaction_tracked_messages (
+  id TEXT PRIMARY KEY,
+  feishu_message_id TEXT NOT NULL UNIQUE,
+  member_id TEXT NOT NULL,
+  item_code TEXT NOT NULL,
+  posted_at TEXT NOT NULL,
+  reaction_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_reaction_tracked_messages_by_member
+  ON reaction_tracked_messages (member_id);
 `;
 
 function asBoolean(value: number) {
@@ -338,6 +362,23 @@ interface WarningSyncRow {
   key: string;
   resolved: boolean;
   existing?: WarningRecord;
+}
+
+export interface PeerReviewVoteRow {
+  id: string;
+  peerReviewSessionId: string;
+  voterMemberId: string;
+  votedMemberId: string;
+  votedAt: string;
+}
+
+export interface ReactionTrackedMessageRow {
+  id: string;
+  feishuMessageId: string;
+  memberId: string;
+  itemCode: "C2";
+  postedAt: string;
+  reactionCount: number;
 }
 
 export class SqliteRepository {
@@ -397,6 +438,76 @@ export class SqliteRepository {
     for (const row of rows) {
       this.recomputeSessionResult(row.camp_id, row.member_id, row.session_id);
     }
+  }
+
+  insertPeerReviewVote(vote: PeerReviewVoteRow): "inserted" | "already_exists" {
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO peer_review_votes
+          (id, peer_review_session_id, voter_member_id, voted_member_id, voted_at)
+         VALUES (@id, @peerReviewSessionId, @voterMemberId, @votedMemberId, @votedAt)`
+      )
+      .run(vote);
+    return result.changes === 1 ? "inserted" : "already_exists";
+  }
+
+  listPeerReviewVotesBySession(sessionId: string): PeerReviewVoteRow[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, peer_review_session_id, voter_member_id, voted_member_id, voted_at
+         FROM peer_review_votes
+         WHERE peer_review_session_id = ?
+         ORDER BY voted_at ASC, id ASC`
+      )
+      .all(sessionId) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      id: String(r.id),
+      peerReviewSessionId: String(r.peer_review_session_id),
+      voterMemberId: String(r.voter_member_id),
+      votedMemberId: String(r.voted_member_id),
+      votedAt: String(r.voted_at)
+    }));
+  }
+
+  insertReactionTrackedMessage(row: ReactionTrackedMessageRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO reaction_tracked_messages
+          (id, feishu_message_id, member_id, item_code, posted_at, reaction_count)
+         VALUES (@id, @feishuMessageId, @memberId, @itemCode, @postedAt, @reactionCount)`
+      )
+      .run(row);
+  }
+
+  findReactionTrackedMessageByFeishuMessageId(
+    feishuMessageId: string
+  ): ReactionTrackedMessageRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT id, feishu_message_id, member_id, item_code, posted_at, reaction_count
+         FROM reaction_tracked_messages
+         WHERE feishu_message_id = ?`
+      )
+      .get(feishuMessageId) as Record<string, unknown> | undefined;
+    if (!row) return null;
+    return {
+      id: String(row.id),
+      feishuMessageId: String(row.feishu_message_id),
+      memberId: String(row.member_id),
+      itemCode: String(row.item_code) as "C2",
+      postedAt: String(row.posted_at),
+      reactionCount: Number(row.reaction_count ?? 0)
+    };
+  }
+
+  incrementReactionCount(feishuMessageId: string): void {
+    this.db
+      .prepare(
+        `UPDATE reaction_tracked_messages
+         SET reaction_count = reaction_count + 1
+         WHERE feishu_message_id = ?`
+      )
+      .run(feishuMessageId);
   }
 
   close() {
