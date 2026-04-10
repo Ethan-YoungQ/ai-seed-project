@@ -215,3 +215,121 @@ describe("SqliteRepository v2 periods", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 windows", () => {
+  test("insertWindowShell + attachFirstPeriod + attachLastPeriod + findWindowByLastPeriod", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    // seed two periods to attach later
+    const p2 = {
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    };
+    const p3 = {
+      id: `period-${campId}-3`,
+      campId,
+      number: 3,
+      isIceBreaker: false,
+      startedAt: "2026-04-12T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-12T00:00:00.000Z",
+      updatedAt: "2026-04-12T00:00:00.000Z"
+    };
+    repo.insertPeriod(p2);
+    repo.insertPeriod(p3);
+
+    // insert W1 shell (no periods)
+    repo.insertWindowShell({
+      code: "W1",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+
+    // findOpenWindowWithOpenSlot returns W1
+    const open1 = repo.findOpenWindowWithOpenSlot(campId);
+    expect(open1?.code).toBe("W1");
+    expect(open1?.firstPeriodId).toBeNull();
+    expect(open1?.lastPeriodId).toBeNull();
+
+    repo.attachFirstPeriod(open1!.id, p2.id);
+    const afterFirst = repo.findOpenWindowWithOpenSlot(campId);
+    expect(afterFirst?.firstPeriodId).toBe(p2.id);
+    expect(afterFirst?.lastPeriodId).toBeNull();
+
+    repo.attachLastPeriod(afterFirst!.id, p3.id);
+
+    // now W1 has no open slot → findOpenWindowWithOpenSlot returns undefined
+    expect(repo.findOpenWindowWithOpenSlot(campId)).toBeUndefined();
+
+    // findWindowByLastPeriod(p3) returns W1
+    const byLast = repo.findWindowByLastPeriod(p3.id);
+    expect(byLast?.code).toBe("W1");
+
+    // findWindowByCode
+    const byCode = repo.findWindowByCode(campId, "W1");
+    expect(byCode?.id).toBe(byLast?.id);
+
+    // markWindowSettling → markWindowSettled
+    repo.markWindowSettling(byLast!.id);
+    const settling = repo.findWindowByCode(campId, "W1");
+    expect(settling?.settlementState).toBe("settling");
+
+    repo.markWindowSettled(byLast!.id, "2026-04-20T00:00:00.000Z");
+    const settled = repo.findWindowByCode(campId, "W1");
+    expect(settled?.settlementState).toBe("settled");
+    expect(settled?.settledAt).toBe("2026-04-20T00:00:00.000Z");
+
+    repo.close();
+  });
+
+  test("insertWindowShell is idempotent on UNIQUE(camp_id, code)", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertWindowShell({
+      code: "W2",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    expect(() =>
+      repo.insertWindowShell({
+        code: "W2",
+        campId,
+        isFinal: false,
+        createdAt: "2026-04-10T00:00:00.000Z"
+      })
+    ).toThrow(/UNIQUE/);
+
+    repo.close();
+  });
+
+  test("findOpenWindowWithOpenSlot skips settled windows", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertWindowShell({
+      code: "W1",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    const w1 = repo.findWindowByCode(campId, "W1")!;
+    repo.markWindowSettling(w1.id);
+    repo.markWindowSettled(w1.id, "2026-04-20T00:00:00.000Z");
+
+    expect(repo.findOpenWindowWithOpenSlot(campId)).toBeUndefined();
+    repo.close();
+  });
+});

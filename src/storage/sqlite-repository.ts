@@ -394,6 +394,18 @@ export interface PeriodRecord {
   updatedAt: string;
 }
 
+export interface WindowRecord {
+  id: string;
+  campId: string;
+  code: string;
+  firstPeriodId: string | null;
+  lastPeriodId: string | null;
+  isFinal: boolean;
+  settlementState: "open" | "settling" | "settled";
+  settledAt: string | null;
+  createdAt: string;
+}
+
 export class SqliteRepository {
   private readonly db: Database.Database;
 
@@ -604,6 +616,101 @@ export class SqliteRepository {
       closedReason: row.closed_reason === null ? null : String(row.closed_reason),
       createdAt: String(row.created_at),
       updatedAt: String(row.updated_at)
+    };
+  }
+
+  insertWindowShell(input: {
+    code: string;
+    campId: string;
+    isFinal: boolean;
+    createdAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_windows
+          (id, camp_id, code, first_period_id, last_period_id, is_final,
+           settlement_state, settled_at, created_at)
+         VALUES (@id, @campId, @code, NULL, NULL, @isFinal, 'open', NULL, @createdAt)`
+      )
+      .run({
+        id: `window-${input.campId}-${input.code.toLowerCase()}`,
+        campId: input.campId,
+        code: input.code,
+        isFinal: input.isFinal ? 1 : 0,
+        createdAt: input.createdAt
+      });
+  }
+
+  findOpenWindowWithOpenSlot(campId: string): WindowRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_windows
+         WHERE camp_id = ? AND settlement_state = 'open'
+           AND (first_period_id IS NULL OR last_period_id IS NULL)
+         ORDER BY code ASC
+         LIMIT 1`
+      )
+      .get(campId) as Record<string, unknown> | undefined;
+    return row ? this.mapWindowRow(row) : undefined;
+  }
+
+  attachFirstPeriod(windowId: string, periodId: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_windows SET first_period_id = ? WHERE id = ? AND first_period_id IS NULL`
+      )
+      .run(periodId, windowId);
+  }
+
+  attachLastPeriod(windowId: string, periodId: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_windows SET last_period_id = ? WHERE id = ? AND last_period_id IS NULL`
+      )
+      .run(periodId, windowId);
+  }
+
+  findWindowByLastPeriod(periodId: string): WindowRecord | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM v2_windows WHERE last_period_id = ? LIMIT 1`)
+      .get(periodId) as Record<string, unknown> | undefined;
+    return row ? this.mapWindowRow(row) : undefined;
+  }
+
+  markWindowSettling(windowId: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_windows SET settlement_state = 'settling' WHERE id = ? AND settlement_state = 'open'`
+      )
+      .run(windowId);
+  }
+
+  markWindowSettled(windowId: string, at: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_windows SET settlement_state = 'settled', settled_at = ? WHERE id = ?`
+      )
+      .run(at, windowId);
+  }
+
+  findWindowByCode(campId: string, code: string): WindowRecord | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM v2_windows WHERE camp_id = ? AND code = ? LIMIT 1`)
+      .get(campId, code) as Record<string, unknown> | undefined;
+    return row ? this.mapWindowRow(row) : undefined;
+  }
+
+  private mapWindowRow(row: Record<string, unknown>): WindowRecord {
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      code: String(row.code),
+      firstPeriodId: row.first_period_id === null ? null : String(row.first_period_id),
+      lastPeriodId: row.last_period_id === null ? null : String(row.last_period_id),
+      isFinal: Number(row.is_final) === 1,
+      settlementState: String(row.settlement_state) as WindowRecord["settlementState"],
+      settledAt: row.settled_at === null ? null : String(row.settled_at),
+      createdAt: String(row.created_at)
     };
   }
 
