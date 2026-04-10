@@ -468,6 +468,22 @@ export interface ReviewRequiredEventRow {
   createdAt: string;
 }
 
+export interface WindowSnapshotRecord {
+  id: string;
+  windowId: string;
+  memberId: string;
+  windowAq: number;
+  cumulativeAq: number;
+  kScore: number;
+  hScore: number;
+  cScore: number;
+  sScore: number;
+  gScore: number;
+  growthBonus: number;
+  consecMissedOnEntry: number;
+  snapshotAt: string;
+}
+
 export type LlmTaskStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface LlmScoringTaskRecord {
@@ -1159,6 +1175,66 @@ export class SqliteRepository {
       return a.memberId < b.memberId ? -1 : a.memberId > b.memberId ? 1 : 0;
     });
     return result;
+  }
+
+  insertWindowSnapshot(input: WindowSnapshotRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_window_snapshots
+          (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score,
+           c_score, s_score, g_score, growth_bonus, consec_missed_on_entry, snapshot_at)
+         VALUES (@id, @windowId, @memberId, @windowAq, @cumulativeAq, @kScore, @hScore,
+                 @cScore, @sScore, @gScore, @growthBonus, @consecMissedOnEntry, @snapshotAt)`
+      )
+      .run(input);
+  }
+
+  findSnapshotForWindow(
+    windowId: string,
+    memberId: string
+  ): WindowSnapshotRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_window_snapshots
+         WHERE window_id = ? AND member_id = ? LIMIT 1`
+      )
+      .get(windowId, memberId) as Record<string, unknown> | undefined;
+    return row ? this.mapSnapshotRow(row) : undefined;
+  }
+
+  findLatestSnapshotBefore(
+    memberId: string,
+    windowId: string
+  ): WindowSnapshotRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT s.* FROM v2_window_snapshots s
+         INNER JOIN v2_windows w ON w.id = s.window_id
+         WHERE s.member_id = ?
+           AND s.window_id != ?
+           AND w.code < (SELECT code FROM v2_windows WHERE id = ?)
+         ORDER BY w.code DESC LIMIT 1`
+      )
+      .get(memberId, windowId, windowId) as Record<string, unknown> | undefined;
+    return row ? this.mapSnapshotRow(row) : undefined;
+  }
+
+  private mapSnapshotRow(row: Record<string, unknown>): WindowSnapshotRecord {
+    return {
+      id: String(row.id),
+      windowId: String(row.window_id),
+      memberId: String(row.member_id),
+      windowAq: Number(row.window_aq),
+      cumulativeAq: Number(row.cumulative_aq),
+      kScore: Number(row.k_score),
+      hScore: Number(row.h_score),
+      cScore: Number(row.c_score),
+      sScore: Number(row.s_score),
+      gScore: Number(row.g_score),
+      growthBonus: Number(row.growth_bonus),
+      consecMissedOnEntry: Number(row.consec_missed_on_entry),
+      snapshotAt: String(row.snapshot_at)
+    };
   }
 
   insertLlmTask(input: {

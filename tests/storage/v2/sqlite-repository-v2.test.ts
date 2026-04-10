@@ -947,3 +947,94 @@ describe("SqliteRepository v2 member_dimension_scores", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 window_snapshots", () => {
+  test("insert + findSnapshotForWindow + findLatestSnapshotBefore", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "member-student-01";
+
+    // seed two windows
+    repo.insertWindowShell({
+      code: "W1",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    repo.insertWindowShell({
+      code: "W2",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    const w1 = repo.findWindowByCode(campId, "W1")!;
+    const w2 = repo.findWindowByCode(campId, "W2")!;
+
+    // insert snapshot for W1
+    repo.insertWindowSnapshot({
+      id: randomUUID(),
+      windowId: w1.id,
+      memberId,
+      windowAq: 35,
+      cumulativeAq: 35,
+      kScore: 10,
+      hScore: 8,
+      cScore: 7,
+      sScore: 4,
+      gScore: 6,
+      growthBonus: 0,
+      consecMissedOnEntry: 0,
+      snapshotAt: "2026-04-15T00:00:00.000Z"
+    });
+
+    const w1Snap = repo.findSnapshotForWindow(w1.id, memberId);
+    expect(w1Snap?.windowAq).toBe(35);
+    expect(w1Snap?.cumulativeAq).toBe(35);
+
+    // before W2 → returns W1
+    const before = repo.findLatestSnapshotBefore(memberId, w2.id);
+    expect(before?.windowId).toBe(w1.id);
+
+    // before W1 → returns undefined
+    expect(repo.findLatestSnapshotBefore(memberId, w1.id)).toBeUndefined();
+
+    // insert snapshot for W2
+    repo.insertWindowSnapshot({
+      id: randomUUID(),
+      windowId: w2.id,
+      memberId,
+      windowAq: 40,
+      cumulativeAq: 75,
+      kScore: 12,
+      hScore: 9,
+      cScore: 8,
+      sScore: 5,
+      gScore: 6,
+      growthBonus: 3,
+      consecMissedOnEntry: 0,
+      snapshotAt: "2026-04-25T00:00:00.000Z"
+    });
+
+    // UNIQUE(window_id, member_id)
+    expect(() =>
+      repo.insertWindowSnapshot({
+        id: randomUUID(),
+        windowId: w2.id,
+        memberId,
+        windowAq: 99,
+        cumulativeAq: 99,
+        kScore: 0,
+        hScore: 0,
+        cScore: 0,
+        sScore: 0,
+        gScore: 0,
+        growthBonus: 0,
+        consecMissedOnEntry: 0,
+        snapshotAt: "2026-04-26T00:00:00.000Z"
+      })
+    ).toThrow(/UNIQUE/);
+
+    repo.close();
+  });
+});
