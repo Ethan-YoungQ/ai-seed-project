@@ -1,0 +1,438 @@
+[
+  {
+    "testId": "k3-pass-1",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 3,
+      "reason": "太棒了！你不仅把 QKV 和注意力权重的原理讲清楚了，还主动对比了 RNN，说出了并行计算的优势，理解得很到位。字数也足够，满分通过！"
+    },
+    "error": null,
+    "latencyMs": 13084,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-pass-1",
+    "model": "glm-4.7",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "k3-pass-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 3,
+      "reason": "不错！你提到了 Transformer 的自注意力机制，还清楚地解释了 Q K V 的作用以及它比 RNN 快的原因，字数也达标了。"
+    },
+    "error": null,
+    "latencyMs": 16249,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-pass-2",
+    "model": "glm-4.7-flash",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "k3-pass-2",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 3,
+      "reason": "总结得很棒！你清晰描述了 RAG（检索增强生成）的核心工作流程，包括切块入库、语义检索以及结合上下文生成，并且用自己的话解释了这如何解决幻觉问题，字数也达标，满分通过。"
+    },
+    "error": null,
+    "latencyMs": 12401,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-pass-2",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 3,
+      "reason": "这份总结写得很棒呀！你不仅提到了 RAG 的核心概念，还用自己的话把“检索+生成”的流程讲清楚了，特别是关于向量库和减少幻觉的部分，字数也够，完全符合要求。"
+    },
+    "error": null,
+    "latencyMs": 23214,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-fail-1",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "提交的内容太简短了，连30个字都没到，而且没有具体讲出AI的哪个点，这样没法打卡成功哦。"
+    },
+    "error": null,
+    "latencyMs": 9720,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-fail-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "这次打卡不合格哦。首先字数太少啦，要求至少30个字。其次，“AI很厉害”只是个感叹，没有包含具体的AI知识点，需要再详细补充一下。"
+    },
+    "error": null,
+    "latencyMs": 12235,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-fail-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "抱歉这次不合格哈。主要有两个问题：一是字数太少啦，只有5个字，要求至少写30个字；二是内容上你只是在感叹AI很厉害，并没有写出具体的AI知识点（比如AI能做什么、原理是什么）。下次记得多写点干货，具体阐述一下你学到的知识哦。"
+    },
+    "error": null,
+    "latencyMs": 14735,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-fail-2",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "哎呀，这提交内容字数太少啦，而且没提到具体的 AI 知识点，不合格哦。"
+    },
+    "error": null,
+    "latencyMs": 13911,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-fail-2",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "这次打卡不太合格哦。首先，你没有写出具体的 AI 知识点，只说看了点东西，太笼统了；其次，字数也没达到 30 字的要求。下次记得把学到的具体内容写清楚，多写一点哈。"
+    },
+    "error": null,
+    "latencyMs": 17353,
+    "jsonValid": true
+  },
+  {
+    "testId": "k3-fail-2",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "打卡内容太简单啦，看不出具体的 AI 知识点（比如大模型、提示词这些），而且字数也没到 30 字，需要再补充一些干货哦。"
+    },
+    "error": null,
+    "latencyMs": 14391,
+    "jsonValid": true
+  },
+  {
+    "testId": "k4-pass-1",
+    "model": "glm-4.7-flash",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "k4-pass-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 4,
+      "reason": "这条回答非常棒！你不仅精准地指出了 ChatGPT 关于 GIL 的错误说法，还清楚地解释了 I/O 密集型任务不受影响的原理，并给出了 multiprocessing 这样的正确替代方案。完全符合满分标准。"
+    },
+    "error": null,
+    "latencyMs": 20178,
+    "jsonValid": true
+  },
+  {
+    "testId": "k4-pass-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 4,
+      "reason": "回答得非常棒！你精准地指出了“GIL 让多线程完全无法利用多核”这个说法的错误，不仅解释了 GIL 在 I/O 操作时释放的机制，还补充了 multiprocessing 这个解决方案，条理清晰，完全符合要求。"
+    },
+    "error": null,
+    "latencyMs": 17523,
+    "jsonValid": true
+  },
+  {
+    "testId": "k4-fail-1",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "你只说了 AI 说错了，但没有指出具体的错误点或者补充正确的内容，所以算不合格。"
+    },
+    "error": null,
+    "latencyMs": 9668,
+    "jsonValid": true
+  },
+  {
+    "testId": "k4-fail-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "同学，你的回答太笼统了。你得具体指出 AI 哪里说错了，还要给出正确的修改意见才行，光说“有错误”是拿不到分的。"
+    },
+    "error": null,
+    "latencyMs": 9577,
+    "jsonValid": true
+  },
+  {
+    "testId": "k4-fail-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "这样不行哦，你只泛泛地说 AI 有很多错误，但没具体指出错在什么地方，也没有给出纠正的内容。记得要把具体的问题和正确的说法写出来。"
+    },
+    "error": null,
+    "latencyMs": 11604,
+    "jsonValid": true
+  },
+  {
+    "testId": "c1-pass-1",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 4,
+      "reason": "太棒了！这个方案非常落地，直接解决了周报写作的痛点，而且步骤很清晰，完全符合标准。"
+    },
+    "error": null,
+    "latencyMs": 14651,
+    "jsonValid": true
+  },
+  {
+    "testId": "c1-pass-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 4,
+      "reason": "这个应用非常棒！场景描述得很具体，而且流程清晰可执行，确实能解决工作中写周报的痛点，效率提升也很明显，完全符合满分标准。"
+    },
+    "error": null,
+    "latencyMs": 11489,
+    "jsonValid": true
+  },
+  {
+    "testId": "c1-pass-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 4,
+      "reason": "这个用法很棒！利用 Claude 自动生成周报，结合 Jira 导出的数据，不仅操作流程具体可行，还能实实在在地节省工作时间，完全符合我们关于创意用法的要求。"
+    },
+    "error": null,
+    "latencyMs": 24007,
+    "jsonValid": true
+  },
+  {
+    "testId": "c1-fail-1",
+    "model": "glm-4.7-flash",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "c1-fail-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "你的回答太笼统了，没有说具体想怎么用 AI。咱们需要一个能落地的具体场景，比如是帮你工作还是生活里怎么用，光说“改变世界”是不够的，请重新想想具体的应用点子。"
+    },
+    "error": null,
+    "latencyMs": 10816,
+    "jsonValid": true
+  },
+  {
+    "testId": "c1-fail-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "同学，你的回答太空洞啦。题目要求描述一个具体的 AI 应用场景，还要结合你自己的工作或生活，并且具有可执行性。你只说了“改变世界”，这太泛泛而谈了，完全没有体现出具体的想法和操作方案，所以没法给分哦。"
+    },
+    "error": null,
+    "latencyMs": 22582,
+    "jsonValid": true
+  },
+  {
+    "testId": "c3-pass-1",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 5,
+      "reason": "你的提示词结构非常完整，清晰地定义了角色、任务、约束条件和输出格式，场景也很具体（会议纪要整理），完全可以复用，给满分！"
+    },
+    "error": null,
+    "latencyMs": 13423,
+    "jsonValid": true
+  },
+  {
+    "testId": "c3-pass-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 5,
+      "reason": "提交的提示词模板结构非常清晰，角色、任务、约束和输出这四个要素都齐全了，不仅适用于不同的会议场景，复用性也很强，完全符合满分标准。"
+    },
+    "error": null,
+    "latencyMs": 10687,
+    "jsonValid": true
+  },
+  {
+    "testId": "c3-pass-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 5,
+      "reason": "你的模板结构非常完整，涵盖了角色、任务、约束和输出四个要素，而且场景描述清晰明确。这个设计完全不绑定单次对话，复用性很强，完全符合满分标准，做得棒！"
+    },
+    "error": null,
+    "latencyMs": 12933,
+    "jsonValid": true
+  },
+  {
+    "testId": "c3-fail-1",
+    "model": "glm-4.7-flash",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "你提交的内容只是个“请求”，并不是一个可以直接使用的模板。合格的模板需要包含具体结构、明确场景和可复用性，你这连个雏形都没有，得分0。"
+    },
+    "error": null,
+    "latencyMs": 10859,
+    "jsonValid": true
+  },
+  {
+    "testId": "c3-fail-1",
+    "model": "glm-4.7",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "c3-fail-1",
+    "model": "glm-4.6",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "g2-pass-1",
+    "model": "glm-4.7-flash",
+    "success": false,
+    "result": null,
+    "error": "The operation was aborted due to timeout",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "g2-pass-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 3,
+      "reason": "这个网站确实是学提示词的好地方，你也说得很清楚为什么推荐，完全符合要求，满分通过！"
+    },
+    "error": null,
+    "latencyMs": 12298,
+    "jsonValid": true
+  },
+  {
+    "testId": "g2-pass-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": true,
+      "score": 3,
+      "reason": "你推荐的网站是关于AI提示词工程的，非常相关。而且你给出了很具体的推荐理由，说明了它的好处。完全符合评分标准，满分通过！"
+    },
+    "error": null,
+    "latencyMs": 10662,
+    "jsonValid": true
+  },
+  {
+    "testId": "g2-fail-1",
+    "model": "glm-4.7-flash",
+    "success": false,
+    "result": null,
+    "error": "HTTP 429: {\"error\":{\"code\":\"1302\",\"message\":\"您的账户已达到速率限制，请您控制请求频率\"}}",
+    "latencyMs": 0,
+    "jsonValid": false
+  },
+  {
+    "testId": "g2-fail-1",
+    "model": "glm-4.7",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "虽然你提到了 AI，但是没有提供具体的链接或者详细的内容，大家根本不知道去哪里看这篇文章呀，下次记得把资源链接贴出来哦。"
+    },
+    "error": null,
+    "latencyMs": 18394,
+    "jsonValid": true
+  },
+  {
+    "testId": "g2-fail-1",
+    "model": "glm-4.6",
+    "success": true,
+    "result": {
+      "pass": false,
+      "score": 0,
+      "reason": "你虽然提到了 AI 文章，但是忘记贴具体的链接了，也没说是哪篇文章，这样别人没法去查看呀。另外理由“挺好的”太简单了，下次记得附上资源链接，并多写几句为什么推荐。"
+    },
+    "error": null,
+    "latencyMs": 18623,
+    "jsonValid": true
+  }
+]
