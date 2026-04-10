@@ -38,10 +38,16 @@ phase-one sign-off target.
 
 ## Scripts
 
-- `npm run dev` starts the API and the web preview server for engineering use.
-- `npm run dev:api` starts only the Fastify API on `PORT` from `.env`.
-- `npm run dev:web` starts only the Vite preview server and is not a phase-one delivery surface.
-- `npm run build` compiles the API and frontend for release verification.
+- `npm run dev` starts the Fastify API on `PORT` from `.env`.
+- `npm run build` compiles the API for release verification.
 - `npm test` runs the Vitest suite.
+- `npm run test:coverage` runs the Vitest suite with v8 coverage reporting.
 - `npm run seed:demo` loads demo camp and member data into SQLite.
 - `npm run bootstrap:feishu` creates or binds the Feishu test chat and Base schema.
+
+## Scoring v2 — Phase 1 Complete (2026-04)
+
+Sub-project 1 Phase 1 delivered the v2 scoring domain model, the scoring aggregator,
+the window settler, the LLM scoring worker, the `/api/v2/*` route surface, end-to-end
+tests, and the legacy v1 cleanup. Sub-projects 2 (Feishu card interactions) and
+3 (frontend rewrite) consume this layer.

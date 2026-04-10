@@ -5,7 +5,19 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     coverage: {
-      reporter: ["text", "html"]
+      provider: "v8",
+      reporter: ["text", "html"],
+      include: ["src/**"],
+      exclude: ["tests/**", "dist/**", "node_modules/**"],
+      thresholds: {
+        "src/domain/v2/**": {
+          lines: 85,
+          branches: 90
+        },
+        "src/services/v2/**": {
+          lines: 80
+        }
+      }
     }
   }
 });
