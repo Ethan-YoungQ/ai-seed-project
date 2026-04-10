@@ -5,7 +5,8 @@ import {
   dailyCheckinK4Handler,
   dailyCheckinC1Handler,
   dailyCheckinC3Handler,
-  dailyCheckinG2Handler
+  dailyCheckinG2Handler,
+  dailyCheckinH2Handler
 } from "../../../../../src/services/feishu/cards/handlers/daily-checkin-handler.js";
 import {
   registerTemplate,
@@ -284,5 +285,100 @@ describe("unknown member", () => {
     expect(result.toast?.type).toBe("error");
     expect(result.toast?.content).toMatch(/未找到|not found|成员/i);
     expect(result.newCardJson).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E2: dailyCheckinH2Handler tests
+// ---------------------------------------------------------------------------
+
+describe("dailyCheckinH2Handler", () => {
+  test("H2 happy path with valid text + file_key → ingest called with fileKey", async () => {
+    const deps = fakeDeps();
+    const ctx = fakeCtx({
+      operatorOpenId: "ou-stu-alice",
+      actionName: "daily_checkin_h2_submit",
+      actionPayload: {
+        text: "今天用 Claude 实操了一个自动化工作流,截图展示了完整的流程步骤",
+        file_key: "file-abc-123"
+      }
+    });
+
+    const result = await dailyCheckinH2Handler(ctx, deps);
+
+    expect(result.newCardJson).toBeDefined();
+    expect(result.toast).toBeUndefined();
+    expect(deps.ingestCalls).toHaveLength(1);
+    expect(deps.ingestCalls[0]).toMatchObject({
+      itemCode: "H2",
+      payload: { fileKey: "file-abc-123" }
+    });
+
+    const state = deps.liveRow.stateJson as ReturnType<typeof emptyDailyCheckinState>;
+    expect(state.items.H2.pending).toContain("m-alice");
+  });
+
+  test("H2 with empty file_key → rejected with toast", async () => {
+    const deps = fakeDeps();
+    const ctx = fakeCtx({
+      operatorOpenId: "ou-stu-alice",
+      actionName: "daily_checkin_h2_submit",
+      actionPayload: {
+        text: "今天用 Claude 实操了一个自动化工作流,截图展示了完整的流程步骤",
+        file_key: ""
+      }
+    });
+
+    const result = await dailyCheckinH2Handler(ctx, deps);
+
+    expect(result.toast?.type).toBe("error");
+    expect(result.newCardJson).toBeUndefined();
+    expect(deps.ingestCalls).toHaveLength(0);
+  });
+
+  test("H2 with short text → rejected with toast", async () => {
+    const deps = fakeDeps();
+    const ctx = fakeCtx({
+      operatorOpenId: "ou-stu-alice",
+      actionName: "daily_checkin_h2_submit",
+      actionPayload: {
+        text: "太短了",
+        file_key: "file-abc-123"
+      }
+    });
+
+    const result = await dailyCheckinH2Handler(ctx, deps);
+
+    expect(result.toast?.type).toBe("error");
+    expect(result.toast?.content).toContain("20");
+    expect(result.newCardJson).toBeUndefined();
+    expect(deps.ingestCalls).toHaveLength(0);
+  });
+
+  test("H2 member already in pending → idempotent, still returns card", async () => {
+    const deps = fakeDeps();
+    // Pre-seed member in pending
+    (deps.liveRow.stateJson as ReturnType<typeof emptyDailyCheckinState>).items.H2.pending = [
+      "m-alice"
+    ];
+
+    const ctx = fakeCtx({
+      operatorOpenId: "ou-stu-alice",
+      actionName: "daily_checkin_h2_submit",
+      actionPayload: {
+        text: "今天用 Claude 实操了一个自动化工作流,截图展示了完整的流程步骤",
+        file_key: "file-abc-123"
+      }
+    });
+
+    const result = await dailyCheckinH2Handler(ctx, deps);
+
+    expect(result.newCardJson).toBeDefined();
+    // still ingests (idempotency handled at ingestor level)
+    expect(deps.ingestCalls).toHaveLength(1);
+
+    const state = deps.liveRow.stateJson as ReturnType<typeof emptyDailyCheckinState>;
+    // member appears only once in pending
+    expect(state.items.H2.pending.filter((id) => id === "m-alice")).toHaveLength(1);
   });
 });

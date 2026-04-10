@@ -8,7 +8,8 @@
 
 import {
   validateLlmSubmission,
-  validateG2Submission
+  validateG2Submission,
+  validateH2Submission
 } from "../soft-validation.js";
 import { renderCard } from "../renderer.js";
 import {
@@ -33,6 +34,9 @@ function reasonToastContent(reason: string): string {
   }
   if (reason === "missing_url") {
     return "请附上文章/视频的 http URL 链接";
+  }
+  if (reason === "missing_file_key") {
+    return "请选择截图文件后再提交";
   }
   return `提交被拒绝: ${reason}`;
 }
@@ -212,3 +216,107 @@ export const dailyCheckinG2Handler: CardHandler = buildHandler(
   "G2",
   "daily_checkin_g2_submit"
 );
+
+// ---------------------------------------------------------------------------
+// H2 multimodal handler (text + file_key)
+// ---------------------------------------------------------------------------
+
+export const dailyCheckinH2Handler: CardHandler = async (
+  ctx,
+  deps
+): Promise<CardActionResult> => {
+  const { operatorOpenId } = ctx;
+  const actionName = "daily_checkin_h2_submit";
+
+  // 1. Resolve memberId
+  const member = deps.repo.findMemberByOpenId(operatorOpenId);
+  if (!member) {
+    return {
+      toast: {
+        type: "error",
+        content: "未找到对应成员,请联系运营"
+      }
+    };
+  }
+  const memberId = member.id;
+
+  // 2. Extract text and file_key from payload
+  const text = String(ctx.actionPayload.text ?? "");
+  const fileKey = String(ctx.actionPayload.file_key ?? "");
+
+  // 3. Validate
+  const validationResult = validateH2Submission({ text, fileKey });
+
+  if (!validationResult.ok) {
+    await deps.repo.insertCardInteraction({
+      id: deps.uuid(),
+      memberId,
+      periodId: null,
+      cardType: "daily_checkin",
+      actionName,
+      feishuMessageId: ctx.messageId,
+      feishuCardVersion: ctx.currentVersion,
+      payloadJson: ctx.actionPayload,
+      receivedAt: ctx.receivedAt,
+      triggerId: ctx.triggerId,
+      operatorOpenId,
+      rejectedReason: validationResult.reason
+    });
+
+    return {
+      toast: {
+        type: "error",
+        content: reasonToastContent(validationResult.reason)
+      }
+    };
+  }
+
+  // 4. Write card_interaction
+  await deps.repo.insertCardInteraction({
+    id: deps.uuid(),
+    memberId,
+    periodId: null,
+    cardType: "daily_checkin",
+    actionName,
+    feishuMessageId: ctx.messageId,
+    feishuCardVersion: ctx.currentVersion,
+    payloadJson: ctx.actionPayload,
+    receivedAt: ctx.receivedAt,
+    triggerId: ctx.triggerId,
+    operatorOpenId,
+    rejectedReason: null
+  });
+
+  // 5. Ingest with fileKey in payload
+  await deps.ingestor.ingest({
+    memberId,
+    itemCode: "H2",
+    sourceType: "card_interaction",
+    sourceRef: deps.uuid(),
+    payload: { text, fileKey },
+    requestedAt: ctx.receivedAt
+  });
+
+  // 6. Load active live card
+  const liveRow = deps.repo.findLiveCard("daily_checkin", ctx.chatId);
+  if (!liveRow) {
+    return {
+      toast: {
+        type: "error",
+        content: "未找到今日打卡卡片"
+      }
+    };
+  }
+
+  // 7. Merge memberId into H2 pending (immutable update)
+  const currentState = liveRow.stateJson as DailyCheckinState;
+  const nextState = mergePendingMember(currentState, "H2", memberId);
+
+  // 8. Persist updated state
+  deps.repo.updateLiveCardState(liveRow.id, nextState, ctx.receivedAt);
+
+  // 9. Render updated card
+  const newCardJson = renderCard(DAILY_CHECKIN_TEMPLATE_ID, nextState, ctx);
+
+  return { newCardJson };
+};
