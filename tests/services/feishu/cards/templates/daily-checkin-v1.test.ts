@@ -97,7 +97,7 @@ describe("daily-checkin-v1 template", () => {
     expect(cardJson).toContain("🌱 课外好资源");
   });
 
-  test("each button carries action name + itemCode", () => {
+  test("each button carries action name + itemCode (H2 uses form instead)", () => {
     const state = emptyDailyCheckinState({
       periodNumber: 1,
       postedAt: "2026-04-10T09:00:00.000Z",
@@ -111,10 +111,13 @@ describe("daily-checkin-v1 template", () => {
     expect(cardJson).toContain("daily_checkin_c1_submit");
     expect(cardJson).toContain("daily_checkin_c3_submit");
     expect(cardJson).toContain("daily_checkin_g2_submit");
-    // verify itemCode is also in the payload
-    for (const code of ITEM_CODES) {
+    // Non-H2 items carry itemCode in plain button value
+    const nonH2Codes: DailyCheckinItemCode[] = ["K3", "K4", "C1", "C3", "G2"];
+    for (const code of nonH2Codes) {
       expect(cardJson).toContain(`"itemCode":"${code}"`);
     }
+    // H2 uses a form — no plain itemCode in its value object
+    expect(cardJson).not.toContain('"itemCode":"H2"');
   });
 
   test("approved members appear with ✓ marker", () => {
@@ -179,5 +182,47 @@ describe("daily-checkin-v1 template", () => {
     const cardJson = JSON.stringify(card);
     expect(cardJson).toContain("今日打卡");
     expect(cardJson).toContain("第 2 期");
+  });
+
+  // ---------------------------------------------------------------------------
+  // E1: H2 multimodal form tests
+  // ---------------------------------------------------------------------------
+
+  test("H2 section renders a form element (not just a plain action button)", () => {
+    const state = emptyDailyCheckinState({
+      periodNumber: 1,
+      postedAt: "2026-04-10T09:00:00.000Z",
+      periodId: "p-1"
+    });
+    const card = buildDailyCheckinCard(state);
+    const cardJson = JSON.stringify(card);
+    // H2 must use a form element
+    expect(cardJson).toContain('"tag":"form"');
+  });
+
+  test("H2 form has text input (h2_text) and file selector (h2_file)", () => {
+    const state = emptyDailyCheckinState({
+      periodNumber: 1,
+      postedAt: "2026-04-10T09:00:00.000Z",
+      periodId: "p-1"
+    });
+    const card = buildDailyCheckinCard(state);
+    const cardJson = JSON.stringify(card);
+    expect(cardJson).toContain('"name":"h2_text"');
+    expect(cardJson).toContain('"name":"h2_file"');
+    expect(cardJson).toContain('"tag":"select_file"');
+  });
+
+  test("H2 submit button carries action daily_checkin_h2_submit with text and file_key", () => {
+    const state = emptyDailyCheckinState({
+      periodNumber: 1,
+      postedAt: "2026-04-10T09:00:00.000Z",
+      periodId: "p-1"
+    });
+    const card = buildDailyCheckinCard(state);
+    const cardJson = JSON.stringify(card);
+    expect(cardJson).toContain("daily_checkin_h2_submit");
+    expect(cardJson).toContain("h2_text");
+    expect(cardJson).toContain("h2_file");
   });
 });

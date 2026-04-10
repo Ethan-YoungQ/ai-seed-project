@@ -63,11 +63,62 @@ function renderMemberList(
   return members.map((id) => `${marker} ${names[id] ?? id}`).join("  ·  ");
 }
 
+function buildH2FormBlock(
+  def: ItemDefinition,
+  item: DailyCheckinItemState,
+  names: Record<string, string>
+): Array<Record<string, unknown>> {
+  const approvedLine = renderMemberList(item.approved, "✓", names);
+  const pendingLine = renderMemberList(item.pending, "审核中", names);
+  return [
+    {
+      tag: "markdown",
+      content: `**${def.label}**\n${approvedLine}\n${pendingLine}`
+    },
+    {
+      tag: "form",
+      name: "h2_form",
+      elements: [
+        {
+          tag: "input",
+          name: "h2_text",
+          placeholder: { tag: "plain_text", content: "描述你的实操内容（至少20字）" },
+          max_length: 500
+        },
+        {
+          tag: "select_file",
+          name: "h2_file",
+          placeholder: { tag: "plain_text", content: "选择截图文件" }
+        },
+        {
+          tag: "button",
+          name: "h2_submit",
+          text: { tag: "plain_text", content: `提交 ${def.code}` },
+          type: "primary",
+          behaviors: [
+            {
+              type: "callback",
+              value: {
+                action: def.actionName,
+                text: "${h2_text.value}",
+                file_key: "${h2_file.value}"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ];
+}
+
 function buildItemBlock(
   def: ItemDefinition,
   item: DailyCheckinItemState,
   names: Record<string, string>
 ): Array<Record<string, unknown>> {
+  if (def.code === "H2") {
+    return buildH2FormBlock(def, item, names);
+  }
   const approvedLine = renderMemberList(item.approved, "✓", names);
   const pendingLine = renderMemberList(item.pending, "审核中", names);
   return [
