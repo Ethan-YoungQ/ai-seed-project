@@ -1169,3 +1169,77 @@ describe("SqliteRepository v2 promotion_records", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 members extensions", () => {
+  // NOTE: plan references "member-student-01" which is not in seedDemo.
+  // seedDemo creates "user-alice" (student) and "user-ops" (operator).
+  // Tests below use "user-alice" so member row writes actually land.
+  const STUDENT_ID = "user-alice";
+
+  test("setMemberFeishuOpenId + findMemberByFeishuOpenId roundtrip", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    repo.setMemberFeishuOpenId(STUDENT_ID, "ou_abc123");
+
+    const found = repo.findMemberByFeishuOpenId("ou_abc123");
+    expect(found?.id).toBe(STUDENT_ID);
+
+    // unknown open id → undefined
+    expect(repo.findMemberByFeishuOpenId("ou_missing")).toBeUndefined();
+
+    repo.close();
+  });
+
+  test("setMemberAvatarUrl persists", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    repo.setMemberAvatarUrl(STUDENT_ID, "https://cdn.feishu.cn/a1.png");
+    const m = repo.getMember(STUDENT_ID)!;
+    expect(m.avatarUrl).toBe("https://cdn.feishu.cn/a1.png");
+
+    repo.close();
+  });
+
+  test("setMemberHiddenFromBoard toggles eligibility", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    const beforeHide = repo.listEligibleStudents(campId);
+    const beforeCount = beforeHide.length;
+    expect(beforeCount).toBeGreaterThan(0);
+
+    const first = beforeHide[0];
+    repo.setMemberHiddenFromBoard(first.id, true);
+
+    const afterHide = repo.listEligibleStudents(campId);
+    expect(afterHide.length).toBe(beforeCount - 1);
+    expect(afterHide.find((m) => m.id === first.id)).toBeUndefined();
+
+    // restore
+    repo.setMemberHiddenFromBoard(first.id, false);
+    expect(repo.listEligibleStudents(campId).length).toBe(beforeCount);
+
+    repo.close();
+  });
+
+  test("listEligibleStudents excludes operators, trainers, non-participants, excluded_from_board", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    const students = repo.listEligibleStudents(campId);
+    for (const m of students) {
+      expect(m.roleType).toBe("student");
+      expect(m.isParticipant).toBe(true);
+      expect(m.isExcludedFromBoard).toBe(false);
+    }
+
+    // user-ops is an operator and must not appear
+    expect(students.find((m) => m.id === "user-ops")).toBeUndefined();
+
+    repo.close();
+  });
+});

@@ -1676,6 +1676,76 @@ export class SqliteRepository {
     return fallback;
   }
 
+  findMemberByFeishuOpenId(openId: string): MemberProfile | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM members WHERE source_feishu_open_id = ? LIMIT 1`
+      )
+      .get(openId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      name: String(row.name),
+      displayName: String(row.display_name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
+      department: String(row.department),
+      roleType: row.role_type as MemberProfile["roleType"],
+      isParticipant: asBoolean(Number(row.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board)),
+      status: row.status as MemberProfile["status"]
+    };
+  }
+
+  setMemberFeishuOpenId(memberId: string, openId: string): void {
+    this.db
+      .prepare(`UPDATE members SET source_feishu_open_id = ? WHERE id = ?`)
+      .run(openId, memberId);
+  }
+
+  setMemberAvatarUrl(memberId: string, url: string): void {
+    this.db
+      .prepare(`UPDATE members SET avatar_url = ? WHERE id = ?`)
+      .run(url, memberId);
+  }
+
+  setMemberHiddenFromBoard(memberId: string, hidden: boolean): void {
+    this.db
+      .prepare(`UPDATE members SET hidden_from_board = ? WHERE id = ?`)
+      .run(hidden ? 1 : 0, memberId);
+  }
+
+  listEligibleStudents(campId: string): MemberProfile[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM members
+         WHERE camp_id = ?
+           AND role_type = 'student'
+           AND is_participant = 1
+           AND is_excluded_from_board = 0
+           AND COALESCE(hidden_from_board, 0) = 0
+         ORDER BY id ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      name: String(row.name),
+      displayName: String(row.display_name ?? ""),
+      avatarUrl: String(row.avatar_url ?? ""),
+      department: String(row.department),
+      roleType: row.role_type as MemberProfile["roleType"],
+      isParticipant: asBoolean(Number(row.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board)),
+      status: row.status as MemberProfile["status"]
+    }));
+  }
+
   updateMember(
     memberId: string,
     patch: Partial<
