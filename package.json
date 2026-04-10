@@ -28,6 +28,7 @@
   "dependencies": {
     "@fastify/cors": "^11.1.0",
     "@fastify/sensible": "^6.0.3",
+    "@fastify/static": "^9.1.0",
     "@larksuiteoapi/node-sdk": "^1.42.0",
     "better-sqlite3": "^12.4.1",
     "drizzle-orm": "^0.44.5",

@@ -1,6 +1,9 @@
 import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
+import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import { resolve } from "path";
+import { fileURLToPath } from "url";
 
 import { loadLocalEnv } from "./config/load-env.js";
 import type { FeishuApiClient } from "./services/feishu/client.js";
@@ -124,6 +127,31 @@ export async function createApp(options?: {
 
   await app.register(cors);
   await app.register(sensible);
+
+  // ---------------------------------------------------------------------------
+  // Dashboard SPA static serving
+  // Serves the pre-built Vite output from dist-dashboard/ at /dashboard/
+  // Only registered when dist-dashboard/ directory exists (skipped in tests)
+  // ---------------------------------------------------------------------------
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirnameResolved = resolve(fileURLToPath(new URL(".", import.meta.url)));
+  void __filename; // satisfy linter - only __dirnameResolved is used
+  const dashboardRoot = resolve(__dirnameResolved, "..", "dist-dashboard");
+
+  const { existsSync } = await import("fs");
+  if (existsSync(dashboardRoot)) {
+    await app.register(fastifyStatic, {
+      root: dashboardRoot,
+      prefix: "/dashboard/",
+      decorateReply: false,
+      wildcard: false,
+    });
+
+    // SPA fallback: non-asset routes under /dashboard/* return index.html
+    app.get("/dashboard/*", async (_request, reply) => {
+      return reply.sendFile("index.html", dashboardRoot);
+    });
+  }
 
   app.addHook("onClose", async () => {
     await wsRuntime.stop();
