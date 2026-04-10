@@ -43,7 +43,9 @@ async function buildApp() {
   const okHandler: CardHandler = async () => ({
     newCardJson: { schema: "2.0", header: {}, body: { elements: [] } }
   });
-  dispatcher.register("quiz", "submit", okHandler);
+  // Register with full action name (with card-type prefix) as used in production.
+  // The router resolves cardType from the prefix and passes the full name to dispatch.
+  dispatcher.register("quiz", "quiz_submit", okHandler);
 
   const app = Fastify();
   await app.register(feishuCardsPlugin, {
@@ -53,45 +55,72 @@ async function buildApp() {
   return app;
 }
 
+/** Feishu card action callback payload in the official v2 nested format */
+function makeCardActionPayload(
+  actionName: string,
+  actionValue: Record<string, unknown> = {}
+) {
+  return {
+    schema: "2.0",
+    header: {
+      event_type: "card.action.trigger",
+      token: "verify-token",
+      app_id: "cli_app1"
+    },
+    event: {
+      operator: { open_id: "ou-op" },
+      token: "t-1",
+      action: { name: actionName, value: actionValue, tag: "button" },
+      context: { open_message_id: "om-1", open_chat_id: "oc-1" }
+    }
+  };
+}
+
 describe("feishuCardsPlugin routes", () => {
-  test("POST /api/v2/feishu/card-action returns newCardJson on known handler", async () => {
+  test("POST /api/v2/feishu/card-action returns newCardJson wrapped in {type,data} on known handler", async () => {
     const app = await buildApp();
+    // The handler is registered for cardType="quiz", actionName="submit".
+    // Action name "quiz_submit" resolves to cardType "quiz" via prefix.
     const response = await app.inject({
       method: "POST",
       url: "/api/v2/feishu/card-action",
-      payload: {
-        operator: { open_id: "ou-op" },
-        trigger_id: "t-1",
-        action: { name: "submit", value: { text: "hi" } },
-        context: { open_message_id: "om-1", open_chat_id: "oc-1", url: "https://example.com" },
-        card: { type: "quiz" }
-      }
+      payload: makeCardActionPayload("quiz_submit", { text: "hi" })
     });
     expect(response.statusCode).toBe(200);
     const body = response.json();
-    expect(body.card?.schema).toBe("2.0");
+    // Response must be wrapped: { card: { type: "raw", data: <FeishuCardJson> } }
+    expect(body.card?.type).toBe("raw");
+    expect(body.card?.data?.schema).toBe("2.0");
     await app.close();
   });
 
-  test("POST /api/v2/feishu/card-action returns toast on unknown action", async () => {
+  test("POST /api/v2/feishu/card-action returns toast on unknown action within known card type", async () => {
     const app = await buildApp();
+    // "quiz_nonexistent" resolves to cardType "quiz" but no handler for "quiz_nonexistent"
     const response = await app.inject({
       method: "POST",
       url: "/api/v2/feishu/card-action",
-      payload: {
-        operator: { open_id: "ou-op" },
-        trigger_id: "t-2",
-        action: { name: "nonexistent", value: {} },
-        context: { open_message_id: "om-2", open_chat_id: "oc-2", url: "x" },
-        card: { type: "quiz" }
-      }
+      payload: makeCardActionPayload("quiz_nonexistent")
     });
     expect(response.statusCode).toBe(200);
     expect(response.json().toast?.type).toBe("error");
     await app.close();
   });
 
-  test("POST /api/v2/feishu/card-action rejects invalid body with 400", async () => {
+  test("POST /api/v2/feishu/card-action returns 400 on unresolvable card type", async () => {
+    const app = await buildApp();
+    // Action name without a known prefix cannot be resolved to a card type
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v2/feishu/card-action",
+      payload: makeCardActionPayload("unknown_action_xyz")
+    });
+    expect(response.statusCode).toBe(400);
+    expect(response.json().error).toBe("unresolvable_card_type");
+    await app.close();
+  });
+
+  test("POST /api/v2/feishu/card-action rejects invalid body (missing event) with 400", async () => {
     const app = await buildApp();
     const response = await app.inject({
       method: "POST",
@@ -99,6 +128,24 @@ describe("feishuCardsPlugin routes", () => {
       payload: { operator: { open_id: "ou-op" } }
     });
     expect(response.statusCode).toBe(400);
+    await app.close();
+  });
+
+  test("POST /api/v2/feishu/card-action resolves card type from action.value.action fallback", async () => {
+    const app = await buildApp();
+    // When action name has no known prefix, fallback checks action.value.action field.
+    // "bare_action" has no prefix match → fallback to action.value.action = "quiz_submit"
+    // → resolves to cardType "quiz". The handler is registered for ("quiz", "bare_action")
+    // which doesn't exist so we get a toast error — but the card TYPE was resolved correctly
+    // (400 would only happen if cardType is truly unresolvable).
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/v2/feishu/card-action",
+      payload: makeCardActionPayload("bare_action", { action: "quiz_submit" })
+    });
+    // cardType resolves via fallback → reaches dispatcher → unknown action → toast error
+    expect(response.statusCode).toBe(200);
+    expect(response.json().toast?.type).toBe("error");
     await app.close();
   });
 

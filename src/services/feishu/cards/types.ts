@@ -65,7 +65,7 @@ export interface CardActionContext {
 export interface CardActionResult {
   newCardJson?: FeishuCardJson;
   toast?: {
-    type: "info" | "error" | "success";
+    type: "info" | "error" | "success" | "warning";
     content: string;
   };
   followUp?: () => Promise<void>;
