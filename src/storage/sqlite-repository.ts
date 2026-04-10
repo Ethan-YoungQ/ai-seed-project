@@ -25,6 +25,7 @@ import type {
   WarningRecord
 } from "../domain/types.js";
 import { buildBoardOverview } from "../services/board/overview.js";
+import { ELIGIBLE_STUDENT_WHERE_CLAUSE } from "../domain/v2/eligibility.js";
 
 const tableDefinitions = `
 CREATE TABLE IF NOT EXISTS camps (
@@ -2675,5 +2676,270 @@ export class SqliteRepository {
         VALUES (@id, @campId, @entityType, @entityId, @action, @actor, @payload, @createdAt)`
       )
       .run(event);
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2 board / ranking
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Return the camp-wide ranking for eligible students, sorted by
+   * cumulative AQ descending then display name ascending. Uses
+   * `ELIGIBLE_STUDENT_WHERE_CLAUSE` (spec §5.6) to filter members.
+   */
+  fetchRankingByCamp(campId: string): Array<{
+    memberId: string;
+    memberName: string;
+    avatarUrl: string | null;
+    currentLevel: number;
+    cumulativeAq: number;
+    latestWindowAq: number;
+    dimensions: { K: number; H: number; C: number; S: number; G: number };
+    rank: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT
+          m.id            AS member_id,
+          CASE WHEN m.display_name != '' THEN m.display_name ELSE m.name END AS member_name,
+          m.avatar_url,
+          COALESCE(ml.current_level, 1)    AS current_level,
+          COALESCE(ws.cumulative_aq, 0)    AS cumulative_aq,
+          COALESCE(ws.window_aq, 0)        AS latest_window_aq,
+          COALESCE(ws.k_score, 0)          AS k_score,
+          COALESCE(ws.h_score, 0)          AS h_score,
+          COALESCE(ws.c_score, 0)          AS c_score,
+          COALESCE(ws.s_score, 0)          AS s_score,
+          COALESCE(ws.g_score, 0)          AS g_score
+        FROM members m
+        LEFT JOIN v2_member_levels ml ON ml.member_id = m.id
+        LEFT JOIN (
+          SELECT member_id,
+                 window_aq,
+                 cumulative_aq,
+                 k_score, h_score, c_score, s_score, g_score,
+                 ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY snapshot_at DESC) AS rn
+          FROM v2_window_snapshots
+        ) ws ON ws.member_id = m.id AND ws.rn = 1
+        WHERE m.camp_id = ?
+          AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+          AND COALESCE(m.hidden_from_board, 0) = 0
+        ORDER BY cumulative_aq DESC, member_name ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    // Assign standard competition ranks ("1224" ranking)
+    let currentRank = 1;
+    let lastAq: number | null = null;
+
+    return rows.map((row, index) => {
+      const cumulativeAq = Number(row.cumulative_aq);
+      if (lastAq !== null && cumulativeAq < lastAq) {
+        currentRank = index + 1;
+      }
+      lastAq = cumulativeAq;
+
+      return {
+        memberId: String(row.member_id),
+        memberName: String(row.member_name),
+        avatarUrl: row.avatar_url ? String(row.avatar_url) : null,
+        currentLevel: Number(row.current_level),
+        cumulativeAq,
+        latestWindowAq: Number(row.latest_window_aq),
+        dimensions: {
+          K: Number(row.k_score),
+          H: Number(row.h_score),
+          C: Number(row.c_score),
+          S: Number(row.s_score),
+          G: Number(row.g_score),
+        },
+        rank: currentRank,
+      };
+    });
+  }
+
+  /**
+   * Return per-member detail panel data for the dashboard.
+   * Returns null if member is not found or is not an eligible student.
+   */
+  fetchMemberBoardDetail(memberId: string): {
+    memberId: string;
+    memberName: string;
+    avatarUrl: string | null;
+    currentLevel: number;
+    promotions: Array<{
+      fromLevel: number;
+      toLevel: number;
+      windowId: string;
+      promotedAt: string;
+    }>;
+    dimensionSeries: Array<{
+      windowId: string;
+      K: number;
+      H: number;
+      C: number;
+      S: number;
+      G: number;
+    }>;
+    windowSnapshots: Array<{
+      windowId: string;
+      windowAq: number;
+      cumulativeAq: number;
+    }>;
+  } | null {
+    // Check if member is eligible
+    const member = this.db
+      .prepare(
+        `SELECT id, CASE WHEN display_name != '' THEN display_name ELSE name END AS member_name, avatar_url
+         FROM members
+         WHERE id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+           AND COALESCE(hidden_from_board, 0) = 0`
+      )
+      .get(memberId) as Record<string, unknown> | undefined;
+
+    if (!member) return null;
+
+    const level = this.db
+      .prepare(`SELECT current_level FROM v2_member_levels WHERE member_id = ?`)
+      .get(memberId) as Record<string, unknown> | undefined;
+
+    const promotions = this.db
+      .prepare(
+        `SELECT window_id, from_level, to_level, evaluated_at
+         FROM v2_promotion_records
+         WHERE member_id = ? AND promoted = 1
+         ORDER BY evaluated_at ASC`
+      )
+      .all(memberId) as Array<Record<string, unknown>>;
+
+    const snapshots = this.db
+      .prepare(
+        `SELECT window_id, window_aq, cumulative_aq,
+                k_score, h_score, c_score, s_score, g_score
+         FROM v2_window_snapshots
+         WHERE member_id = ?
+         ORDER BY snapshot_at ASC`
+      )
+      .all(memberId) as Array<Record<string, unknown>>;
+
+    return {
+      memberId: String(member.id),
+      memberName: String(member.member_name),
+      avatarUrl: member.avatar_url ? String(member.avatar_url) : null,
+      currentLevel: level ? Number(level.current_level) : 1,
+      promotions: promotions.map((p) => ({
+        fromLevel: Number(p.from_level),
+        toLevel: Number(p.to_level),
+        windowId: String(p.window_id),
+        promotedAt: String(p.evaluated_at),
+      })),
+      dimensionSeries: snapshots.map((s) => ({
+        windowId: String(s.window_id),
+        K: Number(s.k_score),
+        H: Number(s.h_score),
+        C: Number(s.c_score),
+        S: Number(s.s_score),
+        G: Number(s.g_score),
+      })),
+      windowSnapshots: snapshots.map((s) => ({
+        windowId: String(s.window_id),
+        windowAq: Number(s.window_aq),
+        cumulativeAq: Number(s.cumulative_aq),
+      })),
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // v2 admin members
+  // ---------------------------------------------------------------------------
+
+  listMembersForAdmin(campId?: string): Array<{
+    id: string;
+    displayName: string;
+    roleType: string;
+    isParticipant: boolean;
+    isExcludedFromBoard: boolean;
+    hiddenFromBoard: boolean;
+  }> {
+    const whereClause = campId ? `WHERE camp_id = ?` : "";
+    const params: unknown[] = campId ? [campId] : [];
+
+    const rows = this.db
+      .prepare(
+        `SELECT id, CASE WHEN display_name != '' THEN display_name ELSE name END AS display_name,
+                role_type, is_participant, is_excluded_from_board,
+                COALESCE(hidden_from_board, 0) AS hidden_from_board
+         FROM members
+         ${whereClause}
+         ORDER BY display_name ASC`
+      )
+      .all(...params) as Array<Record<string, unknown>>;
+
+    return rows.map((r) => ({
+      id: String(r.id),
+      displayName: String(r.display_name),
+      roleType: String(r.role_type),
+      isParticipant: asBoolean(Number(r.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(r.is_excluded_from_board)),
+      hiddenFromBoard: asBoolean(Number(r.hidden_from_board)),
+    }));
+  }
+
+  patchMemberForAdmin(
+    memberId: string,
+    patch: {
+      roleType?: string;
+      isParticipant?: boolean;
+      isExcludedFromBoard?: boolean;
+      hiddenFromBoard?: boolean;
+      displayName?: string;
+    }
+  ): Record<string, unknown> | null {
+    const columnMap: Record<string, string> = {
+      roleType: "role_type",
+      isParticipant: "is_participant",
+      isExcludedFromBoard: "is_excluded_from_board",
+      hiddenFromBoard: "hidden_from_board",
+      displayName: "display_name",
+    };
+
+    const setFragments: string[] = [];
+    const params: unknown[] = [];
+
+    for (const [key, column] of Object.entries(columnMap)) {
+      if (key in patch && (patch as Record<string, unknown>)[key] !== undefined) {
+        setFragments.push(`${column} = ?`);
+        const val = (patch as Record<string, unknown>)[key];
+        params.push(typeof val === "boolean" ? (val ? 1 : 0) : val);
+      }
+    }
+
+    if (setFragments.length === 0) return null;
+
+    params.push(memberId);
+    this.db
+      .prepare(`UPDATE members SET ${setFragments.join(", ")} WHERE id = ?`)
+      .run(...params);
+
+    const updated = this.db
+      .prepare(
+        `SELECT id, CASE WHEN display_name != '' THEN display_name ELSE name END AS display_name,
+                role_type, is_participant, is_excluded_from_board,
+                COALESCE(hidden_from_board, 0) AS hidden_from_board
+         FROM members WHERE id = ?`
+      )
+      .get(memberId) as Record<string, unknown> | undefined;
+
+    if (!updated) return null;
+
+    return {
+      id: String(updated.id),
+      displayName: String(updated.display_name),
+      roleType: String(updated.role_type),
+      isParticipant: asBoolean(Number(updated.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(updated.is_excluded_from_board)),
+      hiddenFromBoard: asBoolean(Number(updated.hidden_from_board)),
+    };
   }
 }

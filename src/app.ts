@@ -22,6 +22,7 @@ import { registerV2EventsRoute } from "./routes/v2/events.js";
 import { registerV2PeriodsOpenRoute, registerV2PeriodsCloseRoute } from "./routes/v2/periods.js";
 import { registerV2WindowsOpenRoute } from "./routes/v2/windows.js";
 import { registerV2GraduationCloseRoute } from "./routes/v2/graduation.js";
+import { registerV2BoardRoutes } from "./routes/v2/board.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -684,6 +685,7 @@ export async function createApp(options?: {
   registerV2PeriodsCloseRoute(app, v2);
   registerV2WindowsOpenRoute(app, v2);
   registerV2GraduationCloseRoute(app, v2);
+  registerV2BoardRoutes(app, v2);
 
   return app;
 }
