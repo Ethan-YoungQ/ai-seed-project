@@ -910,7 +910,7 @@ Expected: both green, 5 new tests + all legacy tests pass. 9 new tables present 
 
 ---
 
-## Phase B — Data Access Layer (10 tasks)
+## Phase B — Data Access Layer (11 tasks)
 
 Extend `src/storage/sqlite-repository.ts` with raw-SQL prepared-statement methods for every v2 table defined in Phase A. All tests append to `tests/storage/v2/sqlite-repository-v2.test.ts` (created in Task A2). No drizzle query builder — use `this.db.prepare(...).run()` / `.get()` / `.all()` only.
 
@@ -921,6 +921,263 @@ All v2 methods follow the existing `SqliteRepository` conventions:
 - UUIDs via `randomUUID()` imported from `node:crypto`
 - FK members are seeded via `repo.seedDemo()` where tests need them
 - `:memory:` SQLite for tests, `repo.close()` at end of each `test()` block that constructs a repo
+
+---
+
+### Task B0: Backfill missing Phase A2 DDL — `peer_review_votes` + `reaction_tracked_messages`
+
+**Files:**
+- Modify: `src/storage/sqlite-repository.ts` (`tableDefinitions` literal; append the 2 new tables + their CRUD methods)
+- Test: `tests/storage/v2/sqlite-repository-v2.test.ts`
+
+Phase A2 shipped the 9 `v2_*` scoring tables but the sub-project-1 design spec also references two additional (non-prefixed) tables that sub-project 2's peer-review card (#6) and C1 echo + C2 reaction card (#14) must write into: `peer_review_votes` (spec §5.3) and `reaction_tracked_messages` (spec §5.2). These were missed during the Phase A2 delivery and discovered during the sub-project-2 spec self-review (spec §15). Task B0 backfills both tables and adds the minimal CRUD shape sub-project 2 relies on.
+
+Rationale for landing these in Phase B (not retrofitting Phase A2): Phase A2 is already merged and its exit checkpoint was signed off against the scoring 9 tables. Adding the 2 new tables here, in the very first Phase B task, gives Phase B1-B10 a clean precondition and keeps git history append-only.
+
+- [ ] **Step 1: Write the failing smoke test**
+
+Append to `tests/storage/v2/sqlite-repository-v2.test.ts`:
+
+```typescript
+import { randomUUID } from "node:crypto";
+
+describe("SqliteRepository v2 backfilled tables (peer_review_votes + reaction_tracked_messages)", () => {
+  test("both tables exist on construction", () => {
+    const repo = new SqliteRepository(":memory:");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const db = (repo as unknown as { db: import("better-sqlite3").Database }).db;
+    const rows = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)"
+      )
+      .all("peer_review_votes", "reaction_tracked_messages") as Array<{
+      name: string;
+    }>;
+    expect(rows.map((r) => r.name).sort()).toEqual([
+      "peer_review_votes",
+      "reaction_tracked_messages"
+    ]);
+    repo.close();
+  });
+
+  test("insertPeerReviewVote + listVotesBySession dedupes duplicate votes", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    const sessionId = "prs-1";
+    const voteA = {
+      id: randomUUID(),
+      peerReviewSessionId: sessionId,
+      voterMemberId: "member-student-01",
+      votedMemberId: "member-student-02",
+      votedAt: "2026-04-11T20:00:00.000Z"
+    };
+    expect(repo.insertPeerReviewVote(voteA)).toBe("inserted");
+
+    // same (session, voter, voted) triple → already_exists, no throw
+    const voteADup = { ...voteA, id: randomUUID() };
+    expect(repo.insertPeerReviewVote(voteADup)).toBe("already_exists");
+
+    // a distinct voter casts a vote for the same target
+    const voteB = {
+      id: randomUUID(),
+      peerReviewSessionId: sessionId,
+      voterMemberId: "member-student-03",
+      votedMemberId: "member-student-02",
+      votedAt: "2026-04-11T20:01:00.000Z"
+    };
+    expect(repo.insertPeerReviewVote(voteB)).toBe("inserted");
+
+    const votes = repo.listPeerReviewVotesBySession(sessionId);
+    expect(votes).toHaveLength(2);
+    expect(
+      votes.map((v) => `${v.voterMemberId}→${v.votedMemberId}`).sort()
+    ).toEqual([
+      "member-student-01→member-student-02",
+      "member-student-03→member-student-02"
+    ]);
+
+    repo.close();
+  });
+
+  test("insertReactionTrackedMessage + findReactionTrackedMessage", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    const row = {
+      id: randomUUID(),
+      feishuMessageId: "om-c1-echo-1",
+      memberId: "member-student-01",
+      itemCode: "C2" as const,
+      postedAt: "2026-04-11T21:00:00.000Z",
+      reactionCount: 0
+    };
+    repo.insertReactionTrackedMessage(row);
+
+    const found = repo.findReactionTrackedMessageByFeishuMessageId("om-c1-echo-1");
+    expect(found?.id).toBe(row.id);
+    expect(found?.memberId).toBe("member-student-01");
+    expect(found?.reactionCount).toBe(0);
+
+    // the reaction tracker bumps the counter from the reaction webhook handler
+    repo.incrementReactionCount("om-c1-echo-1");
+    repo.incrementReactionCount("om-c1-echo-1");
+    const afterBump = repo.findReactionTrackedMessageByFeishuMessageId("om-c1-echo-1");
+    expect(afterBump?.reactionCount).toBe(2);
+
+    repo.close();
+  });
+});
+```
+
+- [ ] **Step 2: Run the test and verify it fails**
+
+Run: `npm test -- tests/storage/v2/sqlite-repository-v2.test.ts`
+Expected: FAIL — `peer_review_votes` and `reaction_tracked_messages` tables do not exist in `sqlite_master`, and the 4 new CRUD methods are not defined.
+
+- [ ] **Step 3: Append the 2 new tables to `tableDefinitions`**
+
+Open `src/storage/sqlite-repository.ts` and find the `tableDefinitions` template literal (where Phase A2 appended the 9 `v2_*` tables). Insert the following SQL **before** the closing backtick of the literal, after the last `v2_*` `CREATE TABLE`:
+
+```sql
+CREATE TABLE IF NOT EXISTS peer_review_votes (
+  id TEXT PRIMARY KEY,
+  peer_review_session_id TEXT NOT NULL,
+  voter_member_id TEXT NOT NULL,
+  voted_member_id TEXT NOT NULL,
+  voted_at TEXT NOT NULL,
+  UNIQUE (peer_review_session_id, voter_member_id, voted_member_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_peer_review_votes_session
+  ON peer_review_votes (peer_review_session_id);
+
+CREATE TABLE IF NOT EXISTS reaction_tracked_messages (
+  id TEXT PRIMARY KEY,
+  feishu_message_id TEXT NOT NULL UNIQUE,
+  member_id TEXT NOT NULL,
+  item_code TEXT NOT NULL,
+  posted_at TEXT NOT NULL,
+  reaction_count INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_reaction_tracked_messages_by_member
+  ON reaction_tracked_messages (member_id);
+```
+
+Design notes:
+- `peer_review_votes` uses a composite UNIQUE key on `(peer_review_session_id, voter_member_id, voted_member_id)` so the peer-review card handler can safely retry a vote without creating duplicates; the handler's `INSERT OR IGNORE` path returns `"already_exists"` to the caller.
+- `reaction_tracked_messages` uses `feishu_message_id` UNIQUE so the reaction webhook handler can look up by message id in O(1). `reaction_count` is a denormalized counter maintained by the handler itself — it is NOT the truth source for C2 scoring (which is computed from the events table), just a fast indicator for dashboards.
+
+- [ ] **Step 4: Add the 4 CRUD methods to `SqliteRepository`**
+
+Append the following type + methods after the last `v2_*` method block (anywhere inside the class, before `close()`):
+
+```typescript
+export interface PeerReviewVoteRow {
+  id: string;
+  peerReviewSessionId: string;
+  voterMemberId: string;
+  votedMemberId: string;
+  votedAt: string;
+}
+
+export interface ReactionTrackedMessageRow {
+  id: string;
+  feishuMessageId: string;
+  memberId: string;
+  itemCode: "C2";
+  postedAt: string;
+  reactionCount: number;
+}
+```
+
+```typescript
+insertPeerReviewVote(vote: PeerReviewVoteRow): "inserted" | "already_exists" {
+  const result = this.db
+    .prepare(
+      `INSERT OR IGNORE INTO peer_review_votes
+        (id, peer_review_session_id, voter_member_id, voted_member_id, voted_at)
+       VALUES (@id, @peerReviewSessionId, @voterMemberId, @votedMemberId, @votedAt)`
+    )
+    .run(vote);
+  return result.changes === 1 ? "inserted" : "already_exists";
+}
+
+listPeerReviewVotesBySession(sessionId: string): PeerReviewVoteRow[] {
+  const rows = this.db
+    .prepare(
+      `SELECT id, peer_review_session_id, voter_member_id, voted_member_id, voted_at
+       FROM peer_review_votes
+       WHERE peer_review_session_id = ?
+       ORDER BY voted_at ASC, id ASC`
+    )
+    .all(sessionId) as Array<Record<string, unknown>>;
+  return rows.map((r) => ({
+    id: String(r.id),
+    peerReviewSessionId: String(r.peer_review_session_id),
+    voterMemberId: String(r.voter_member_id),
+    votedMemberId: String(r.voted_member_id),
+    votedAt: String(r.voted_at)
+  }));
+}
+
+insertReactionTrackedMessage(row: ReactionTrackedMessageRow): void {
+  this.db
+    .prepare(
+      `INSERT INTO reaction_tracked_messages
+        (id, feishu_message_id, member_id, item_code, posted_at, reaction_count)
+       VALUES (@id, @feishuMessageId, @memberId, @itemCode, @postedAt, @reactionCount)`
+    )
+    .run(row);
+}
+
+findReactionTrackedMessageByFeishuMessageId(
+  feishuMessageId: string
+): ReactionTrackedMessageRow | null {
+  const row = this.db
+    .prepare(
+      `SELECT id, feishu_message_id, member_id, item_code, posted_at, reaction_count
+       FROM reaction_tracked_messages
+       WHERE feishu_message_id = ?`
+    )
+    .get(feishuMessageId) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: String(row.id),
+    feishuMessageId: String(row.feishu_message_id),
+    memberId: String(row.member_id),
+    itemCode: String(row.item_code) as "C2",
+    postedAt: String(row.posted_at),
+    reactionCount: Number(row.reaction_count ?? 0)
+  };
+}
+
+incrementReactionCount(feishuMessageId: string): void {
+  this.db
+    .prepare(
+      `UPDATE reaction_tracked_messages
+       SET reaction_count = reaction_count + 1
+       WHERE feishu_message_id = ?`
+    )
+    .run(feishuMessageId);
+}
+```
+
+- [ ] **Step 5: Run the test and verify it passes**
+
+Run: `npm test -- tests/storage/v2/sqlite-repository-v2.test.ts`
+Expected: PASS — all 3 new assertions green; the existing Phase A2 9-table test continues to pass because the backfill tables are additive.
+
+Also run the full suite to catch regressions in unrelated tests: `npm test`
+Expected: PASS across the whole tree.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add src/storage/sqlite-repository.ts tests/storage/v2/sqlite-repository-v2.test.ts
+git commit -m "feat(v2): backfill peer_review_votes and reaction_tracked_messages"
+```
 
 ---
 
@@ -1693,7 +1950,7 @@ describe("SqliteRepository v2 scoring_item_events", () => {
     repo.close();
   });
 
-  test("listReviewRequiredEvents returns only review_required rows", () => {
+  test("listReviewRequiredEvents returns review_required rows with JOINed memberName and llmReason", () => {
     const repo = new SqliteRepository(":memory:");
     repo.seedDemo();
     const campId = repo.getDefaultCampId()!;
@@ -1711,8 +1968,13 @@ describe("SqliteRepository v2 scoring_item_events", () => {
       updatedAt: "2026-04-11T00:00:00.000Z"
     });
 
+    // Seed an LLM task that the review_required event will link to. The
+    // review queue card needs the LLM reason for display, so the repo
+    // JOINs this row and exposes `llmReason` on the return shape.
+    const taskId = randomUUID();
+    const eventId = randomUUID();
     repo.insertScoringItemEvent({
-      id: randomUUID(),
+      id: eventId,
       memberId,
       periodId,
       itemCode: "K4",
@@ -1721,10 +1983,30 @@ describe("SqliteRepository v2 scoring_item_events", () => {
       sourceType: "card_interaction",
       sourceRef: "card-k4-001",
       status: "review_required",
-      llmTaskId: null,
+      llmTaskId: taskId,
       createdAt: "2026-04-11T12:00:00.000Z",
       decidedAt: null
     });
+    // Pre-populate the task with a failed/borderline result so the
+    // review-queue renderer can surface the reason.
+    repo.insertLlmTask({
+      id: taskId,
+      eventId,
+      provider: "glm",
+      model: "glm-4.5-flash",
+      promptText: "evaluate K4 submission ...",
+      enqueuedAt: "2026-04-11T12:00:01.000Z",
+      maxAttempts: 3
+    });
+    repo.claimNextPendingTask("2026-04-11T12:00:05.000Z");
+    repo.markTaskSucceeded(taskId, {
+      pass: false,
+      score: 0,
+      reason: "不清楚修正了什么 AI 错误,描述过于空泛",
+      raw: { decision: "fail" }
+    });
+
+    // An unrelated approved event must NOT appear in the queue.
     repo.insertScoringItemEvent({
       id: randomUUID(),
       memberId,
@@ -1740,10 +2022,22 @@ describe("SqliteRepository v2 scoring_item_events", () => {
       decidedAt: "2026-04-11T12:30:00.000Z"
     });
 
-    const queue = repo.listReviewRequiredEvents(campId);
+    // Object-argument signature with pagination; used by Phase G9
+    // review-queue card and by any admin API that lists review items.
+    const queue = repo.listReviewRequiredEvents({ campId, limit: 10, offset: 0 });
     expect(queue).toHaveLength(1);
     expect(queue[0].sourceRef).toBe("card-k4-001");
-    expect(queue[0].status).toBe("review_required");
+    expect(queue[0].memberName).toBeTruthy();
+    expect(queue[0].memberId).toBe(memberId);
+    expect(queue[0].llmTaskId).toBe(taskId);
+    expect(queue[0].llmReason).toContain("空泛");
+
+    // countReviewRequiredEvents powers pagination on the review queue card.
+    expect(repo.countReviewRequiredEvents({ campId })).toBe(1);
+
+    // Calling without a campId lists across all camps (single-camp ok).
+    const unscoped = repo.listReviewRequiredEvents({ limit: 10, offset: 0 });
+    expect(unscoped).toHaveLength(1);
 
     repo.close();
   });
@@ -1867,16 +2161,121 @@ updateEventStatus(input: {
     .run(input);
 }
 
-listReviewRequiredEvents(campId: string): ScoringItemEventRecord[] {
+/**
+ * Review queue row shape. This is a *view* projection that JOINs
+ * `v2_scoring_item_events` with `members` (for `memberName`) and with
+ * `v2_llm_scoring_tasks` (for `llmReason` parsed out of `result_json`).
+ * The review queue card (Phase G9) uses exactly these fields — adding
+ * new fields here requires updating that card's template too.
+ */
+export interface ReviewRequiredEventRow {
+  eventId: string;
+  memberId: string;
+  memberName: string;
+  periodId: string;
+  itemCode: string;
+  dimension: string;
+  scoreDelta: number;
+  sourceType: string;
+  sourceRef: string;
+  llmTaskId: string | null;
+  /**
+   * The `reason` field parsed out of the latest `llm_scoring_tasks.result_json`
+   * for this event. `null` if no task is linked or the task has no parsed
+   * result yet. The review-queue card displays this verbatim to the operator.
+   */
+  llmReason: string | null;
+  createdAt: string;
+}
+
+listReviewRequiredEvents(args: {
+  campId?: string;
+  limit: number;
+  offset: number;
+}): ReviewRequiredEventRow[] {
   const rows = this.db
     .prepare(
-      `SELECT e.* FROM v2_scoring_item_events e
+      `SELECT
+         e.id            AS event_id,
+         e.member_id     AS member_id,
+         m.display_name  AS member_name,
+         e.period_id     AS period_id,
+         e.item_code     AS item_code,
+         e.dimension     AS dimension,
+         e.score_delta   AS score_delta,
+         e.source_type   AS source_type,
+         e.source_ref    AS source_ref,
+         e.llm_task_id   AS llm_task_id,
+         t.result_json   AS llm_result_json,
+         e.created_at    AS created_at
+       FROM v2_scoring_item_events e
        INNER JOIN v2_periods p ON p.id = e.period_id
-       WHERE p.camp_id = ? AND e.status = 'review_required'
-       ORDER BY e.created_at ASC`
+       LEFT JOIN members m ON m.id = e.member_id
+       LEFT JOIN v2_llm_scoring_tasks t ON t.id = e.llm_task_id
+       WHERE e.status = 'review_required'
+         AND (@campId IS NULL OR p.camp_id = @campId)
+       ORDER BY e.created_at ASC
+       LIMIT @limit OFFSET @offset`
     )
-    .all(campId) as Array<Record<string, unknown>>;
-  return rows.map((row) => this.mapScoringEventRow(row));
+    .all({
+      campId: args.campId ?? null,
+      limit: args.limit,
+      offset: args.offset
+    }) as Array<Record<string, unknown>>;
+  return rows.map((row) => this.mapReviewRequiredRow(row));
+}
+
+countReviewRequiredEvents(args: { campId?: string }): number {
+  const row = this.db
+    .prepare(
+      `SELECT COUNT(*) AS total
+       FROM v2_scoring_item_events e
+       INNER JOIN v2_periods p ON p.id = e.period_id
+       WHERE e.status = 'review_required'
+         AND (@campId IS NULL OR p.camp_id = @campId)`
+    )
+    .get({ campId: args.campId ?? null }) as { total: number };
+  return Number(row.total ?? 0);
+}
+
+private mapReviewRequiredRow(row: Record<string, unknown>): ReviewRequiredEventRow {
+  const rawResultJson =
+    row.llm_result_json === null || row.llm_result_json === undefined
+      ? null
+      : String(row.llm_result_json);
+  let llmReason: string | null = null;
+  if (rawResultJson) {
+    try {
+      const parsed = JSON.parse(rawResultJson) as { reason?: unknown };
+      if (parsed && typeof parsed.reason === "string") {
+        llmReason = parsed.reason;
+      }
+    } catch {
+      // malformed JSON → leave null; the review queue card will show
+      // "(no reason available)" in the renderer.
+    }
+  }
+  const memberName =
+    row.member_name === null || row.member_name === undefined
+      ? "(未知学员)"
+      : String(row.member_name);
+  return {
+    eventId: String(row.event_id),
+    memberId: String(row.member_id),
+    memberName,
+    periodId: String(row.period_id),
+    itemCode: String(row.item_code),
+    dimension: String(row.dimension),
+    scoreDelta: Number(row.score_delta),
+    sourceType: String(row.source_type),
+    sourceRef: String(row.source_ref),
+    llmTaskId:
+      row.llm_task_id === null || row.llm_task_id === undefined
+        ? null
+        : String(row.llm_task_id),
+    llmReason,
+    createdAt: String(row.created_at)
+  };
 }
 
 private mapScoringEventRow(row: Record<string, unknown>): ScoringItemEventRecord {
@@ -2775,8 +3174,10 @@ describe("SqliteRepository v2 llm_scoring_tasks", () => {
     expect(repo.claimNextPendingTask("2026-04-11T08:05:10.000Z")).toBeUndefined();
 
     repo.markTaskSucceeded(taskId, {
-      resultJson: JSON.stringify({ decision: "approved" }),
-      finishedAt: "2026-04-11T08:05:20.000Z"
+      pass: true,
+      score: 3,
+      reason: "approved",
+      raw: { decision: "approved" }
     });
     // after success, still no pending task
     expect(repo.claimNextPendingTask("2026-04-11T08:06:00.000Z")).toBeUndefined();
@@ -2827,7 +3228,7 @@ describe("SqliteRepository v2 llm_scoring_tasks", () => {
     });
 
     repo.claimNextPendingTask("2026-04-11T08:01:00.000Z");
-    repo.markTaskFailedRetry(taskId, "timeout", 30);
+    repo.markTaskFailedRetry(taskId, 30, "timeout");
 
     // reclaim after backoff window
     const reclaimed = repo.claimNextPendingTask("2026-04-11T08:02:00.000Z");
@@ -2879,7 +3280,7 @@ describe("SqliteRepository v2 llm_scoring_tasks", () => {
       maxAttempts: 1
     });
     repo.claimNextPendingTask("2026-04-11T08:01:00.000Z");
-    repo.markTaskFailedTerminal(taskId, "invalid_json", "2026-04-11T08:01:10.000Z");
+    repo.markTaskFailedTerminal(taskId, "invalid_json");
 
     // never picked up again
     expect(repo.claimNextPendingTask("2026-04-11T08:10:00.000Z")).toBeUndefined();
@@ -3053,23 +3454,40 @@ claimNextPendingTask(now: string): LlmScoringTaskRecord | undefined {
   return latest ? this.mapLlmTaskRow(latest) : undefined;
 }
 
-markTaskSucceeded(
-  taskId: string,
-  input: { resultJson: string; finishedAt: string }
-): void {
+/**
+ * Marks a running LLM task as succeeded. Accepts the domain-level
+ * `LlmScoringResult` (from `src/domain/v2/llm-scoring-client.ts`) directly
+ * — the repository owns the JSON serialization and the `finished_at`
+ * timestamp so the worker never has to think about either concern. This
+ * matches the `WorkerDeps.markTaskSucceeded(taskId, result)` signature
+ * used by `LlmScoringWorker` (see Phase E5), so `Phase H2` can wire the
+ * repository directly into `WorkerDeps` with zero adapter code.
+ */
+markTaskSucceeded(taskId: string, result: LlmScoringResult): void {
   this.db
     .prepare(
       `UPDATE v2_llm_scoring_tasks
        SET status = 'succeeded', result_json = ?, finished_at = ?
        WHERE id = ?`
     )
-    .run(input.resultJson, input.finishedAt, taskId);
+    .run(
+      JSON.stringify(result),
+      new Date().toISOString(),
+      taskId
+    );
 }
 
+/**
+ * Re-queues a running task for retry, or escalates to terminal failure
+ * once `attempts >= max_attempts`. Parameter order is `(taskId,
+ * backoffSeconds, errorReason)` to match the `WorkerDeps.markTaskFailedRetry`
+ * shape used by `LlmScoringWorker`, so Phase H2 can bind the repository
+ * method to the worker deps slot directly.
+ */
 markTaskFailedRetry(
   taskId: string,
-  errorReason: string,
-  backoffSeconds: number
+  backoffSeconds: number,
+  errorReason: string
 ): void {
   const row = this.db
     .prepare(`SELECT attempts, max_attempts FROM v2_llm_scoring_tasks WHERE id = ?`)
@@ -3078,7 +3496,7 @@ markTaskFailedRetry(
     return;
   }
   if (row.attempts >= row.max_attempts) {
-    this.markTaskFailedTerminal(taskId, errorReason, new Date().toISOString());
+    this.markTaskFailedTerminal(taskId, errorReason);
     return;
   }
   const nextEnqueue = new Date(Date.now() + backoffSeconds * 1000).toISOString();
@@ -3091,14 +3509,21 @@ markTaskFailedRetry(
     .run(errorReason, nextEnqueue, taskId);
 }
 
-markTaskFailedTerminal(taskId: string, errorReason: string, at: string): void {
+/**
+ * Terminates a task in `failed` state. `finished_at` defaults to the
+ * current wall clock; callers that need deterministic timestamps (tests)
+ * can pre-freeze the clock via their fake `Date.now`. Matches the
+ * `WorkerDeps.markTaskFailedTerminal(taskId, reason)` signature from
+ * Phase E5 — no explicit `at` parameter is accepted on the worker path.
+ */
+markTaskFailedTerminal(taskId: string, errorReason: string): void {
   this.db
     .prepare(
       `UPDATE v2_llm_scoring_tasks
        SET status = 'failed', error_reason = ?, finished_at = ?
        WHERE id = ?`
     )
-    .run(errorReason, at, taskId);
+    .run(errorReason, new Date().toISOString(), taskId);
 }
 
 requeueStaleRunningTasks(timeoutMs: number): number {
@@ -3328,12 +3753,16 @@ git commit -m "feat(v2): add members extensions for feishu open id and eligibili
 
 ## Phase B Exit Checkpoint
 
-- [ ] All 10 tasks (B1 through B10) have shipped their tests and implementations
-- [ ] `tests/storage/v2/sqlite-repository-v2.test.ts` now contains 10 `describe` blocks (one from Phase A task A2 plus nine added here) and at least 20 `test` cases
+- [ ] All 11 tasks (B0 through B10) have shipped their tests and implementations
+- [ ] `tests/storage/v2/sqlite-repository-v2.test.ts` now contains 11 `describe` blocks (one from Phase A task A2 plus ten added here) and at least 23 `test` cases
 - [ ] `npm test -- tests/storage/v2/sqlite-repository-v2.test.ts` is green
 - [ ] `npm test` (full suite) is green — no regression in existing tests
-- [ ] `git log --oneline codex/phase-one-feishu ^<phase-b-start-sha>` shows 10 commits, one per task
-- [ ] `SqliteRepository` exports the 10 new record types: `PeriodRecord`, `WindowRecord`, `CardInteractionRecord`, `ScoringItemEventRecord`, `ScoringEventStatus`, `WindowSnapshotRecord`, `MemberLevelRecord`, `PromotionRecord`, `LlmScoringTaskRecord`, `LlmTaskStatus`
+- [ ] `git log --oneline codex/phase-one-feishu ^<phase-b-start-sha>` shows 11 commits, one per task
+- [ ] `SqliteRepository` exports the 12 new record types: `PeriodRecord`, `WindowRecord`, `CardInteractionRecord`, `ScoringItemEventRecord`, `ScoringEventStatus`, `ReviewRequiredEventRow`, `WindowSnapshotRecord`, `MemberLevelRecord`, `PromotionRecord`, `LlmScoringTaskRecord`, `LlmTaskStatus`, `PeerReviewVoteRow`, `ReactionTrackedMessageRow`
+- [ ] `SqliteRepository` worker-facing methods `markTaskSucceeded(taskId, result: LlmScoringResult)`, `markTaskFailedRetry(taskId, backoffSeconds, errorReason)`, `markTaskFailedTerminal(taskId, errorReason)` match the `WorkerDeps` interface from Phase E5 exactly — Phase H2 will wire the repository directly into `WorkerDeps` with zero adapter code
+- [ ] `SqliteRepository.listReviewRequiredEvents({ campId?, limit, offset })` returns `ReviewRequiredEventRow[]` with JOINed `memberName` and `llmReason` fields; Phase G9 review-queue card consumes this shape directly
+- [ ] `SqliteRepository.countReviewRequiredEvents({ campId? })` returns the total count used for review-queue pagination
+- [ ] `peer_review_votes` and `reaction_tracked_messages` tables are created on construction (verified by the Task B0 smoke test) — these are non-prefixed by design per spec §5.2 and §5.3
 - [ ] No drizzle query-builder imports were added anywhere; every v2 query uses `db.prepare(...)`
 - [ ] `grep -rn "drizzle-orm" src/storage/sqlite-repository.ts` returns nothing (drizzle is only referenced in `src/db/schema.ts` type-reference file)
 - [ ] All multi-statement writes (`closePeriod`, `claimNextPendingTask`, `markTaskFailedRetry`) use either a single UPDATE or a `db.transaction(...)` wrapper
