@@ -1,3 +1,9 @@
+import {
+  LlmNonRetryableError,
+  LlmRetryableError
+} from "../../domain/v2/errors.js";
+import type { LlmProviderConfig } from "../llm/provider-config.js";
+
 export interface LlmScoringResult {
   pass: boolean;
   score: number;
@@ -8,6 +14,8 @@ export interface LlmScoringResult {
 export interface LlmScoringOptions {
   timeoutMs: number;
   signal?: AbortSignal;
+  /** When present, the client sends a multimodal message with image_url */
+  imageUrl?: string;
 }
 
 export interface LlmScoringClient {
@@ -57,4 +65,143 @@ export class FakeLlmScoringClient implements LlmScoringClient {
     }
     return next;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/*  OpenAiCompatibleLlmScoringClient — real HTTP implementation       */
+/* ------------------------------------------------------------------ */
+
+interface ChatCompletionResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+}
+
+type MessageContent =
+  | string
+  | Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+    >;
+
+export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient {
+  readonly provider: string;
+  readonly model: string;
+  private readonly baseUrl: string;
+  private readonly apiKey: string;
+
+  constructor(config: LlmProviderConfig) {
+    if (!config.apiKey) {
+      throw new Error("LlmProviderConfig.apiKey is required");
+    }
+    if (!config.baseUrl) {
+      throw new Error("LlmProviderConfig.baseUrl is required");
+    }
+    this.provider = config.provider;
+    this.model = config.textModel;
+    this.baseUrl = config.baseUrl.replace(/\/+$/, "");
+    this.apiKey = config.apiKey;
+  }
+
+  async score(
+    promptText: string,
+    options: LlmScoringOptions
+  ): Promise<LlmScoringResult> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+    const signal = options.signal
+      ? anySignal([options.signal, controller.signal])
+      : controller.signal;
+
+    const content: MessageContent = options.imageUrl
+      ? [
+          { type: "text", text: promptText },
+          { type: "image_url", image_url: { url: options.imageUrl } }
+        ]
+      : promptText;
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: this.model,
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content }]
+        }),
+        signal
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      throw new LlmRetryableError(
+        error instanceof Error ? error.message : "network error"
+      );
+    }
+    clearTimeout(timer);
+
+    if (response.status >= 500) {
+      throw new LlmRetryableError(`http ${response.status}`);
+    }
+    if (response.status === 429) {
+      throw new LlmRetryableError("rate limited");
+    }
+    if (response.status >= 400) {
+      throw new LlmNonRetryableError(`http ${response.status}`);
+    }
+
+    let body: ChatCompletionResponse;
+    try {
+      body = (await response.json()) as ChatCompletionResponse;
+    } catch (error) {
+      throw new LlmNonRetryableError(
+        `failed to parse response json: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+
+    const rawContent = body.choices?.[0]?.message?.content;
+    if (typeof rawContent !== "string") {
+      throw new LlmNonRetryableError("missing choices[0].message.content");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch (error) {
+      throw new LlmNonRetryableError(
+        `content is not json: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as { pass?: unknown }).pass !== "boolean" ||
+      typeof (parsed as { score?: unknown }).score !== "number" ||
+      typeof (parsed as { reason?: unknown }).reason !== "string"
+    ) {
+      throw new LlmNonRetryableError("missing pass/score/reason fields");
+    }
+
+    const result = parsed as { pass: boolean; score: number; reason: string };
+    return {
+      pass: result.pass,
+      score: result.score,
+      reason: result.reason,
+      raw: body
+    };
+  }
+}
+
+function anySignal(signals: AbortSignal[]): AbortSignal {
+  const controller = new AbortController();
+  for (const sig of signals) {
+    if (sig.aborted) {
+      controller.abort();
+      return controller.signal;
+    }
+    sig.addEventListener("abort", () => controller.abort(), { once: true });
+  }
+  return controller.signal;
 }
