@@ -381,6 +381,19 @@ export interface ReactionTrackedMessageRow {
   reactionCount: number;
 }
 
+export interface PeriodRecord {
+  id: string;
+  campId: string;
+  number: number;
+  isIceBreaker: boolean;
+  startedAt: string;
+  endedAt: string | null;
+  openedByOpId: string | null;
+  closedReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export class SqliteRepository {
   private readonly db: Database.Database;
 
@@ -508,6 +521,90 @@ export class SqliteRepository {
          WHERE feishu_message_id = ?`
       )
       .run(feishuMessageId);
+  }
+
+  insertPeriod(input: {
+    id: string;
+    campId: string;
+    number: number;
+    isIceBreaker: boolean;
+    startedAt: string;
+    openedByOpId: string | null;
+    createdAt: string;
+    updatedAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_periods
+          (id, camp_id, number, is_ice_breaker, started_at, ended_at,
+           opened_by_op_id, closed_reason, created_at, updated_at)
+         VALUES (@id, @campId, @number, @isIceBreaker, @startedAt, NULL,
+                 @openedByOpId, NULL, @createdAt, @updatedAt)`
+      )
+      .run({
+        id: input.id,
+        campId: input.campId,
+        number: input.number,
+        isIceBreaker: input.isIceBreaker ? 1 : 0,
+        startedAt: input.startedAt,
+        openedByOpId: input.openedByOpId,
+        createdAt: input.createdAt,
+        updatedAt: input.updatedAt
+      });
+  }
+
+  findActivePeriod(campId: string): PeriodRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_periods
+         WHERE camp_id = ? AND ended_at IS NULL
+         ORDER BY started_at DESC LIMIT 1`
+      )
+      .get(campId) as Record<string, unknown> | undefined;
+    return row ? this.mapPeriodRow(row) : undefined;
+  }
+
+  findPeriodByNumber(campId: string, number: number): PeriodRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_periods WHERE camp_id = ? AND number = ? LIMIT 1`
+      )
+      .get(campId, number) as Record<string, unknown> | undefined;
+    return row ? this.mapPeriodRow(row) : undefined;
+  }
+
+  closePeriod(id: string, endedAt: string, reason: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_periods
+         SET ended_at = ?, closed_reason = ?, updated_at = ?
+         WHERE id = ?`
+      )
+      .run(endedAt, reason, endedAt, id);
+  }
+
+  listPeriods(campId: string): PeriodRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM v2_periods WHERE camp_id = ? ORDER BY number ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapPeriodRow(row));
+  }
+
+  private mapPeriodRow(row: Record<string, unknown>): PeriodRecord {
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      number: Number(row.number),
+      isIceBreaker: Number(row.is_ice_breaker) === 1,
+      startedAt: String(row.started_at),
+      endedAt: row.ended_at === null ? null : String(row.ended_at),
+      openedByOpId: row.opened_by_op_id === null ? null : String(row.opened_by_op_id),
+      closedReason: row.closed_reason === null ? null : String(row.closed_reason),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
   }
 
   close() {

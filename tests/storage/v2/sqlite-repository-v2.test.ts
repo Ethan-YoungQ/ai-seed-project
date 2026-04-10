@@ -131,3 +131,87 @@ describe("SqliteRepository v2 backfilled tables (peer_review_votes + reaction_tr
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 periods", () => {
+  test("insertPeriod + findActivePeriod + findPeriodByNumber + closePeriod + listPeriods", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    // insert ice-breaker (period 1)
+    const p1 = {
+      id: `period-${campId}-1`,
+      campId,
+      number: 1,
+      isIceBreaker: true,
+      startedAt: "2026-04-10T00:00:00.000Z",
+      openedByOpId: "op-001",
+      createdAt: "2026-04-10T00:00:00.000Z",
+      updatedAt: "2026-04-10T00:00:00.000Z"
+    };
+    repo.insertPeriod(p1);
+
+    // findActivePeriod should return p1
+    const active1 = repo.findActivePeriod(campId);
+    expect(active1?.id).toBe(p1.id);
+    expect(active1?.number).toBe(1);
+    expect(active1?.isIceBreaker).toBe(true);
+    expect(active1?.endedAt).toBeNull();
+
+    // findPeriodByNumber
+    const byNum = repo.findPeriodByNumber(campId, 1);
+    expect(byNum?.id).toBe(p1.id);
+
+    // insert period 2 and close period 1 atomically via closePeriod
+    repo.closePeriod(p1.id, "2026-04-11T00:00:00.000Z", "next_period_opened");
+
+    const p2 = {
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: "op-001",
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    };
+    repo.insertPeriod(p2);
+
+    const active2 = repo.findActivePeriod(campId);
+    expect(active2?.id).toBe(p2.id);
+
+    const closedP1 = repo.findPeriodByNumber(campId, 1);
+    expect(closedP1?.endedAt).toBe("2026-04-11T00:00:00.000Z");
+    expect(closedP1?.closedReason).toBe("next_period_opened");
+
+    const all = repo.listPeriods(campId);
+    expect(all.map((p) => p.number)).toEqual([1, 2]);
+
+    // unknown number returns undefined
+    expect(repo.findPeriodByNumber(campId, 99)).toBeUndefined();
+
+    repo.close();
+  });
+
+  test("findActivePeriod returns undefined when all periods closed", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    const p = {
+      id: `period-${campId}-1`,
+      campId,
+      number: 1,
+      isIceBreaker: true,
+      startedAt: "2026-04-10T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-10T00:00:00.000Z",
+      updatedAt: "2026-04-10T00:00:00.000Z"
+    };
+    repo.insertPeriod(p);
+    repo.closePeriod(p.id, "2026-04-11T00:00:00.000Z", "manual_close");
+
+    expect(repo.findActivePeriod(campId)).toBeUndefined();
+    repo.close();
+  });
+});
