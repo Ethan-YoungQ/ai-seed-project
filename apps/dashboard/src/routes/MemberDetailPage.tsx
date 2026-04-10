@@ -6,6 +6,7 @@ import { AqRadarChart } from "../components/member/AqRadarChart";
 import { DimensionBreakdown } from "../components/member/DimensionBreakdown";
 import { WindowTimeline } from "../components/member/WindowTimeline";
 import { DimensionSparklines } from "../components/member/DimensionSparklines";
+import { PromotionHistory } from "../components/member/PromotionHistory";
 
 function LoadingState() {
   const style: CSSProperties = {
@@ -89,7 +90,6 @@ export function MemberDetailPage() {
 
   const gridStyle: CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "1fr 1fr",
     gap: "16px",
     marginTop: "16px",
   };
@@ -138,7 +138,7 @@ export function MemberDetailPage() {
         currentLevel={detail.currentLevel}
         cumulativeAq={detail.cumulativeAq}
       />
-      <div style={gridStyle}>
+      <div style={gridStyle} className="member-detail-grid">
         <div style={fullWidthStyle}>
           <WindowTimeline snapshots={detail.windowSnapshots} />
         </div>
@@ -146,6 +146,9 @@ export function MemberDetailPage() {
         <DimensionBreakdown dimensions={detail.dimensions} />
         <div style={fullWidthStyle}>
           <DimensionSparklines snapshots={detail.windowSnapshots} />
+        </div>
+        <div style={fullWidthStyle}>
+          <PromotionHistory promotions={detail.promotions} memberId={detail.memberId} />
         </div>
       </div>
     </div>
