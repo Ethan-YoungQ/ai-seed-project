@@ -44,14 +44,13 @@ export function DimensionSparklines({ snapshots }: DimensionSparklinesProps) {
 
   const gridStyle: CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "repeat(5, 1fr)",
     gap: "16px",
   };
 
   return (
     <NeonCard>
       <p style={titleStyle}>维度趋势</p>
-      <div style={gridStyle}>
+      <div style={gridStyle} className="sparklines-grid">
         {DIMENSION_KEYS.map((key) => (
           <Sparkline key={key} dimKey={key} data={perDimension[key]} />
         ))}

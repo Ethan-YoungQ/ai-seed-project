@@ -1,13 +1,14 @@
-import { CSSProperties, ReactNode, useState } from "react";
+import { CSSProperties, ReactNode, useState, KeyboardEvent } from "react";
 
 interface NeonCardProps {
   children: ReactNode;
   glowColor?: string;
   onClick?: () => void;
   style?: CSSProperties;
+  ariaLabel?: string;
 }
 
-export function NeonCard({ children, glowColor = "#2a2a5a", onClick, style }: NeonCardProps) {
+export function NeonCard({ children, glowColor = "#2a2a5a", onClick, style, ariaLabel }: NeonCardProps) {
   const [hovered, setHovered] = useState(false);
 
   const baseStyle: CSSProperties = {
@@ -22,12 +23,23 @@ export function NeonCard({ children, glowColor = "#2a2a5a", onClick, style }: Ne
     ...style,
   };
 
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (onClick && (e.key === "Enter" || e.key === " ")) {
+      e.preventDefault();
+      onClick();
+    }
+  };
+
   return (
     <div
       style={baseStyle}
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
+      role={onClick ? "button" : undefined}
+      tabIndex={onClick ? 0 : undefined}
+      aria-label={ariaLabel}
+      onKeyDown={onClick ? handleKeyDown : undefined}
     >
       {children}
     </div>

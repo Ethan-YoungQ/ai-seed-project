@@ -66,7 +66,12 @@ export function LeaderboardRow({ row }: LeaderboardRowProps) {
   };
 
   return (
-    <NeonCard onClick={handleClick} glowColor={config.color} style={{ marginBottom: "8px" }}>
+    <NeonCard
+      onClick={handleClick}
+      glowColor={config.color}
+      style={{ marginBottom: "8px" }}
+      ariaLabel={`查看 ${row.memberName} 的详情，当前排名第 ${row.rank} 位`}
+    >
       <div style={innerStyle}>
         <div style={topRowStyle}>
           <RankBadge rank={row.rank} />

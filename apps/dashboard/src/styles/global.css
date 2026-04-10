@@ -1,5 +1,6 @@
 @import "./tokens.css";
 @import "./crt.css";
+@import "./animations.css";
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -14,6 +15,13 @@ body {
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
+  border-radius: 4px;
+}
+
+[role="button"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 6px;
 }
 
 ::selection {
@@ -24,3 +32,46 @@ body {
 ::-webkit-scrollbar { width: 8px; }
 ::-webkit-scrollbar-track { background: var(--bg-base); }
 ::-webkit-scrollbar-thumb { background: var(--border-glow); border-radius: 4px; }
+
+/* ── Responsive breakpoints ─────────────────────────────────────────────── */
+
+/* Mobile: single-column leaderboard cards */
+@media (max-width: 600px) {
+  main {
+    padding: 1rem !important;
+  }
+
+  .member-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+
+  .sparklines-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+  }
+
+  .nav-version {
+    display: none;
+  }
+}
+
+/* Tablet: 2 columns for sparklines */
+@media (min-width: 601px) and (max-width: 900px) {
+  .sparklines-grid {
+    grid-template-columns: repeat(3, 1fr) !important;
+  }
+
+  .member-detail-grid {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Desktop: full 5-column sparklines */
+@media (min-width: 901px) {
+  .sparklines-grid {
+    grid-template-columns: repeat(5, 1fr) !important;
+  }
+
+  .member-detail-grid {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}
