@@ -1,29 +1,141 @@
 import Database from "better-sqlite3";
 
 import { demoCamp, demoMembers, demoSessions } from "../config/defaults.js";
-import { buildBoardRanking } from "../domain/ranking.js";
-import {
-  buildWarningKey,
-  classifyWarningViolation,
-  nextMemberStatusFromWarnings,
-  resolveWarningLevel
-} from "../domain/warnings.js";
 import type {
   AnnouncementJob,
   AnnouncementType,
   AuditEvent,
+  BoardRankingEntry,
   BoardSnapshotRecord,
   CampRecord,
   MemberProfile,
   OperatorSubmissionEntry,
+  RankingInputScore,
   RawMessageEvent,
   ReviewAction,
   ScoringResult,
   SessionResult,
   SessionDefinition,
   SubmissionAttempt,
+  WarningLevel,
   WarningRecord
 } from "../domain/types.js";
+
+// ---------------------------------------------------------------------------
+// Inlined from domain/ranking.ts (deleted as part of v1 legacy cleanup)
+// ---------------------------------------------------------------------------
+
+interface BuildBoardRankingInput {
+  members: MemberProfile[];
+  scores: RankingInputScore[];
+}
+
+function buildBoardRanking(input: BuildBoardRankingInput): BoardRankingEntry[] {
+  const eligibleMembers = new Map(
+    input.members
+      .filter((member) => member.isParticipant && !member.isExcludedFromBoard)
+      .map((member) => [member.id, member] as const)
+  );
+
+  const totals = new Map<string, { totalScore: number; sessionCount: number }>();
+
+  for (const score of input.scores) {
+    if (!eligibleMembers.has(score.memberId)) {
+      continue;
+    }
+
+    const current = totals.get(score.memberId) ?? { totalScore: 0, sessionCount: 0 };
+    totals.set(score.memberId, {
+      totalScore: current.totalScore + score.totalScore,
+      sessionCount: current.sessionCount + 1
+    });
+  }
+
+  return [...totals.entries()]
+    .map(([memberId, total]) => {
+      const member = eligibleMembers.get(memberId);
+      if (!member) {
+        throw new Error(`Eligible member ${memberId} is missing from lookup.`);
+      }
+
+      return {
+        memberId,
+        memberName: member.displayName?.trim() || member.name,
+        department: member.department,
+        totalScore: total.totalScore,
+        sessionCount: total.sessionCount,
+        rank: 0
+      };
+    })
+    .sort((left, right) => {
+      if (right.totalScore !== left.totalScore) {
+        return right.totalScore - left.totalScore;
+      }
+
+      return left.memberName.localeCompare(right.memberName);
+    })
+    .map((entry, index) => ({
+      ...entry,
+      rank: index + 1
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Inlined from domain/warnings.ts (deleted as part of v1 legacy cleanup)
+// ---------------------------------------------------------------------------
+
+function resolveWarningLevel(index: number): WarningLevel {
+  if (index >= 3) {
+    return "elimination";
+  }
+
+  if (index === 2) {
+    return "warning";
+  }
+
+  return "reminder";
+}
+
+function buildWarningKey(
+  memberId: string,
+  sessionId: string | undefined,
+  violationType: WarningRecord["violationType"]
+) {
+  return [memberId, sessionId ?? "", violationType].join(":");
+}
+
+function classifyWarningViolation(scoreReason: string) {
+  const normalized = scoreReason.toLowerCase();
+
+  if (normalized.includes("late_submission")) {
+    return "late_submission" as const;
+  }
+
+  if (
+    normalized.includes("missing_evidence") ||
+    normalized.includes("missing_process") ||
+    normalized.includes("missing_result") ||
+    normalized.includes("manual_no_count") ||
+    normalized.includes("manual_override")
+  ) {
+    return "invalid_submission" as const;
+  }
+
+  return null;
+}
+
+function nextMemberStatusFromWarnings(records: WarningRecord[]) {
+  const activeWarnings = records.filter((warning) => !warning.resolvedFlag);
+  const last = activeWarnings.at(-1);
+
+  if (!last) {
+    return "active" as const;
+  }
+
+  return activeWarnings.some((warning) => warning.level === "elimination")
+    ? ("eliminated" as const)
+    : ("warned" as const);
+}
 import { buildBoardOverview } from "../services/board/overview.js";
 import { ELIGIBLE_STUDENT_WHERE_CLAUSE } from "../domain/v2/eligibility.js";
 

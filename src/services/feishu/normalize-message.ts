@@ -1,6 +1,36 @@
-import { parseTags } from "../../domain/tag-parser.js";
 import type { DocumentParseStatus } from "../../domain/types.js";
-import { inferDocumentFileExt } from "../documents/file-format.js";
+
+// Inlined from domain/tag-parser.ts (deleted as part of v1 legacy cleanup)
+function parseTags(text: string): string[] {
+  return [...new Set(text.match(/#[^\s#]+/g) ?? [])];
+}
+
+// Inlined from services/documents/file-format.ts (deleted as part of v1 legacy cleanup)
+const MIME_TYPE_EXTENSIONS: Record<string, string> = {
+  "application/pdf": "pdf",
+  "application/msword": "doc",
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx"
+};
+
+function normalizeMimeType(mimeType: string | undefined) {
+  return mimeType?.split(";")[0]?.trim().toLowerCase();
+}
+
+function inferDocumentFileExt(input: { fileName?: string; mimeType?: string }) {
+  const fileNameExt = input.fileName?.split(".").at(-1)?.trim().toLowerCase();
+  const normalizedMimeType = normalizeMimeType(input.mimeType);
+  const mimeTypeExt = normalizedMimeType ? MIME_TYPE_EXTENSIONS[normalizedMimeType] : undefined;
+
+  if (mimeTypeExt === "pdf" || mimeTypeExt === "docx") {
+    return mimeTypeExt;
+  }
+
+  if (fileNameExt) {
+    return fileNameExt;
+  }
+
+  return mimeTypeExt;
+}
 
 export interface NormalizedFeishuMessage {
   messageId: string;
