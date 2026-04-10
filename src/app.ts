@@ -25,6 +25,7 @@ import { registerV2GraduationCloseRoute } from "./routes/v2/graduation.js";
 import { registerV2BoardRoutes } from "./routes/v2/board.js";
 import { registerV2AdminReviewRoutes } from "./routes/v2/admin-review.js";
 import { registerV2AdminMembersRoutes } from "./routes/v2/admin-members.js";
+import { registerV2LlmStatusRoute } from "./routes/v2/llm-status.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -690,6 +691,7 @@ export async function createApp(options?: {
   registerV2BoardRoutes(app, v2);
   registerV2AdminReviewRoutes(app, v2);
   registerV2AdminMembersRoutes(app, v2);
+  registerV2LlmStatusRoute(app, v2);
 
   return app;
 }
