@@ -418,6 +418,38 @@ export interface CardInteractionRecord {
   receivedAt: string;
 }
 
+export type LlmTaskStatus = "pending" | "running" | "succeeded" | "failed";
+
+export interface LlmScoringTaskRecord {
+  id: string;
+  eventId: string;
+  provider: string;
+  model: string;
+  promptText: string;
+  status: LlmTaskStatus;
+  attempts: number;
+  maxAttempts: number;
+  resultJson: string | null;
+  errorReason: string | null;
+  enqueuedAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+/**
+ * Shape of the LLM scoring result stored in v2_llm_scoring_tasks.result_json.
+ * The canonical type lives in src/domain/v2/llm-scoring-client.ts (Phase E5);
+ * this is a structural subtype duplicated here to keep the storage layer
+ * free of upward imports. When Phase E5 lands, this can be replaced with a
+ * type-only import.
+ */
+export interface LlmScoringResult {
+  pass: boolean;
+  score: number;
+  reason: string;
+  raw: unknown;
+}
+
 export class SqliteRepository {
   private readonly db: Database.Database;
 
@@ -775,6 +807,168 @@ export class SqliteRepository {
         row.feishu_card_version === null ? null : String(row.feishu_card_version),
       receivedAt: String(row.received_at)
     }));
+  }
+
+  insertLlmTask(input: {
+    id: string;
+    eventId: string;
+    provider: string;
+    model: string;
+    promptText: string;
+    enqueuedAt: string;
+    maxAttempts: number;
+  }): string {
+    this.db
+      .prepare(
+        `INSERT INTO v2_llm_scoring_tasks
+          (id, event_id, provider, model, prompt_text, status, attempts,
+           max_attempts, result_json, error_reason, enqueued_at, started_at, finished_at)
+         VALUES (@id, @eventId, @provider, @model, @promptText, 'pending', 0,
+                 @maxAttempts, NULL, NULL, @enqueuedAt, NULL, NULL)`
+      )
+      .run(input);
+    return input.id;
+  }
+
+  claimNextPendingTask(now: string): LlmScoringTaskRecord | undefined {
+    // `better-sqlite3` transactions are synchronous. `immediate` begins the
+    // transaction with `BEGIN IMMEDIATE`, which blocks concurrent writers
+    // between the SELECT and UPDATE — satisfying the "atomic claim"
+    // requirement without external locking.
+    const runner = this.db.transaction((clock: string): string | undefined => {
+      const row = this.db
+        .prepare(
+          `SELECT id FROM v2_llm_scoring_tasks
+           WHERE status = 'pending' AND enqueued_at <= ?
+           ORDER BY enqueued_at ASC LIMIT 1`
+        )
+        .get(clock) as { id: string } | undefined;
+
+      if (!row) {
+        return undefined;
+      }
+
+      this.db
+        .prepare(
+          `UPDATE v2_llm_scoring_tasks
+           SET status = 'running', started_at = ?, attempts = attempts + 1
+           WHERE id = ? AND status = 'pending'`
+        )
+        .run(clock, row.id);
+
+      return row.id;
+    });
+
+    const claimedId = runner.immediate(now);
+    if (!claimedId) {
+      return undefined;
+    }
+    const updated = this.db
+      .prepare(`SELECT * FROM v2_llm_scoring_tasks WHERE id = ?`)
+      .get(claimedId) as Record<string, unknown> | undefined;
+    return updated ? this.mapLlmTaskRow(updated) : undefined;
+  }
+
+  /**
+   * Marks a running LLM task as succeeded. Accepts the domain-level
+   * `LlmScoringResult` (from `src/domain/v2/llm-scoring-client.ts`) directly
+   * — the repository owns the JSON serialization and the `finished_at`
+   * timestamp so the worker never has to think about either concern. This
+   * matches the `WorkerDeps.markTaskSucceeded(taskId, result)` signature
+   * used by `LlmScoringWorker` (see Phase E5), so `Phase H2` can wire the
+   * repository directly into `WorkerDeps` with zero adapter code.
+   */
+  markTaskSucceeded(taskId: string, result: LlmScoringResult): void {
+    this.db
+      .prepare(
+        `UPDATE v2_llm_scoring_tasks
+         SET status = 'succeeded', result_json = ?, finished_at = ?
+         WHERE id = ?`
+      )
+      .run(JSON.stringify(result), new Date().toISOString(), taskId);
+  }
+
+  /**
+   * Re-queues a running task for retry, or escalates to terminal failure
+   * once `attempts >= max_attempts`. Parameter order is
+   * `(taskId, backoffSeconds, errorReason)` to match the
+   * `WorkerDeps.markTaskFailedRetry` shape used by `LlmScoringWorker`,
+   * so Phase H2 can bind the repository method to the worker deps slot
+   * directly.
+   */
+  markTaskFailedRetry(
+    taskId: string,
+    backoffSeconds: number,
+    errorReason: string
+  ): void {
+    const row = this.db
+      .prepare(
+        `SELECT attempts, max_attempts FROM v2_llm_scoring_tasks WHERE id = ?`
+      )
+      .get(taskId) as { attempts: number; max_attempts: number } | undefined;
+    if (!row) {
+      return;
+    }
+    if (row.attempts >= row.max_attempts) {
+      this.markTaskFailedTerminal(taskId, errorReason);
+      return;
+    }
+    const nextEnqueue = new Date(Date.now() + backoffSeconds * 1000).toISOString();
+    this.db
+      .prepare(
+        `UPDATE v2_llm_scoring_tasks
+         SET status = 'pending', error_reason = ?, enqueued_at = ?, started_at = NULL
+         WHERE id = ?`
+      )
+      .run(errorReason, nextEnqueue, taskId);
+  }
+
+  /**
+   * Terminates a task in `failed` state. `finished_at` defaults to the
+   * current wall clock; callers that need deterministic timestamps (tests)
+   * can pre-freeze the clock via their fake `Date.now`. Matches the
+   * `WorkerDeps.markTaskFailedTerminal(taskId, reason)` signature from
+   * Phase E5 — no explicit `at` parameter is accepted on the worker path.
+   */
+  markTaskFailedTerminal(taskId: string, errorReason: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_llm_scoring_tasks
+         SET status = 'failed', error_reason = ?, finished_at = ?
+         WHERE id = ?`
+      )
+      .run(errorReason, new Date().toISOString(), taskId);
+  }
+
+  requeueStaleRunningTasks(timeoutMs: number): number {
+    const cutoff = new Date(Date.now() - timeoutMs).toISOString();
+    const result = this.db
+      .prepare(
+        `UPDATE v2_llm_scoring_tasks
+         SET status = 'pending', started_at = NULL,
+             error_reason = COALESCE(error_reason, 'crash_recovered')
+         WHERE status = 'running' AND started_at IS NOT NULL AND started_at < ?`
+      )
+      .run(cutoff);
+    return Number(result.changes ?? 0);
+  }
+
+  private mapLlmTaskRow(row: Record<string, unknown>): LlmScoringTaskRecord {
+    return {
+      id: String(row.id),
+      eventId: String(row.event_id),
+      provider: String(row.provider),
+      model: String(row.model),
+      promptText: String(row.prompt_text),
+      status: String(row.status) as LlmTaskStatus,
+      attempts: Number(row.attempts),
+      maxAttempts: Number(row.max_attempts),
+      resultJson: row.result_json === null ? null : String(row.result_json),
+      errorReason: row.error_reason === null ? null : String(row.error_reason),
+      enqueuedAt: String(row.enqueued_at),
+      startedAt: row.started_at === null ? null : String(row.started_at),
+      finishedAt: row.finished_at === null ? null : String(row.finished_at)
+    };
   }
 
   close() {

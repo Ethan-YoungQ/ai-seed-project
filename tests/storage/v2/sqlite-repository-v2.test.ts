@@ -392,3 +392,252 @@ describe("SqliteRepository v2 card_interactions", () => {
     repo.close();
   });
 });
+
+// B9 seeds events via raw SQL because the public
+// `insertScoringItemEvent` lands in Task B4 (next commit). This keeps the
+// B9 commit self-contained on the queue primitives while matching the
+// private-cast pattern already used for the stale-workers test.
+function seedScoringEventRaw(
+  repo: SqliteRepository,
+  args: {
+    id: string;
+    memberId: string;
+    periodId: string;
+    itemCode: string;
+    dimension: string;
+    scoreDelta: number;
+    sourceRef: string;
+    status: string;
+    createdAt: string;
+  }
+): void {
+  const internal = repo as unknown as { db: Database.Database };
+  internal.db
+    .prepare(
+      `INSERT INTO v2_scoring_item_events
+        (id, member_id, period_id, item_code, dimension, score_delta,
+         source_type, source_ref, status, llm_task_id, reviewed_by_op_id,
+         review_note, created_at, decided_at)
+       VALUES (@id, @memberId, @periodId, @itemCode, @dimension, @scoreDelta,
+               'card_interaction', @sourceRef, @status, NULL, NULL, NULL,
+               @createdAt, NULL)`
+    )
+    .run(args);
+}
+
+describe("SqliteRepository v2 llm_scoring_tasks", () => {
+  test("insert + claimNextPending + markTaskSucceeded", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertPeriod({
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    const eventId = randomUUID();
+    seedScoringEventRaw(repo, {
+      id: eventId,
+      memberId: "member-student-01",
+      periodId: `period-${campId}-2`,
+      itemCode: "K3",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceRef: "card-k3-001",
+      status: "pending",
+      createdAt: "2026-04-11T08:00:00.000Z"
+    });
+
+    const taskId = repo.insertLlmTask({
+      id: randomUUID(),
+      eventId,
+      provider: "glm",
+      model: "glm-4-plus",
+      promptText: "evaluate K3 submission ...",
+      enqueuedAt: "2026-04-11T08:00:01.000Z",
+      maxAttempts: 3
+    });
+    expect(taskId).toBeTruthy();
+
+    const claimed = repo.claimNextPendingTask("2026-04-11T08:05:00.000Z");
+    expect(claimed?.id).toBe(taskId);
+    expect(claimed?.status).toBe("running");
+    expect(claimed?.attempts).toBe(1);
+    expect(claimed?.startedAt).toBe("2026-04-11T08:05:00.000Z");
+
+    // claiming again returns undefined
+    expect(repo.claimNextPendingTask("2026-04-11T08:05:10.000Z")).toBeUndefined();
+
+    repo.markTaskSucceeded(taskId, {
+      pass: true,
+      score: 3,
+      reason: "approved",
+      raw: { decision: "approved" }
+    });
+    // after success, still no pending task
+    expect(repo.claimNextPendingTask("2026-04-11T08:06:00.000Z")).toBeUndefined();
+
+    repo.close();
+  });
+
+  test("markTaskFailedRetry re-queues under max_attempts", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertPeriod({
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    const eventId = randomUUID();
+    seedScoringEventRaw(repo, {
+      id: eventId,
+      memberId: "member-student-01",
+      periodId: `period-${campId}-2`,
+      itemCode: "K3",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceRef: "card-k3-retry",
+      status: "pending",
+      createdAt: "2026-04-11T08:00:00.000Z"
+    });
+
+    const taskId = repo.insertLlmTask({
+      id: randomUUID(),
+      eventId,
+      provider: "glm",
+      model: "glm-4-plus",
+      promptText: "...",
+      enqueuedAt: "2026-04-11T08:00:00.000Z",
+      maxAttempts: 3
+    });
+
+    repo.claimNextPendingTask("2026-04-11T08:01:00.000Z");
+    repo.markTaskFailedRetry(taskId, 30, "timeout");
+
+    // reclaim after backoff window
+    const reclaimed = repo.claimNextPendingTask("2026-04-11T08:02:00.000Z");
+    expect(reclaimed?.id).toBe(taskId);
+    expect(reclaimed?.attempts).toBe(2);
+
+    repo.close();
+  });
+
+  test("markTaskFailedTerminal leaves task in failed state", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertPeriod({
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    const eventId = randomUUID();
+    seedScoringEventRaw(repo, {
+      id: eventId,
+      memberId: "member-student-01",
+      periodId: `period-${campId}-2`,
+      itemCode: "K3",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceRef: "card-k3-terminal",
+      status: "pending",
+      createdAt: "2026-04-11T08:00:00.000Z"
+    });
+
+    const taskId = repo.insertLlmTask({
+      id: randomUUID(),
+      eventId,
+      provider: "glm",
+      model: "glm-4-plus",
+      promptText: "...",
+      enqueuedAt: "2026-04-11T08:00:00.000Z",
+      maxAttempts: 1
+    });
+    repo.claimNextPendingTask("2026-04-11T08:01:00.000Z");
+    repo.markTaskFailedTerminal(taskId, "invalid_json");
+
+    // never picked up again
+    expect(repo.claimNextPendingTask("2026-04-11T08:10:00.000Z")).toBeUndefined();
+    repo.close();
+  });
+
+  test("requeueStaleRunningTasks recovers crashed workers", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+
+    repo.insertPeriod({
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    const eventId = randomUUID();
+    seedScoringEventRaw(repo, {
+      id: eventId,
+      memberId: "member-student-01",
+      periodId: `period-${campId}-2`,
+      itemCode: "K3",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceRef: "card-k3-stale",
+      status: "pending",
+      createdAt: "2026-04-11T08:00:00.000Z"
+    });
+
+    const taskId = repo.insertLlmTask({
+      id: randomUUID(),
+      eventId,
+      provider: "glm",
+      model: "glm-4-plus",
+      promptText: "...",
+      enqueuedAt: "2026-04-11T08:00:00.000Z",
+      maxAttempts: 3
+    });
+    // claim and then simulate crash: push started_at deep into the past so
+    // it is unambiguously before `cutoff = Date.now() - timeoutMs`. The plan
+    // used 2026-04-11T07:00:00 which is not guaranteed to be before the
+    // real wall clock at run time; 2000-01-01 makes the stale check
+    // deterministic regardless of when the suite runs.
+    repo.claimNextPendingTask("2026-04-11T08:01:00.000Z");
+    const internal = repo as unknown as { db: Database.Database };
+    internal.db
+      .prepare(`UPDATE v2_llm_scoring_tasks SET started_at = ? WHERE id = ?`)
+      .run("2000-01-01T00:00:00.000Z", taskId);
+
+    const requeued = repo.requeueStaleRunningTasks(60 * 60 * 1000); // 1h
+    expect(requeued).toBe(1);
+
+    const next = repo.claimNextPendingTask("2026-04-11T09:00:00.000Z");
+    expect(next?.id).toBe(taskId);
+
+    repo.close();
+  });
+});
