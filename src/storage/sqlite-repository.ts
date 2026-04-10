@@ -476,6 +476,18 @@ export interface MemberLevelRecord {
   updatedAt: string | null;
 }
 
+export interface PromotionRecord {
+  id: string;
+  windowId: string;
+  memberId: string;
+  evaluatedAt: string;
+  fromLevel: number;
+  toLevel: number;
+  promoted: boolean;
+  pathTaken: string;
+  reason: string;
+}
+
 export interface WindowSnapshotRecord {
   id: string;
   windowId: string;
@@ -1289,6 +1301,60 @@ export class SqliteRepository {
            updated_at = @updatedAt`
       )
       .run(input);
+  }
+
+  insertPromotionRecord(input: PromotionRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_promotion_records
+          (id, window_id, member_id, evaluated_at, from_level, to_level,
+           promoted, path_taken, reason)
+         VALUES (@id, @windowId, @memberId, @evaluatedAt, @fromLevel, @toLevel,
+                 @promoted, @pathTaken, @reason)`
+      )
+      .run({
+        ...input,
+        promoted: input.promoted ? 1 : 0
+      });
+  }
+
+  findPromotionForWindow(
+    windowId: string,
+    memberId: string
+  ): PromotionRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_promotion_records
+         WHERE window_id = ? AND member_id = ? LIMIT 1`
+      )
+      .get(windowId, memberId) as Record<string, unknown> | undefined;
+    return row ? this.mapPromotionRow(row) : undefined;
+  }
+
+  listPromotionsForMember(memberId: string): PromotionRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT p.* FROM v2_promotion_records p
+         INNER JOIN v2_windows w ON w.id = p.window_id
+         WHERE p.member_id = ?
+         ORDER BY w.code ASC, p.evaluated_at ASC`
+      )
+      .all(memberId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapPromotionRow(row));
+  }
+
+  private mapPromotionRow(row: Record<string, unknown>): PromotionRecord {
+    return {
+      id: String(row.id),
+      windowId: String(row.window_id),
+      memberId: String(row.member_id),
+      evaluatedAt: String(row.evaluated_at),
+      fromLevel: Number(row.from_level),
+      toLevel: Number(row.to_level),
+      promoted: Number(row.promoted) === 1,
+      pathTaken: String(row.path_taken),
+      reason: String(row.reason)
+    };
   }
 
   insertLlmTask(input: {

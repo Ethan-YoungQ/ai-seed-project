@@ -1090,3 +1090,82 @@ describe("SqliteRepository v2 member_levels", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository v2 promotion_records", () => {
+  test("insert + findPromotionForWindow + listPromotionsForMember", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "member-student-01";
+
+    repo.insertWindowShell({
+      code: "W1",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    repo.insertWindowShell({
+      code: "W2",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-10T00:00:00.000Z"
+    });
+    const w1 = repo.findWindowByCode(campId, "W1")!;
+    const w2 = repo.findWindowByCode(campId, "W2")!;
+
+    repo.insertPromotionRecord({
+      id: randomUUID(),
+      windowId: w1.id,
+      memberId,
+      evaluatedAt: "2026-04-20T00:00:00.000Z",
+      fromLevel: 1,
+      toLevel: 2,
+      promoted: true,
+      pathTaken: "primary",
+      reason: JSON.stringify({ conditionChecks: [] })
+    });
+
+    const r1 = repo.findPromotionForWindow(w1.id, memberId);
+    expect(r1?.promoted).toBe(true);
+    expect(r1?.toLevel).toBe(2);
+    expect(r1?.pathTaken).toBe("primary");
+
+    // no record for W2 yet
+    expect(repo.findPromotionForWindow(w2.id, memberId)).toBeUndefined();
+
+    // insert second record (not promoted)
+    repo.insertPromotionRecord({
+      id: randomUUID(),
+      windowId: w2.id,
+      memberId,
+      evaluatedAt: "2026-04-30T00:00:00.000Z",
+      fromLevel: 2,
+      toLevel: 2,
+      promoted: false,
+      pathTaken: "none",
+      reason: JSON.stringify({ conditionChecks: [] })
+    });
+
+    const all = repo.listPromotionsForMember(memberId);
+    expect(all).toHaveLength(2);
+    expect(all[0].windowId).toBe(w1.id);
+    expect(all[1].windowId).toBe(w2.id);
+
+    // UNIQUE(window_id, member_id)
+    expect(() =>
+      repo.insertPromotionRecord({
+        id: randomUUID(),
+        windowId: w1.id,
+        memberId,
+        evaluatedAt: "2026-04-21T00:00:00.000Z",
+        fromLevel: 1,
+        toLevel: 1,
+        promoted: false,
+        pathTaken: "none",
+        reason: "{}"
+      })
+    ).toThrow(/UNIQUE/);
+
+    repo.close();
+  });
+});
