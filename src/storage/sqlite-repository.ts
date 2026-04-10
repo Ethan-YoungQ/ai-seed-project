@@ -448,6 +448,30 @@ CREATE TABLE IF NOT EXISTS reaction_tracked_messages (
 
 CREATE INDEX IF NOT EXISTS idx_reaction_tracked_messages_by_member
   ON reaction_tracked_messages (member_id);
+
+CREATE TABLE IF NOT EXISTS feishu_live_cards (
+  id TEXT PRIMARY KEY,
+  card_type TEXT NOT NULL,
+  feishu_message_id TEXT NOT NULL UNIQUE,
+  feishu_chat_id TEXT NOT NULL,
+  camp_id TEXT NOT NULL,
+  period_id TEXT,
+  window_id TEXT,
+  card_version TEXT NOT NULL,
+  state_json TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  last_patched_at TEXT,
+  expires_at TEXT NOT NULL,
+  closed_reason TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_feishu_live_cards_active
+  ON feishu_live_cards(card_type, feishu_chat_id)
+  WHERE closed_reason IS NULL;
+
+CREATE INDEX IF NOT EXISTS idx_feishu_live_cards_expires
+  ON feishu_live_cards(expires_at)
+  WHERE closed_reason IS NULL;
 `;
 
 function asBoolean(value: number) {
