@@ -8,6 +8,9 @@
  * - Graduation trigger
  *
  * Purple header "⚙️ 管理员面板".
+ *
+ * NOTE: Uses column_set instead of deprecated "action" tag for schema 2.0 compatibility.
+ * Feishu card schema 2.0 does NOT support the "action" element type.
  */
 
 import type { FeishuCardJson } from "../types.js";
@@ -46,6 +49,56 @@ export interface AdminPanelState {
   lastActionMessage?: string;
   /** Last action success flag */
   lastActionSuccess?: boolean;
+}
+
+// ============================================================================
+// Schema 2.0 helper: column_set row for select + button
+// ============================================================================
+
+function columnSetRow(
+  selectElement: Record<string, unknown>,
+  buttonElement: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        weight: 3,
+        vertical_align: "center",
+        elements: [selectElement],
+      },
+      {
+        tag: "column",
+        width: "weighted",
+        weight: 2,
+        vertical_align: "center",
+        elements: [buttonElement],
+      },
+    ],
+  };
+}
+
+function columnSetSingleButton(
+  buttonElement: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        weight: 1,
+        vertical_align: "center",
+        elements: [buttonElement],
+      },
+    ],
+  };
 }
 
 // ============================================================================
@@ -107,9 +160,8 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
     value: String(n),
   }));
 
-  elements.push({
-    tag: "action",
-    actions: [
+  elements.push(
+    columnSetRow(
       {
         tag: "select_static",
         placeholder: { tag: "plain_text", content: "选择周期编号" },
@@ -121,9 +173,9 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
         text: { tag: "plain_text", content: "🟢 开启此周期" },
         type: "primary",
         value: { action: "admin_panel_open_period" },
-      },
-    ],
-  });
+      }
+    )
+  );
 
   elements.push({ tag: "hr" });
 
@@ -142,9 +194,8 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
     value: code,
   }));
 
-  elements.push({
-    tag: "action",
-    actions: [
+  elements.push(
+    columnSetRow(
       {
         tag: "select_static",
         placeholder: { tag: "plain_text", content: "选择窗口" },
@@ -156,9 +207,9 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
         text: { tag: "plain_text", content: "🟢 开启此窗口" },
         type: "primary",
         value: { action: "admin_panel_open_window" },
-      },
-    ],
-  });
+      }
+    )
+  );
 
   elements.push({ tag: "hr" });
 
@@ -169,32 +220,26 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
       "🎓 **毕业结算**\n结束最后一个周期并触发 FINAL 窗口结算。此操作不可撤销。",
   });
 
-  elements.push({
-    tag: "action",
-    actions: [
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "🔴 触发毕业结算" },
-        type: "danger",
-        value: { action: "admin_panel_graduation" },
-      },
-    ],
-  });
+  elements.push(
+    columnSetSingleButton({
+      tag: "button",
+      text: { tag: "plain_text", content: "🔴 触发毕业结算" },
+      type: "danger",
+      value: { action: "admin_panel_graduation" },
+    })
+  );
 
   elements.push({ tag: "hr" });
 
   // --- Refresh button ---
-  elements.push({
-    tag: "action",
-    actions: [
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "🔄 刷新状态" },
-        type: "default",
-        value: { action: "admin_panel_refresh" },
-      },
-    ],
-  });
+  elements.push(
+    columnSetSingleButton({
+      tag: "button",
+      text: { tag: "plain_text", content: "🔄 刷新状态" },
+      type: "default",
+      value: { action: "admin_panel_refresh" },
+    })
+  );
 
   return {
     schema: "2.0",
