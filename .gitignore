@@ -19,3 +19,5 @@ tmp-*.log
 logs/
 dist-dashboard/
 apps/dashboard/node_modules/
+apps/dashboard/src/**/*.js
+apps/dashboard/tests/**/*.js

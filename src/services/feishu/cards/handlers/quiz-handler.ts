@@ -89,7 +89,7 @@ export const quizSubmitHandler: CardHandler = async (
   ctx: CardActionContext,
   deps: CardHandlerDeps
 ): Promise<CardActionResult> => {
-  const { actionPayload, operatorOpenId, triggerId, messageId, receivedAt } = ctx;
+  const { actionPayload, operatorOpenId, triggerId, messageId } = ctx;
   const setCode = actionPayload["setCode"] as string | undefined;
 
   if (!setCode) {

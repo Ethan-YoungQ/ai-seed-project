@@ -59,7 +59,7 @@ export class DeadLetterStore {
 
   listUnresolved(limit = 100): DeadLetterEntry[] {
     const rows = this.db
-      .prepare<[], DeadLetterDbRow>(
+      .prepare<[number], DeadLetterDbRow>(
         `SELECT * FROM feishu_card_patch_deadletters
           WHERE resolved_at IS NULL
           ORDER BY enqueued_at ASC

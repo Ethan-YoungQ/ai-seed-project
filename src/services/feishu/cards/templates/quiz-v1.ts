@@ -89,7 +89,7 @@ export function buildQuizCard(state: QuizCardState): FeishuCardJson {
 
   const card: FeishuCardJson = {
     schema: "2.0",
-    header,
+    header: header as unknown as Record<string, unknown>,
     body: { elements }
   };
 

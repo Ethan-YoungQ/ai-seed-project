@@ -120,14 +120,23 @@ function sendResult(reply: FastifyReply, result: CardActionResult): void {
 export const feishuCardsPlugin: FastifyPluginAsync<FeishuCardsPluginOptions> =
   async (app: FastifyInstance, options: FeishuCardsPluginOptions) => {
     // Route 1: Card action callbacks from Feishu
-    // TODO(deploy): Add Feishu webhook signature verification via X-Lark-Signature
-    // Requires FEISHU_VERIFICATION_TOKEN + FEISHU_ENCRYPT_KEY from .env
-    // See: https://open.feishu.cn/document/server-docs/event-subscription-guide/event-subscription-configure-/encrypt-key-encryption-configuration-case
+    // Verify Feishu verification token to prevent forged callbacks
+    const expectedToken = process.env.FEISHU_VERIFICATION_TOKEN;
+
     app.post("/api/v2/feishu/card-action", async (request, reply) => {
       const parsed = cardActionBodySchema.safeParse(request.body);
       if (!parsed.success) {
         void reply.code(400).send({ error: "invalid_body", details: parsed.error.flatten() });
         return;
+      }
+
+      // Verify Feishu verification token (header.token or event.token)
+      if (expectedToken) {
+        const callbackToken = parsed.data.header?.token ?? parsed.data.event.token;
+        if (callbackToken !== expectedToken) {
+          void reply.code(401).send({ error: "invalid_verification_token" });
+          return;
+        }
       }
       const { event } = parsed.data;
       const actionName = event.action.name;

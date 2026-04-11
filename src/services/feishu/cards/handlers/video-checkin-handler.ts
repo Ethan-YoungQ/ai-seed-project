@@ -13,7 +13,7 @@ export const videoCheckinCompleteHandler: CardHandler = async (
   ctx: CardActionContext,
   deps: CardHandlerDeps
 ): Promise<CardActionResult> => {
-  const { operatorOpenId, receivedAt } = ctx;
+  const { operatorOpenId } = ctx;
 
   const member = deps.repo.findMemberByOpenId(operatorOpenId);
   if (!member) {

@@ -229,7 +229,6 @@ export async function createApp(options?: {
       baseAppConfigured: Boolean(feishuConfig.base.appToken),
       baseTablesConfigured,
       baseReady,
-      baseTables: feishuConfig.base.tables,
       phaseOne: {
         homeTemplates: {
           learner: "docs/feishu/learner-homepage-copy.md",
@@ -245,7 +244,6 @@ export async function createApp(options?: {
       llm: {
         enabled: llmConfig.enabled,
         provider: llmConfig.provider,
-        baseUrl: llmConfig.baseUrl || null,
         textModel: llmConfig.textModel,
         fileModel: llmConfig.fileModel || null,
         fileExtractor: llmConfig.fileExtractor,
