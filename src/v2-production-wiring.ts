@@ -15,6 +15,7 @@ import type { AggregatorDeps } from "./domain/v2/aggregator.js";
 import type { ScoringDimension, ScoringItemCode } from "./domain/v2/scoring-items-config.js";
 import type { SqliteRepository } from "./storage/sqlite-repository.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
+import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/admin-panel-handler.js";
 
 // ---------------------------------------------------------------------------
 // IngestorDeps adapter
@@ -107,12 +108,8 @@ function buildIngestorDeps(repo: SqliteRepository, campId: string): IngestorDeps
       });
     },
 
-    linkEventToLlmTask(_eventId: string, _taskId: string) {
-      // The canonical FK is v2_llm_scoring_tasks.event_id (set during
-      // insertLlmTask). The event's llm_task_id column is a denormalized
-      // convenience field — the repository lacks a dedicated setter for it.
-      // A follow-up should add SqliteRepository.setEventLlmTaskId() so
-      // the review queue JOIN (e.llm_task_id = t.id) works for LLM items.
+    linkEventToLlmTask(eventId: string, taskId: string) {
+      repo.setEventLlmTaskId(eventId, taskId);
     },
 
     runInTransaction<T>(fn: () => T): T {
@@ -146,19 +143,19 @@ function buildIngestorDeps(repo: SqliteRepository, campId: string): IngestorDeps
 function buildAggregatorDeps(repo: SqliteRepository): AggregatorDeps {
   return {
     findEventById(id: string) {
-      // The repository stores events via findEventBySourceRef but has no
-      // direct getById. We use a lightweight query via the repo's internal
-      // mapScoringEventRow equivalent by leveraging findEventBySourceRef
-      // indirectly. Since ScoringAggregator only needs the event for
-      // applyDecision (which is gated on review_required status), and
-      // the card adapters already stub this, we provide a best-effort
-      // lookup. The repository *does* have the data; it just lacks a
-      // public getById. For production we search the DB directly.
-      // However, since `db` is private, we cannot access it here.
-      // We return null and note that a `getEventById` method should be
-      // added to SqliteRepository in a follow-up.
-      void id;
-      return null;
+      const ev = repo.getEventById(id);
+      if (!ev) return null;
+      return {
+        id: ev.id,
+        memberId: ev.memberId,
+        periodId: ev.periodId,
+        itemCode: ev.itemCode,
+        dimension: ev.dimension as ScoringDimension,
+        scoreDelta: ev.scoreDelta,
+        status: ev.status as "pending" | "approved" | "rejected" | "review_required",
+        reviewNote: ev.reviewNote,
+        decidedAt: ev.decidedAt,
+      };
     },
 
     updateEventStatus(input) {
@@ -348,6 +345,71 @@ function buildLlmWorkerStatus() {
 }
 
 // ---------------------------------------------------------------------------
+// Admin panel lifecycle adapter
+// ---------------------------------------------------------------------------
+
+/**
+ * Builds AdminPanelLifecycleDeps by delegating to existing
+ * buildPeriodLifecycle logic and SqliteRepository methods.
+ */
+function buildAdminPanelLifecycle(
+  repo: SqliteRepository,
+  campId: string,
+  periodLifecycle: ReturnType<typeof buildPeriodLifecycle>
+): AdminPanelLifecycleDeps {
+  return {
+    async openNewPeriod(number: number) {
+      return periodLifecycle.openNewPeriod(number);
+    },
+
+    async openWindow(code: string) {
+      return periodLifecycle.openWindow(code);
+    },
+
+    async closeGraduation() {
+      const finalWindow = repo.findWindowByCode(campId, "FINAL");
+      if (!finalWindow) {
+        return { ok: false, reason: "FINAL 窗口不存在" };
+      }
+
+      if (finalWindow.settlementState === "settled") {
+        return { ok: true };
+      }
+
+      const now = new Date().toISOString();
+      repo.markWindowSettled(finalWindow.id, now);
+      return { ok: true, shouldSettleWindowId: finalWindow.id };
+    },
+
+    async getActivePeriod() {
+      const p = repo.findActivePeriod(campId);
+      if (!p) return null;
+      return { number: p.number, startedAt: p.startedAt };
+    },
+
+    async getActiveWindow() {
+      const w = repo.findOpenWindowWithOpenSlot(campId);
+      if (!w) return null;
+      return {
+        code: w.code,
+        settlementState: w.settlementState,
+      };
+    },
+
+    async countMembers() {
+      const all = repo.listMembers(campId);
+      const students = all.filter(
+        (m) => m.roleType === "student"
+      );
+      const active = students.filter(
+        (m) => m.isParticipant && !m.isExcludedFromBoard
+      );
+      return { total: all.length, activeStudents: active.length };
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Public factory
 // ---------------------------------------------------------------------------
 
@@ -357,6 +419,7 @@ export interface V2ProductionDeps {
   periodLifecycle: ReturnType<typeof buildPeriodLifecycle>;
   windowSettler: ReturnType<typeof buildWindowSettler>;
   llmWorker: ReturnType<typeof buildLlmWorkerStatus>;
+  adminPanelLifecycle: AdminPanelLifecycleDeps;
 }
 
 export function wireV2Production(repo: SqliteRepository): V2ProductionDeps {
@@ -371,6 +434,7 @@ export function wireV2Production(repo: SqliteRepository): V2ProductionDeps {
   const periodLifecycle = buildPeriodLifecycle(repo, campId);
   const windowSettler = buildWindowSettler(repo, campId);
   const llmWorker = buildLlmWorkerStatus();
+  const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
 
-  return { ingestor, aggregator, periodLifecycle, windowSettler, llmWorker };
+  return { ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, adminPanelLifecycle: adminPanelLifecycleInstance };
 }

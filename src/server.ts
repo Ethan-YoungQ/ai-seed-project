@@ -18,6 +18,7 @@ const app = await createApp({
   periodLifecycle: v2.periodLifecycle,
   windowSettler: v2.windowSettler,
   llmWorker: v2.llmWorker,
+  adminPanelLifecycle: v2.adminPanelLifecycle,
 });
 
 try {

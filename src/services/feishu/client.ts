@@ -97,6 +97,7 @@ export interface FeishuMemberProfile {
 export interface FeishuApiClient {
   validateCredentials(): Promise<{ tenantKey?: string }>;
   sendTextMessage(input: FeishuMessageSendInput): Promise<{ messageId?: string }>;
+  sendCardMessage(input: { chatId: string; cardJson: Record<string, unknown> }): Promise<{ messageId: string }>;
   probeGroupMessageAccess(input: { chatId: string }): Promise<{
     ok: boolean;
     code?: number;
@@ -162,6 +163,26 @@ export class LarkFeishuApiClient implements FeishuApiClient {
         content: JSON.stringify({
           text: input.text
         })
+      }
+    });
+
+    return {
+      messageId: response?.data?.message_id
+    };
+  }
+
+  async sendCardMessage(input: {
+    chatId: string;
+    cardJson: Record<string, unknown>;
+  }): Promise<{ messageId: string }> {
+    const response = await this.client.im.message.create({
+      params: {
+        receive_id_type: "chat_id"
+      },
+      data: {
+        receive_id: input.chatId,
+        msg_type: "interactive",
+        content: JSON.stringify(input.cardJson)
       }
     });
 

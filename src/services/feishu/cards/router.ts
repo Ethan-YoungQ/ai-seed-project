@@ -62,6 +62,7 @@ function resolveCardType(actionName: string, actionValue: Record<string, unknown
   if (actionName.startsWith("review_")) return "review_queue";
   if (actionName.startsWith("member_")) return "member_mgmt";
   if (actionName.startsWith("manual_")) return "manual_adjust";
+  if (actionName.startsWith("admin_panel_")) return "admin_panel";
   if (actionName.startsWith("video_")) return "video_checkin";
   if (actionName.startsWith("peer_review_")) return "peer_review_vote";
   if (actionName.startsWith("llm_")) return "llm_decision";

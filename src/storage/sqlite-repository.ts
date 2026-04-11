@@ -1666,6 +1666,93 @@ export class SqliteRepository {
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Live cards (feishu_live_cards)
+  // ---------------------------------------------------------------------------
+
+  findLiveCardByTypeAndChat(
+    cardType: string,
+    chatId: string
+  ): {
+    id: string;
+    cardType: string;
+    feishuMessageId: string;
+    feishuChatId: string;
+    campId: string;
+    periodId: string | null;
+    windowId: string | null;
+    cardVersion: string;
+    stateJson: unknown;
+    sentAt: string;
+    lastPatchedAt: string | null;
+    expiresAt: string;
+    closedReason: string | null;
+  } | null {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM feishu_live_cards
+         WHERE card_type = ? AND feishu_chat_id = ? AND closed_reason IS NULL
+         ORDER BY sent_at DESC LIMIT 1`
+      )
+      .get(cardType, chatId) as Record<string, unknown> | undefined;
+
+    if (!row) return null;
+
+    let stateJson: unknown = null;
+    if (typeof row.state_json === "string") {
+      try {
+        stateJson = JSON.parse(row.state_json);
+      } catch {
+        stateJson = row.state_json;
+      }
+    }
+
+    return {
+      id: String(row.id),
+      cardType: String(row.card_type),
+      feishuMessageId: String(row.feishu_message_id),
+      feishuChatId: String(row.feishu_chat_id),
+      campId: String(row.camp_id),
+      periodId: row.period_id === null ? null : String(row.period_id),
+      windowId: row.window_id === null ? null : String(row.window_id),
+      cardVersion: String(row.card_version),
+      stateJson,
+      sentAt: String(row.sent_at),
+      lastPatchedAt: row.last_patched_at === null ? null : String(row.last_patched_at),
+      expiresAt: String(row.expires_at),
+      closedReason: row.closed_reason === null ? null : String(row.closed_reason),
+    };
+  }
+
+  updateLiveCardState(id: string, stateJson: unknown, patchedAt: string): void {
+    this.db
+      .prepare(
+        `UPDATE feishu_live_cards
+         SET state_json = ?, last_patched_at = ?
+         WHERE id = ?`
+      )
+      .run(JSON.stringify(stateJson), patchedAt, id);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Event lookup by id (needed by aggregator)
+  // ---------------------------------------------------------------------------
+
+  getEventById(id: string): ScoringItemEventRecord | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM v2_scoring_item_events WHERE id = ?`)
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapScoringEventRow(row) : undefined;
+  }
+
+  setEventLlmTaskId(eventId: string, taskId: string): void {
+    this.db
+      .prepare(
+        `UPDATE v2_scoring_item_events SET llm_task_id = ? WHERE id = ?`
+      )
+      .run(taskId, eventId);
+  }
+
   close() {
     this.db.close();
   }

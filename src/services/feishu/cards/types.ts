@@ -7,7 +7,7 @@
 // Card Type Definitions
 // ============================================================================
 
-/** Union of all 16 card types in the Sub2 protocol */
+/** Union of all 17 card types in the Sub2 protocol */
 export type CardType =
   | "period_open"
   | "window_open"
@@ -24,7 +24,8 @@ export type CardType =
   | "c1_echo"
   | "review_queue"
   | "member_mgmt"
-  | "manual_adjust";
+  | "manual_adjust"
+  | "admin_panel";
 
 /** Version directive for card handling strategy */
 export type CardVersionDirective = "current" | "legacy" | "expired";

@@ -31,6 +31,9 @@ import {
   feishuClientAdapter,
   currentVersionFor
 } from "./services/feishu/cards/adapters.js";
+import { createAdminPanelHandlers } from "./services/feishu/cards/handlers/admin-panel-handler.js";
+import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/admin-panel-handler.js";
+import { createMessageCommandHandler } from "./services/feishu/message-commands.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -91,6 +94,7 @@ export async function createApp(options?: {
   llmWorker?: unknown;
   reactionTracker?: unknown;
   memberSync?: unknown;
+  adminPanelLifecycle?: AdminPanelLifecycleDeps;
 }) {
   loadLocalEnv();
   const app = Fastify({
@@ -119,9 +123,25 @@ export async function createApp(options?: {
   const feishuApiClient =
     options?.feishuApiClient ?? (feishuConfig.enabled ? new LarkFeishuApiClient(feishuConfig) : undefined);
 
+  const cardRepoDeps = cardRepoAdapter(repository);
+
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
-    ? new LarkFeishuWsRuntime(feishuConfig, async () => {
-        // v1 inbound pipeline removed; v2 uses card-button events via /api/v2/events
+    ? new LarkFeishuWsRuntime(feishuConfig, async (message) => {
+        try {
+          console.log(`[AdminPanel] WS onMessage callback fired, message=${!!message}, adminPanelLifecycle=${!!options?.adminPanelLifecycle}, feishuApiClient=${!!feishuApiClient}`);
+          if (options?.adminPanelLifecycle && feishuApiClient && message) {
+            const handler = createMessageCommandHandler({
+              feishuClient: feishuApiClient,
+              lifecycle: options.adminPanelLifecycle,
+              cardDeps: { repo: cardRepoDeps },
+            });
+            await handler(message);
+          } else {
+            console.log("[AdminPanel] WS onMessage skipped: missing deps or message");
+          }
+        } catch (error) {
+          console.error("[AdminPanel] Error in onMessage callback:", error);
+        }
       })
     : new NoopFeishuWsRuntime());
 
@@ -287,7 +307,7 @@ export async function createApp(options?: {
   // during construction, so buildApp() completes without throwing.
   // ---------------------------------------------------------------------------
   const cardDispatcher = new CardActionDispatcher({
-    repo: cardRepoAdapter(repository),
+    repo: cardRepoDeps,
     ingestor: ingestorAdapter(v2.ingestor),
     aggregator: aggregatorAdapter(v2.aggregator),
     feishuClient: feishuClientAdapter(feishuApiClient),
@@ -306,6 +326,14 @@ export async function createApp(options?: {
     clock: () => new Date(),
     uuid: () => crypto.randomUUID()
   });
+  if (options?.adminPanelLifecycle) {
+    const adminHandlers = createAdminPanelHandlers(options.adminPanelLifecycle);
+    cardDispatcher.register("admin_panel", "admin_panel_open_period", adminHandlers.openPeriod);
+    cardDispatcher.register("admin_panel", "admin_panel_open_window", adminHandlers.openWindow);
+    cardDispatcher.register("admin_panel", "admin_panel_graduation", adminHandlers.graduation);
+    cardDispatcher.register("admin_panel", "admin_panel_refresh", adminHandlers.refresh);
+  }
+
   await app.register(feishuCardsPlugin, {
     dispatcher: cardDispatcher,
     currentVersion: currentVersionFor
