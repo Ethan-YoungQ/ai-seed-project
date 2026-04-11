@@ -296,7 +296,10 @@ export async function createApp(options?: {
   registerV2PeriodsCloseRoute(app, v2);
   registerV2WindowsOpenRoute(app, v2);
   registerV2GraduationCloseRoute(app, v2);
-  registerV2BoardRoutes(app, v2);
+  registerV2BoardRoutes(app, v2, {
+    feishuApiClient,
+    botChatId: feishuConfig.botChatId,
+  });
   registerV2AdminReviewRoutes(app, v2);
   registerV2AdminMembersRoutes(app, v2);
   registerV2LlmStatusRoute(app, v2);

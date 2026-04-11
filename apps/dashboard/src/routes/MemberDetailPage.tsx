@@ -2,6 +2,7 @@ import { CSSProperties } from "react";
 import { useParams } from "react-router";
 import { useMemberDetail } from "../hooks/useMemberDetail";
 import { MemberHero } from "../components/member/MemberHero";
+import { BadgeWall } from "../components/member/BadgeWall";
 import { AqRadarChart } from "../components/member/AqRadarChart";
 import { DimensionBreakdown } from "../components/member/DimensionBreakdown";
 import { WindowTimeline } from "../components/member/WindowTimeline";
@@ -74,7 +75,7 @@ function ErrorCard({ message, onRetry }: ErrorCardProps) {
       <span style={{ fontSize: "24px" }}>⚠️</span>
       <p style={msgStyle}>{message}</p>
       <button style={btnStyle} onClick={onRetry}>
-        RETRY
+        重试
       </button>
     </div>
   );
@@ -124,7 +125,7 @@ export function MemberDetailPage() {
     };
     return (
       <div style={pageStyle}>
-        <p style={emptyStyle}>Member not found.</p>
+        <p style={emptyStyle}>未找到该成员</p>
       </div>
     );
   }
@@ -137,7 +138,13 @@ export function MemberDetailPage() {
         memberName={detail.memberName}
         currentLevel={detail.currentLevel}
         cumulativeAq={detail.cumulativeAq}
+        avatarUrl={detail.avatarUrl}
       />
+      {detail.badges && detail.badges.length > 0 && (
+        <div style={{ marginTop: "16px" }}>
+          <BadgeWall badges={detail.badges} />
+        </div>
+      )}
       <div style={gridStyle} className="member-detail-grid">
         <div style={fullWidthStyle}>
           <WindowTimeline snapshots={detail.windowSnapshots} />

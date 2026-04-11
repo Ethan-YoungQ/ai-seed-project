@@ -113,6 +113,7 @@ export interface FeishuApiClient {
     bytes: Buffer;
   }>;
   getMemberProfile?(input: FeishuMemberProfileInput): Promise<FeishuMemberProfile>;
+  getChatName?(chatId: string): Promise<string | null>;
   createBaseRecord(input: FeishuBaseRecordInput): Promise<{ recordId?: string }>;
   searchBaseRecords(input: FeishuBaseRecordSearchInput): Promise<Array<{ recordId: string; fields?: Record<string, unknown> }>>;
   updateBaseRecord(input: FeishuBaseRecordUpdateInput): Promise<{ recordId?: string }>;
@@ -254,6 +255,17 @@ export class LarkFeishuApiClient implements FeishuApiClient {
       displayName: String(user?.nickname ?? user?.name ?? input.userId),
       avatarUrl: avatar?.avatar_240 ?? avatar?.avatar_origin ?? undefined
     };
+  }
+
+  async getChatName(chatId: string): Promise<string | null> {
+    try {
+      const resp = await this.client.im.chat.get({
+        path: { chat_id: chatId },
+      });
+      return resp?.data?.name ?? null;
+    } catch {
+      return null;
+    }
   }
 
   async getMessageFile(input: FeishuMessageFileInput) {

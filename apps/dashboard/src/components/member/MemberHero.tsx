@@ -1,4 +1,4 @@
-import { CSSProperties } from "react";
+import { CSSProperties, useState } from "react";
 import { Link } from "react-router";
 import { LevelPill } from "../ui/LevelPill";
 import { getLevelConfig } from "../../lib/levels";
@@ -7,10 +7,12 @@ interface MemberHeroProps {
   memberName: string;
   currentLevel: number;
   cumulativeAq: number;
+  avatarUrl?: string;
 }
 
-export function MemberHero({ memberName, currentLevel, cumulativeAq }: MemberHeroProps) {
+export function MemberHero({ memberName, currentLevel, cumulativeAq, avatarUrl }: MemberHeroProps) {
   const config = getLevelConfig(currentLevel);
+  const [avatarError, setAvatarError] = useState(false);
 
   const containerStyle: CSSProperties = {
     display: "flex",
@@ -28,6 +30,45 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq }: MemberHer
     display: "inline-flex",
     alignItems: "center",
     gap: "6px",
+  };
+
+  const nameRowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: "16px",
+  };
+
+  const avatarSize = 64;
+  const showImage = avatarUrl && !avatarError;
+
+  const avatarContainerStyle: CSSProperties = {
+    width: avatarSize,
+    height: avatarSize,
+    minWidth: avatarSize,
+    borderRadius: "50%",
+    border: `3px solid ${config.color}`,
+    overflow: "hidden",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: showImage ? "transparent" : "var(--bg-elevated)",
+    boxShadow: `0 0 12px ${config.color}66, 0 0 24px ${config.color}33`,
+  };
+
+  const avatarImgStyle: CSSProperties = {
+    width: "100%",
+    height: "100%",
+    objectFit: "cover",
+    display: "block",
+  };
+
+  const avatarFallbackStyle: CSSProperties = {
+    fontFamily: "var(--font-display)",
+    fontSize: "24px",
+    fontWeight: "bold",
+    color: config.color,
+    lineHeight: 1,
+    userSelect: "none",
   };
 
   const nameStyle: CSSProperties = {
@@ -80,7 +121,23 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq }: MemberHer
       <Link to="/dashboard" style={backLinkStyle}>
         ← LEADERBOARD
       </Link>
-      <h1 style={nameStyle}>{memberName}</h1>
+      <div style={nameRowStyle}>
+        <div style={avatarContainerStyle}>
+          {showImage ? (
+            <img
+              src={avatarUrl}
+              alt={memberName}
+              style={avatarImgStyle}
+              onError={() => setAvatarError(true)}
+            />
+          ) : (
+            <span style={avatarFallbackStyle}>
+              {memberName.charAt(0)}
+            </span>
+          )}
+        </div>
+        <h1 style={nameStyle}>{memberName}</h1>
+      </div>
       <div style={metaRowStyle}>
         <span style={pillWrapStyle}>
           <LevelPill level={currentLevel} />

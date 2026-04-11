@@ -7,6 +7,7 @@ export interface UseRankingState {
   data: RankingResponse | null;
   loading: boolean;
   error: string | null;
+  groupName: string;
   refetch: () => void;
 }
 
@@ -36,7 +37,7 @@ export function useRanking(campId?: string): UseRankingState {
         if (!cancelled) {
           if (import.meta.env.DEV) {
             console.warn("[useRanking] API unavailable, using mock data");
-            setData({ ok: true, campId: "demo", rows: MOCK_RANKING });
+            setData({ ok: true, campId: "demo", rows: MOCK_RANKING, groupName: "HBU奇点玩家" });
           } else {
             setError(_err instanceof Error ? _err.message : "Unknown error");
           }
@@ -50,5 +51,7 @@ export function useRanking(campId?: string): UseRankingState {
     };
   }, [campId, tick]);
 
-  return { data, loading, error, refetch };
+  const groupName = data?.groupName ?? "AI 训练营";
+
+  return { data, loading, error, groupName, refetch };
 }

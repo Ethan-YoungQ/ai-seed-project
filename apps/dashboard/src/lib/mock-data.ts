@@ -3,6 +3,7 @@
  * Used in development mode only.
  */
 import type { RankingRow, MemberBoardDetail } from "../types/api";
+import type { EarnedBadge } from "./badges";
 
 const NAMES = [
   "张三", "李四", "王五", "赵六", "陈七",
@@ -14,6 +15,44 @@ function dims(k: number, h: number, c: number, s: number, g: number) {
   return { K: k, H: h, C: c, S: s, G: g };
 }
 
+/**
+ * Mock badge assignments — 分散给 ~8 名学员，模拟真实勋章分布。
+ * key = memberId
+ */
+const MOCK_BADGES: Record<string, EarnedBadge[]> = {
+  "m-1": [
+    { badgeId: "b1-mvp", periodNumber: 3 },
+    { badgeId: "b1-mvp", periodNumber: 5 },
+    { badgeId: "b3-K", periodNumber: 2 },
+  ],
+  "m-2": [
+    { badgeId: "b3-H", periodNumber: 3 },
+    { badgeId: "b2-breakthrough", periodNumber: 4 },
+  ],
+  "m-3": [
+    { badgeId: "b3-C", periodNumber: 4 },
+  ],
+  "m-4": [
+    { badgeId: "b2-breakthrough", periodNumber: 5 },
+    { badgeId: "b3-S", periodNumber: 5 },
+  ],
+  "m-5": [
+    { badgeId: "b1-mvp", periodNumber: 4 },
+    { badgeId: "b3-K", periodNumber: 7 },
+  ],
+  "m-7": [
+    { badgeId: "b1-mvp", periodNumber: 6 },
+    { badgeId: "b3-S", periodNumber: 5 },
+  ],
+  "m-9": [
+    { badgeId: "b2-breakthrough", periodNumber: 3 },
+  ],
+  "m-11": [
+    { badgeId: "b3-G", periodNumber: 6 },
+    { badgeId: "b2-breakthrough", periodNumber: 6 },
+  ],
+};
+
 export const MOCK_RANKING: RankingRow[] = NAMES.map((name, i) => {
   const level = i < 1 ? 5 : i < 3 ? 4 : i < 6 ? 3 : i < 10 ? 2 : 1;
   const aq = 70 - i * 4 + Math.floor(Math.random() * 5);
@@ -24,14 +63,17 @@ export const MOCK_RANKING: RankingRow[] = NAMES.map((name, i) => {
     Math.floor(3 + Math.random() * 5),
     Math.floor(7 + Math.random() * 8)
   );
+  const memberId = `m-${i + 1}`;
   return {
-    memberId: `m-${i + 1}`,
+    memberId,
     memberName: name,
+    avatarUrl: `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`,
     cumulativeAq: aq,
     latestWindowAq: Math.floor(aq * 0.3),
     currentLevel: level,
     dimensions: d,
     rank: i + 1,
+    badges: MOCK_BADGES[memberId] ?? [],
   };
 }).sort((a, b) => b.cumulativeAq - a.cumulativeAq)
   .map((row, i) => ({ ...row, rank: i + 1 }));
@@ -102,9 +144,11 @@ export function getMockMemberDetail(memberId: string): MemberBoardDetail | null 
   return {
     memberId: row.memberId,
     memberName: row.memberName,
+    avatarUrl: row.avatarUrl,
     currentLevel: row.currentLevel,
     cumulativeAq: row.cumulativeAq,
     dimensions: row.dimensions,
+    badges: row.badges ?? [],
     windowSnapshots: windows,
     promotions,
   };
