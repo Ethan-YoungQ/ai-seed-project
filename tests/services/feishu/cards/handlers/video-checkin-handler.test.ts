@@ -95,10 +95,10 @@ describe("videoCheckinCompleteHandler", () => {
     expect(deps.ingestCalls).toHaveLength(0);
   });
 
-  test("ingest sourceRef is populated from uuid()", async () => {
+  test("ingest sourceRef is the idempotent triggerId", async () => {
     const deps = fakeDeps();
     await videoCheckinCompleteHandler(fakeCtx(), deps);
 
-    expect(deps.ingestCalls[0]).toMatchObject({ sourceRef: "uuid-1" });
+    expect(deps.ingestCalls[0]).toMatchObject({ sourceRef: "t-1" });
   });
 });

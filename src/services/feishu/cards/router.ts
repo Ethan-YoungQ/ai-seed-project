@@ -120,6 +120,9 @@ function sendResult(reply: FastifyReply, result: CardActionResult): void {
 export const feishuCardsPlugin: FastifyPluginAsync<FeishuCardsPluginOptions> =
   async (app: FastifyInstance, options: FeishuCardsPluginOptions) => {
     // Route 1: Card action callbacks from Feishu
+    // TODO(deploy): Add Feishu webhook signature verification via X-Lark-Signature
+    // Requires FEISHU_VERIFICATION_TOKEN + FEISHU_ENCRYPT_KEY from .env
+    // See: https://open.feishu.cn/document/server-docs/event-subscription-guide/event-subscription-configure-/encrypt-key-encryption-configuration-case
     app.post("/api/v2/feishu/card-action", async (request, reply) => {
       const parsed = cardActionBodySchema.safeParse(request.body);
       if (!parsed.success) {

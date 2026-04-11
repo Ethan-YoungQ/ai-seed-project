@@ -29,14 +29,15 @@ export const peerReviewSettleHandler: CardHandler = async (
 
   const now = deps.clock().toISOString();
 
+  const sessionId = ctx.actionPayload["sessionId"];
   for (const item of items) {
     if (item.s1Delta > 0) {
       await deps.ingestor.ingest({
         memberId: item.memberId,
         itemCode: "S1",
         sourceType: "peer_review_settle",
-        sourceRef: deps.uuid(),
-        payload: { sessionId: ctx.actionPayload["sessionId"] },
+        sourceRef: `${ctx.triggerId}:${item.memberId}:s1`,
+        payload: { sessionId },
         requestedDelta: item.s1Delta,
         requestedAt: now
       });
@@ -47,8 +48,8 @@ export const peerReviewSettleHandler: CardHandler = async (
         memberId: item.memberId,
         itemCode: "S2",
         sourceType: "peer_review_settle",
-        sourceRef: deps.uuid(),
-        payload: { sessionId: ctx.actionPayload["sessionId"] },
+        sourceRef: `${ctx.triggerId}:${item.memberId}:s2`,
+        payload: { sessionId },
         requestedDelta: item.s2Delta,
         requestedAt: now
       });

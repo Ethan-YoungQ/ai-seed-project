@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { fetchMemberDetail } from "../lib/api";
+import { getMockMemberDetail } from "../lib/mock-data";
 import type { MemberDetailResponse } from "../types/api";
 
 export interface UseMemberDetailState {
@@ -36,9 +37,19 @@ export function useMemberDetail(memberId: string): UseMemberDetailState {
           setLoading(false);
         }
       })
-      .catch((err: unknown) => {
+      .catch((_err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Unknown error");
+          if (import.meta.env.DEV) {
+            const mock = getMockMemberDetail(memberId);
+            if (mock) {
+              console.warn("[useMemberDetail] API unavailable, using mock data");
+              setData({ ok: true, detail: mock });
+            } else {
+              setError("Member not found");
+            }
+          } else {
+            setError(_err instanceof Error ? _err.message : "Unknown error");
+          }
           setLoading(false);
         }
       });

@@ -28,7 +28,7 @@ export const videoCheckinCompleteHandler: CardHandler = async (
     memberId: member.id,
     itemCode: "G1",
     sourceType: "card_interaction",
-    sourceRef: deps.uuid(),
+    sourceRef: ctx.triggerId,
     payload: { triggerId: ctx.triggerId, messageId: ctx.messageId },
     requestedAt: now
   });

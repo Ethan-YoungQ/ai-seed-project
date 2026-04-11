@@ -79,7 +79,7 @@ export const manualAdjustConfirmHandler: CardHandler = async (
     memberId,
     itemCode,
     sourceType: "operator_manual",
-    sourceRef: deps.uuid(),
+    sourceRef: ctx.triggerId,
     payload: {
       note: noteStr,
       operatorOpenId: ctx.operatorOpenId

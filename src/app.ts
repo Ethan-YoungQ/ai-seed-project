@@ -125,7 +125,9 @@ export async function createApp(options?: {
       })
     : new NoopFeishuWsRuntime());
 
-  await app.register(cors);
+  await app.register(cors, {
+    origin: process.env.CORS_ORIGIN ?? (process.env.APP_ENV === "production" ? false : true),
+  });
   await app.register(sensible);
 
   // ---------------------------------------------------------------------------
@@ -164,10 +166,12 @@ export async function createApp(options?: {
     ok: true
   }));
 
-  app.post("/api/demo/seed", async () => {
-    repository.seedDemo();
-    return { ok: true };
-  });
+  if (process.env.APP_ENV !== "production") {
+    app.post("/api/demo/seed", async () => {
+      repository.seedDemo();
+      return { ok: true };
+    });
+  }
 
   app.get("/api/feishu/status", async () => {
     const llmConfig = readLlmProviderConfig(process.env);

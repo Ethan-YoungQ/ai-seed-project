@@ -128,8 +128,9 @@ async function runDailyCheckinPipeline(
   }
 
   // 4. Write idempotent card_interaction
+  const interactionId = deps.uuid();
   await deps.repo.insertCardInteraction({
-    id: deps.uuid(),
+    id: interactionId,
     memberId,
     periodId: null,
     cardType: "daily_checkin",
@@ -148,7 +149,7 @@ async function runDailyCheckinPipeline(
     memberId,
     itemCode,
     sourceType: "card_interaction",
-    sourceRef: deps.uuid(),
+    sourceRef: interactionId,
     payload: { text },
     requestedAt: ctx.receivedAt
   });
@@ -272,8 +273,9 @@ export const dailyCheckinH2Handler: CardHandler = async (
   }
 
   // 4. Write card_interaction
+  const interactionId = deps.uuid();
   await deps.repo.insertCardInteraction({
-    id: deps.uuid(),
+    id: interactionId,
     memberId,
     periodId: null,
     cardType: "daily_checkin",
@@ -292,7 +294,7 @@ export const dailyCheckinH2Handler: CardHandler = async (
     memberId,
     itemCode: "H2",
     sourceType: "card_interaction",
-    sourceRef: deps.uuid(),
+    sourceRef: interactionId,
     payload: { text, fileKey },
     requestedAt: ctx.receivedAt
   });

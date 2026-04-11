@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { fetchRanking } from "../lib/api";
+import { MOCK_RANKING } from "../lib/mock-data";
 import type { RankingResponse } from "../types/api";
 
 export interface UseRankingState {
@@ -31,9 +32,14 @@ export function useRanking(campId?: string): UseRankingState {
           setLoading(false);
         }
       })
-      .catch((err: unknown) => {
+      .catch((_err: unknown) => {
         if (!cancelled) {
-          setError(err instanceof Error ? err.message : "Unknown error");
+          if (import.meta.env.DEV) {
+            console.warn("[useRanking] API unavailable, using mock data");
+            setData({ ok: true, campId: "demo", rows: MOCK_RANKING });
+          } else {
+            setError(_err instanceof Error ? _err.message : "Unknown error");
+          }
           setLoading(false);
         }
       });
