@@ -87,6 +87,7 @@ describe("loadLocalEnv", () => {
       "LLM_TASK_TIMEOUT_MS",
       "LLM_TEXT_MODEL",
       "LLM_TIMEOUT_MS",
+      "LLM_VISION_MODEL",
       "BOOTSTRAP_OPERATOR_OPEN_IDS",
       "PORT"
     ];
