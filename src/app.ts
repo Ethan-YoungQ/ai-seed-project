@@ -37,8 +37,8 @@ import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/a
 import { quizSelectHandler, quizSubmitHandler, QUIZ_SET_RESOLVER_KEY, type ResolvedQuizSet } from "./services/feishu/cards/handlers/quiz-handler.js";
 import { peerReviewVoteHandler } from "./services/feishu/cards/handlers/peer-review-handler.js";
 import { peerReviewSettleHandler } from "./services/feishu/cards/handlers/peer-review-settle-handler.js";
-import type { QuizQuestion } from "./services/feishu/cards/templates/quiz-v1.js";
 import { createMessageCommandHandler } from "./services/feishu/message-commands.js";
+import { fetchQuizByPeriod, type QuizBankDeps } from "./services/feishu/quiz-bank.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -128,6 +128,12 @@ export async function createApp(options?: {
   const feishuApiClient =
     options?.feishuApiClient ?? (feishuConfig.enabled ? new LarkFeishuApiClient(feishuConfig) : undefined);
 
+  const quizTableId = process.env.FEISHU_BASE_QUIZ_TABLE;
+  const quizBankDeps: QuizBankDeps | undefined =
+    feishuApiClient && feishuConfig.base.appToken && quizTableId
+      ? { feishuClient: feishuApiClient, appToken: feishuConfig.base.appToken, tableId: quizTableId }
+      : undefined;
+
   const cardRepoDeps = cardRepoAdapter(repository);
 
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
@@ -150,6 +156,7 @@ export async function createApp(options?: {
                   .filter((m) => m.roleType === "student")
                   .map((m) => ({ id: m.id, displayName: m.displayName || m.name }));
               },
+              quizBank: quizBankDeps,
             });
             await handler(message);
           } else {
@@ -346,40 +353,12 @@ export async function createApp(options?: {
     uuid: () => crypto.randomUUID(),
     // Quiz set resolver — returns questions with correct answers for scoring
     [QUIZ_SET_RESOLVER_KEY]: async (setCode: string): Promise<ResolvedQuizSet | null> => {
-      // Demo quiz data — matches the card sent by handleQuizTrigger
-      const QUIZ_BANK: Record<string, QuizQuestion[]> = {
-        "demo-quiz-1": [
-          {
-            id: "q1", text: "以下哪项是大语言模型（LLM）的核心技术？",
-            options: [
-              { id: "a", text: "A. Transformer 架构", isCorrect: true },
-              { id: "b", text: "B. 决策树算法", isCorrect: false },
-              { id: "c", text: "C. 线性回归", isCorrect: false },
-              { id: "d", text: "D. K-Means 聚类", isCorrect: false },
-            ],
-          },
-          {
-            id: "q2", text: "Prompt Engineering 的主要目标是什么？",
-            options: [
-              { id: "a", text: "A. 训练新的 AI 模型", isCorrect: false },
-              { id: "b", text: "B. 通过优化输入获得更好的 AI 输出", isCorrect: true },
-              { id: "c", text: "C. 修复 AI 模型的 Bug", isCorrect: false },
-              { id: "d", text: "D. 降低 AI 运行成本", isCorrect: false },
-            ],
-          },
-          {
-            id: "q3", text: "以下哪种做法能有效提高 AI 回答质量？",
-            options: [
-              { id: "a", text: "A. 尽量简短地提问", isCorrect: false },
-              { id: "b", text: "B. 提供具体的上下文和示例", isCorrect: true },
-              { id: "c", text: "C. 使用全大写字母", isCorrect: false },
-              { id: "d", text: "D. 重复提问直到满意", isCorrect: false },
-            ],
-          },
-        ],
-      };
-      const questions = QUIZ_BANK[setCode];
-      return questions ? { questions } : null;
+      if (!quizBankDeps) return null;
+      const match = setCode.match(/^period-(\d+)$/);
+      if (!match) return null;
+      const periodNumber = parseInt(match[1], 10);
+      const state = await fetchQuizByPeriod(quizBankDeps, periodNumber);
+      return state ? { questions: state.questions } : null;
     },
   } as any);
   if (options?.adminPanelLifecycle) {
