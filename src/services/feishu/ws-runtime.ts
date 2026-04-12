@@ -104,12 +104,14 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
           console.log(`[CardAction] Dispatching: action="${input.actionName}", operator=${input.operatorOpenId}`);
           const result = await self.cardActionHandler(input);
+          console.log(`[CardAction] Handler returned: toast=${!!result.toast}, card=${!!result.card}`);
 
           if (result.toast) {
             return { toast: result.toast };
           }
           if (result.card) {
-            return { card: { card_link: result.card } };
+            // Feishu card callback requires { card: { type: "raw", data: {...} } }
+            return { card: { type: "raw", data: result.card } };
           }
           return {};
         } catch (err) {

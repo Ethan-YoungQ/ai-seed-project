@@ -350,31 +350,42 @@ export async function createApp(options?: {
     const actionName = input.actionName ||
       ((actionValue.action as string) ?? "");
 
+    console.log(`[CardAction:app] Received: action="${actionName}", formValue=${JSON.stringify(formValue)}, actionValue=${JSON.stringify(actionValue).slice(0, 200)}`);
+
     const resolvedCardType = resolveCardTypeFromAction(actionName, actionValue);
     if (!resolvedCardType) {
-      console.warn(`[CardAction] Could not resolve card type for action="${actionName}"`);
+      console.warn(`[CardAction:app] Could not resolve card type for action="${actionName}"`);
       return { toast: { type: "error", content: "未知卡片操作" } };
     }
 
-    const result = await cardDispatcher.dispatch({
-      cardType: resolvedCardType,
-      actionName,
-      payload: { ...actionValue, ...formValue },
-      operatorOpenId: input.operatorOpenId,
-      triggerId: crypto.randomUUID(),
-      messageId: input.messageId,
-      chatId: input.chatId,
-      receivedAt: new Date().toISOString(),
-      currentVersion: currentVersionFor(resolvedCardType),
-    });
+    console.log(`[CardAction:app] Resolved cardType="${resolvedCardType}", dispatching...`);
 
-    if (result.newCardJson) {
-      return { card: result.newCardJson as unknown as Record<string, unknown> };
+    try {
+      const result = await cardDispatcher.dispatch({
+        cardType: resolvedCardType,
+        actionName,
+        payload: { ...actionValue, ...formValue },
+        operatorOpenId: input.operatorOpenId,
+        triggerId: crypto.randomUUID(),
+        messageId: input.messageId,
+        chatId: input.chatId,
+        receivedAt: new Date().toISOString(),
+        currentVersion: currentVersionFor(resolvedCardType),
+      });
+
+      console.log(`[CardAction:app] Dispatch result: newCardJson=${!!result.newCardJson}, toast=${JSON.stringify(result.toast ?? null)}`);
+
+      if (result.newCardJson) {
+        return { card: result.newCardJson as unknown as Record<string, unknown> };
+      }
+      if (result.toast) {
+        return { toast: result.toast };
+      }
+      return {};
+    } catch (err) {
+      console.error(`[CardAction:app] Dispatch error:`, err);
+      return { toast: { type: "error", content: "卡片处理失败，请重试" } };
     }
-    if (result.toast) {
-      return { toast: result.toast };
-    }
-    return {};
   });
   await wsRuntime.start();
 
