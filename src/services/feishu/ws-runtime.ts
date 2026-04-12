@@ -29,6 +29,26 @@ export class NoopFeishuWsRuntime implements FeishuWsRuntime {
   setCardActionHandler() {}
 }
 
+// In-memory cache for dropdown selections per user (keyed by operatorOpenId)
+// Entries auto-expire after 10 minutes to prevent memory leaks.
+const selectCache = new Map<string, { value: string; expiresAt: number }>();
+
+function cacheSelect(operatorId: string, selectKey: string, value: string): void {
+  const key = `${operatorId}:${selectKey}`;
+  selectCache.set(key, { value, expiresAt: Date.now() + 10 * 60 * 1000 });
+}
+
+function getCachedSelect(operatorId: string, selectKey: string): string | null {
+  const key = `${operatorId}:${selectKey}`;
+  const entry = selectCache.get(key);
+  if (!entry) return null;
+  if (Date.now() > entry.expiresAt) {
+    selectCache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
 export class LarkFeishuWsRuntime implements FeishuWsRuntime {
   private wsClient?: any;
   private cardActionHandler?: (input: CardActionInput) => Promise<CardActionResponse>;
@@ -58,17 +78,44 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
       const operator = d?.operator ?? {};
       const tag = action.tag ?? "";
 
-      // Ignore non-button interactions (dropdown select, etc.)
-      // Return undefined (not {}) so the SDK sends a plain ACK without data.
-      if (tag === "select_static" || tag === "select_person" || tag === "date_picker" || tag === "picker_time" || tag === "picker_datetime") {
+      const operatorId = operator?.open_id ?? d?.open_id ?? "";
+
+      // Handle dropdown selections: cache the value and return ACK
+      if (tag === "select_static") {
+        const selectName = (action.value as any)?.action ?? action.name ?? "";
+        const selectedOption = action.option ?? "";
+        console.log(`[CardAction] Select cached: operator=${operatorId}, key="${selectName}", value="${selectedOption}"`);
+        if (selectName && selectedOption) {
+          cacheSelect(operatorId, selectName, selectedOption);
+        }
+        return undefined; // plain ACK, no toast
+      }
+
+      // Ignore other non-button interactions
+      if (tag === "select_person" || tag === "date_picker" || tag === "picker_time" || tag === "picker_datetime") {
         console.log(`[CardAction] Ignoring non-button interaction: tag="${tag}"`);
         return undefined;
       }
 
+      // For button clicks, inject cached select values into actionValue
+      const actionValue = action.value ?? {};
+      const enrichedValue = { ...actionValue } as Record<string, unknown>;
+
+      // Inject cached period selection
+      const cachedPeriod = getCachedSelect(operatorId, "admin_panel_select_period");
+      if (cachedPeriod) {
+        enrichedValue["admin_panel_select_period"] = cachedPeriod;
+      }
+      // Inject cached window selection
+      const cachedWindow = getCachedSelect(operatorId, "admin_panel_select_window");
+      if (cachedWindow) {
+        enrichedValue["admin_panel_select_window"] = cachedWindow;
+      }
+
       const input: CardActionInput = {
-        operatorOpenId: operator?.open_id ?? d?.open_id ?? "",
+        operatorOpenId: operatorId,
         actionName: action.name ?? "",
-        actionValue: action.value ?? {},
+        actionValue: enrichedValue,
         formValue: action.form_value,
         messageId: d?.open_message_id ?? d?.context?.open_message_id ?? "",
         chatId: d?.open_chat_id ?? d?.context?.open_chat_id ?? "",

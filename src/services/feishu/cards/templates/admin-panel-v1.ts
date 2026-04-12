@@ -160,28 +160,27 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
     value: String(n),
   }));
 
-  // Use form container so button click includes the dropdown selection in form_value
-  elements.push({
-    tag: "form",
-    name: "form_open_period",
-    elements: [
-      columnSetRow(
-        {
-          tag: "select_static",
-          name: "admin_panel_select_period",
-          placeholder: { tag: "plain_text", content: "选择周期编号" },
-          options: periodOptions,
-        },
-        {
-          tag: "button",
-          name: "admin_panel_open_period",
-          action_type: "form_submit",
-          text: { tag: "plain_text", content: "🟢 开启此周期" },
-          type: "primary",
-        }
-      ),
-    ],
-  });
+  // No form_container — form_submit buttons don't work via WS long connection.
+  // Instead: select_static events are captured server-side, and the stored value
+  // is used when the button is clicked.
+  elements.push(
+    columnSetRow(
+      {
+        tag: "select_static",
+        name: "admin_panel_select_period",
+        placeholder: { tag: "plain_text", content: "选择周期编号" },
+        value: { action: "admin_panel_select_period" },
+        options: periodOptions,
+      },
+      {
+        tag: "button",
+        name: "admin_panel_open_period",
+        text: { tag: "plain_text", content: "🟢 开启此周期" },
+        type: "primary",
+        value: { action: "admin_panel_open_period" },
+      }
+    )
+  );
 
   elements.push({ tag: "hr" });
 
@@ -200,27 +199,24 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
     value: code,
   }));
 
-  elements.push({
-    tag: "form",
-    name: "form_open_window",
-    elements: [
-      columnSetRow(
-        {
-          tag: "select_static",
-          name: "admin_panel_select_window",
-          placeholder: { tag: "plain_text", content: "选择窗口" },
-          options: windowOptions,
-        },
-        {
-          tag: "button",
-          name: "admin_panel_open_window",
-          action_type: "form_submit",
-          text: { tag: "plain_text", content: "🟢 开启此窗口" },
-          type: "primary",
-        }
-      ),
-    ],
-  });
+  elements.push(
+    columnSetRow(
+      {
+        tag: "select_static",
+        name: "admin_panel_select_window",
+        placeholder: { tag: "plain_text", content: "选择窗口" },
+        value: { action: "admin_panel_select_window" },
+        options: windowOptions,
+      },
+      {
+        tag: "button",
+        name: "admin_panel_open_window",
+        text: { tag: "plain_text", content: "🟢 开启此窗口" },
+        type: "primary",
+        value: { action: "admin_panel_open_window" },
+      }
+    )
+  );
 
   elements.push({ tag: "hr" });
 
