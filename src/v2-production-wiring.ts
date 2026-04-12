@@ -217,19 +217,24 @@ function buildPeriodLifecycle(repo: SqliteRepository, campId: string) {
   return {
     async openNewPeriod(number: number) {
       const now = new Date().toISOString();
-      const periodId = crypto.randomUUID();
       const isIceBreaker = number === 1;
 
-      repo.insertPeriod({
-        id: periodId,
-        campId,
-        number,
-        isIceBreaker,
-        startedAt: now,
-        openedByOpId: null,
-        createdAt: now,
-        updatedAt: now,
-      });
+      // Check if this period already exists (avoid UNIQUE constraint violation)
+      const existing = repo.findPeriodByNumber(campId, number);
+      const periodId = existing?.id ?? crypto.randomUUID();
+
+      if (!existing) {
+        repo.insertPeriod({
+          id: periodId,
+          campId,
+          number,
+          isIceBreaker,
+          startedAt: now,
+          openedByOpId: null,
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
 
       // Find or create a window with an open slot
       let window = repo.findOpenWindowWithOpenSlot(campId);
