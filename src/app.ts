@@ -2,6 +2,7 @@ import cors from "@fastify/cors";
 import sensible from "@fastify/sensible";
 import fastifyStatic from "@fastify/static";
 import Fastify from "fastify";
+import crypto from "crypto";
 import { resolve } from "path";
 import { fileURLToPath } from "url";
 
@@ -22,7 +23,7 @@ import { registerV2BoardRoutes } from "./routes/v2/board.js";
 import { registerV2AdminReviewRoutes } from "./routes/v2/admin-review.js";
 import { registerV2AdminMembersRoutes } from "./routes/v2/admin-members.js";
 import { registerV2LlmStatusRoute } from "./routes/v2/llm-status.js";
-import { feishuCardsPlugin } from "./services/feishu/cards/router.js";
+import { feishuCardsPlugin, resolveCardType as resolveCardTypeFromAction } from "./services/feishu/cards/router.js";
 import { CardActionDispatcher } from "./services/feishu/cards/card-action-dispatcher.js";
 import {
   cardRepoAdapter,
@@ -180,7 +181,7 @@ export async function createApp(options?: {
     repository.close();
   });
 
-  await wsRuntime.start();
+  // wsRuntime.start() is called after card dispatcher is set up (see below)
 
   app.get("/api/health", async () => ({
     ok: true
@@ -341,6 +342,41 @@ export async function createApp(options?: {
     dispatcher: cardDispatcher,
     currentVersion: currentVersionFor
   });
+
+  // Wire card action handler to WS runtime and start WebSocket
+  wsRuntime.setCardActionHandler(async (input) => {
+    const actionValue = input.actionValue ?? {};
+    const formValue = input.formValue ?? {};
+    const actionName = input.actionName ||
+      ((actionValue.action as string) ?? "");
+
+    const resolvedCardType = resolveCardTypeFromAction(actionName, actionValue);
+    if (!resolvedCardType) {
+      console.warn(`[CardAction] Could not resolve card type for action="${actionName}"`);
+      return { toast: { type: "error", content: "未知卡片操作" } };
+    }
+
+    const result = await cardDispatcher.dispatch({
+      cardType: resolvedCardType,
+      actionName,
+      payload: { ...actionValue, ...formValue },
+      operatorOpenId: input.operatorOpenId,
+      triggerId: crypto.randomUUID(),
+      messageId: input.messageId,
+      chatId: input.chatId,
+      receivedAt: new Date().toISOString(),
+      currentVersion: currentVersionFor(resolvedCardType),
+    });
+
+    if (result.newCardJson) {
+      return { card: result.newCardJson as unknown as Record<string, unknown> };
+    }
+    if (result.toast) {
+      return { toast: result.toast };
+    }
+    return {};
+  });
+  await wsRuntime.start();
 
   return app;
 }

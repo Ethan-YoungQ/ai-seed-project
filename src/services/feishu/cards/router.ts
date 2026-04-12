@@ -54,7 +54,7 @@ const commandBodySchema = z.object({
  * (e.g., "daily_checkin_k3_submit" → "daily_checkin").
  * Falls back to checking `action.value.action` field which handlers also set.
  */
-function resolveCardType(actionName: string, actionValue: Record<string, unknown>): CardType | null {
+export function resolveCardType(actionName: string, actionValue: Record<string, unknown>): CardType | null {
   // Check action name prefix first
   if (actionName.startsWith("daily_checkin_")) return "daily_checkin";
   if (actionName.startsWith("quiz_")) return "quiz";
