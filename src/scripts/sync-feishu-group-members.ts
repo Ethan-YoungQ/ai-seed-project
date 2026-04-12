@@ -34,7 +34,7 @@ async function main(): Promise<void> {
   console.log(`[sync] 数据库: ${dbPath}`);
 
   // 1. 获取群成员列表（分页）
-  const members: Array<{ openId: string; name: string }> = [];
+  const members: Array<{ openId: string; name: string; avatarUrl: string }> = [];
   let pageToken: string | undefined;
 
   do {
@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     if (resp.data?.items) {
       for (const item of resp.data.items) {
         if (item.member_id && item.name) {
-          members.push({ openId: item.member_id, name: item.name });
+          members.push({ openId: item.member_id, name: item.name, avatarUrl: "" });
         }
       }
     }
@@ -59,7 +59,20 @@ async function main(): Promise<void> {
 
   console.log(`[sync] 群内共 ${members.length} 人`);
 
-  // 2. 过滤掉管理员和 Bot
+  // 2. 获取头像
+  for (const m of members) {
+    try {
+      const profile = await client.contact.user.get({
+        path: { user_id: m.openId },
+        params: { user_id_type: "open_id" },
+      });
+      (m as any).avatarUrl = profile?.data?.user?.avatar?.avatar_240 ?? "";
+    } catch {
+      (m as any).avatarUrl = "";
+    }
+  }
+
+  // 3. 过滤掉管理员和 Bot
   const students = members.filter((m) => !ADMIN_OPEN_IDS.has(m.openId));
   console.log(`[sync] 排除管理员后: ${students.length} 名学员待导入`);
 
@@ -68,7 +81,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // 3. 写入数据库
+  // 4. 写入数据库
   const db = new Database(dbPath);
   db.pragma("journal_mode = WAL");
 
@@ -78,10 +91,11 @@ async function main(): Promise<void> {
 
   const upsert = db.prepare(`
     INSERT INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, source_feishu_open_id, is_participant, is_excluded_from_board, status)
-    VALUES (?, ?, ?, '', '', '', 'student', ?, 1, 0, 'active')
+    VALUES (?, ?, ?, '', ?, '', 'student', ?, 1, 0, 'active')
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
-      source_feishu_open_id = excluded.source_feishu_open_id
+      source_feishu_open_id = excluded.source_feishu_open_id,
+      avatar_url = excluded.avatar_url
   `);
 
   const insertMany = db.transaction((items: typeof students) => {
@@ -90,7 +104,7 @@ async function main(): Promise<void> {
     for (const s of items) {
       const memberId = `user-${s.openId.slice(-8)}`;
       const existing = db.prepare(`SELECT id FROM members WHERE id = ?`).get(memberId);
-      upsert.run(memberId, campId, s.name, s.openId);
+      upsert.run(memberId, campId, s.name, s.avatarUrl, s.openId);
       if (existing) {
         updated++;
         console.log(`  ~ ${s.name} (${memberId}) 已存在，更新 open_id`);
