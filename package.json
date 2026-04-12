@@ -14,6 +14,8 @@
     "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed:ensure": "tsx src/scripts/ensure-bootstrap-data.ts",
     "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts",
+    "reset:launch": "tsx src/scripts/reset-for-launch.ts",
+    "sync:members": "tsx src/scripts/sync-feishu-group-members.ts",
     "ops:bootstrap": "bash scripts/ops/bootstrap-server.sh",
     "ops:deploy": "bash scripts/ops/deploy-app.sh",
     "ops:check": "bash scripts/ops/check-health.sh",
