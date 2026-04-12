@@ -155,6 +155,42 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
           return { toast: { type: "error", content: "处理失败，请重试" } };
         }
       },
+
+      // C2 表情回应: 学员在群内给消息点赞/加表情 → K1 签到(群活动)
+      "im.message.reaction_created_v1": async (data: unknown) => {
+        const d = data as {
+          message_id?: string;
+          reaction_type?: { emoji_type?: string };
+          operator_type?: string;
+          user_id?: { open_id?: string };
+        };
+        const openId = d?.user_id?.open_id ?? "";
+        const messageId = d?.message_id ?? "";
+        const emoji = d?.reaction_type?.emoji_type ?? "";
+
+        if (!openId || !messageId) return;
+
+        console.log(`[Reaction] ${openId} reacted ${emoji} on ${messageId}`);
+
+        // Treat reaction as a group activity → route through onMessage
+        // with a synthetic normalized message so the classifier picks it up as K1
+        await this.onMessage({
+          messageId: `reaction:${messageId}:${openId}`,
+          memberId: openId,
+          chatId: "", // reaction events don't carry chat_id; onMessage handles gracefully
+          chatType: "group",
+          senderType: "user",
+          messageType: "text",
+          eventTime: new Date().toISOString(),
+          rawText: `[表情回应: ${emoji}]`,
+          parsedTags: [],
+          attachmentCount: 0,
+          attachmentTypes: [],
+          documentText: "",
+          documentParseStatus: "not_applicable",
+          eventUrl: `feishu://reaction/${messageId}`,
+        });
+      },
     };
 
     const dispatcher = new lark.EventDispatcher({

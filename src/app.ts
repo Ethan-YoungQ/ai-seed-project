@@ -131,6 +131,7 @@ export async function createApp(options?: {
         try {
           console.log(`[AdminPanel] WS onMessage callback fired, message=${!!message}, adminPanelLifecycle=${!!options?.adminPanelLifecycle}, feishuApiClient=${!!feishuApiClient}`);
           if (options?.adminPanelLifecycle && feishuApiClient && message) {
+            const ingestorInstance = options?.ingestor as import("./services/feishu/message-commands.js").AutoCaptureIngestor | undefined;
             const handler = createMessageCommandHandler({
               feishuClient: feishuApiClient,
               lifecycle: options.adminPanelLifecycle,
@@ -138,6 +139,7 @@ export async function createApp(options?: {
               autoReply: {
                 sendTextMessage: (input) => feishuApiClient.sendTextMessage(input),
               },
+              ingestor: ingestorInstance ?? undefined,
             });
             await handler(message);
           } else {
