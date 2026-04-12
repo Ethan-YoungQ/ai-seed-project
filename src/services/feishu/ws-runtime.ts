@@ -59,9 +59,10 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
       const tag = action.tag ?? "";
 
       // Ignore non-button interactions (dropdown select, etc.)
+      // Return undefined (not {}) so the SDK sends a plain ACK without data.
       if (tag === "select_static" || tag === "select_person" || tag === "date_picker" || tag === "picker_time" || tag === "picker_datetime") {
         console.log(`[CardAction] Ignoring non-button interaction: tag="${tag}"`);
-        return {};
+        return undefined;
       }
 
       const input: CardActionInput = {
