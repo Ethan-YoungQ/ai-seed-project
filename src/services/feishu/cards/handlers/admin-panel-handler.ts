@@ -10,9 +10,8 @@
  * Requires operator or trainer role.
  */
 
-import {
-  buildAdminPanelCard,
-  type AdminPanelState,
+import type {
+  AdminPanelState,
 } from "../templates/admin-panel-v1.js";
 import type {
   CardActionContext,
