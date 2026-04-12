@@ -55,6 +55,12 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
     console.log("[AdminPanel] Starting WebSocket long connection...");
 
+    // Card action events arrive through the EventDispatcher in WS mode,
+    // NOT through a separate CardActionHandler. The SDK's WSClient only
+    // routes events via EventDispatcher — CardActionHandler is for HTTP
+    // webhook mode only. Register "card.action.trigger" directly here.
+    const self = this;
+
     const dispatcher = new lark.EventDispatcher({
       encryptKey: this.config.encryptKey
     }).register({
@@ -70,18 +76,11 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
         } else {
           console.log("[AdminPanel] normalizeFeishuMessageEvent returned undefined — missing messageId/memberId/createTime");
         }
-      }
-    });
-
-    // Card action handler for interactive card buttons
-    const self = this;
-    const cardHandler = new lark.CardActionHandler(
-      {
-        encryptKey: this.config.encryptKey ?? "",
-        verificationToken: this.config.verificationToken ?? ""
       },
-      async (data: any) => {
-        console.log("[CardAction] WS card.action.trigger received:", JSON.stringify(data).slice(0, 500));
+
+      // Card action trigger — handles interactive button clicks on cards
+      "card.action.trigger": async (data: unknown) => {
+        console.log("[CardAction] card.action.trigger received via EventDispatcher:", JSON.stringify(data).slice(0, 500));
 
         if (!self.cardActionHandler) {
           console.warn("[CardAction] No card action handler registered, ignoring");
@@ -89,9 +88,10 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
         }
 
         try {
-          const action = data?.action ?? {};
-          const operator = data?.operator ?? {};
-          const context = data?.context ?? {};
+          const d = data as any;
+          const action = d?.action ?? {};
+          const operator = d?.operator ?? {};
+          const context = d?.context ?? {};
 
           const input: CardActionInput = {
             operatorOpenId: operator.open_id ?? "",
@@ -110,7 +110,6 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
             return { toast: result.toast };
           }
           if (result.card) {
-            // Feishu card callback requires { card: { type: "raw", data: {...} } }
             return { card: { type: "raw", data: result.card } };
           }
           return {};
@@ -119,7 +118,7 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
           return { toast: { type: "error", content: "处理失败，请重试" } };
         }
       }
-    );
+    } as any); // "card.action.trigger" is not in SDK's type definitions but works at runtime
 
     this.wsClient = new lark.WSClient({
       appId: this.config.appId,
@@ -129,10 +128,9 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
     this.wsClient.start({
       eventDispatcher: dispatcher,
-      cardActionHandler: cardHandler
     });
 
-    console.log("[AdminPanel] WebSocket client started (with card action handler)");
+    console.log("[AdminPanel] WebSocket client started (card actions via EventDispatcher)");
   }
 
   async stop() {
