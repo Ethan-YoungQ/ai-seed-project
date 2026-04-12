@@ -93,10 +93,18 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
           const d = data as any;
           const action = d?.action ?? {};
           const operator = d?.operator ?? {};
+          const tag = action.tag ?? "";
+
+          // Ignore non-button interactions (dropdown select, etc.)
+          // These fire on dropdown change but don't need a response.
+          if (tag === "select_static" || tag === "select_person" || tag === "date_picker" || tag === "picker_time" || tag === "picker_datetime") {
+            console.log(`[CardAction] Ignoring non-button interaction: tag="${tag}"`);
+            return {};
+          }
 
           const input: CardActionInput = {
             operatorOpenId: operator?.open_id ?? d?.open_id ?? "",
-            actionName: action.name ?? action.tag ?? "",
+            actionName: action.name ?? "",
             actionValue: action.value ?? {},
             formValue: action.form_value,
             messageId: d?.open_message_id ?? "",
