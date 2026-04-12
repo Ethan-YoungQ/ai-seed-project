@@ -75,10 +75,10 @@ const run = db.transaction(() => {
     }
   }
 
-  // 4. 关闭所有活跃期间和窗口
-  db.prepare(`UPDATE v2_periods SET ended_at = datetime('now'), closed_reason = 'launch_reset' WHERE ended_at IS NULL`).run();
-  db.prepare(`UPDATE v2_windows SET settlement_state = 'settled', settled_at = datetime('now') WHERE settlement_state IN ('open', 'active')`).run();
-  console.log(`[reset] 关闭所有活跃期间和窗口`);
+  // 4. 清除所有期间和窗口（完全重置生命周期）
+  try { db.prepare(`DELETE FROM v2_periods`).run(); } catch { /* ignore */ }
+  try { db.prepare(`DELETE FROM v2_windows`).run(); } catch { /* ignore */ }
+  console.log(`[reset] 清除所有期间和窗口（下次 seed:ensure 会重建窗口 shell）`);
 
   // 5. 验证保留成员
   const remaining = db.prepare(`SELECT id, name, role_type, source_feishu_open_id FROM members`).all() as Array<{
