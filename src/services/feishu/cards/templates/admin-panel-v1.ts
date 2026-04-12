@@ -160,22 +160,28 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
     value: String(n),
   }));
 
-  elements.push(
-    columnSetRow(
-      {
-        tag: "select_static",
-        placeholder: { tag: "plain_text", content: "选择周期编号" },
-        value: { action: "admin_panel_select_period" },
-        options: periodOptions,
-      },
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "🟢 开启此周期" },
-        type: "primary",
-        value: { action: "admin_panel_open_period" },
-      }
-    )
-  );
+  // Use form container so button click includes the dropdown selection in form_value
+  elements.push({
+    tag: "form",
+    name: "form_open_period",
+    elements: [
+      columnSetRow(
+        {
+          tag: "select_static",
+          name: "admin_panel_select_period",
+          placeholder: { tag: "plain_text", content: "选择周期编号" },
+          options: periodOptions,
+        },
+        {
+          tag: "button",
+          name: "admin_panel_open_period",
+          action_type: "form_submit",
+          text: { tag: "plain_text", content: "🟢 开启此周期" },
+          type: "primary",
+        }
+      ),
+    ],
+  });
 
   elements.push({ tag: "hr" });
 
@@ -194,22 +200,27 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
     value: code,
   }));
 
-  elements.push(
-    columnSetRow(
-      {
-        tag: "select_static",
-        placeholder: { tag: "plain_text", content: "选择窗口" },
-        value: { action: "admin_panel_select_window" },
-        options: windowOptions,
-      },
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "🟢 开启此窗口" },
-        type: "primary",
-        value: { action: "admin_panel_open_window" },
-      }
-    )
-  );
+  elements.push({
+    tag: "form",
+    name: "form_open_window",
+    elements: [
+      columnSetRow(
+        {
+          tag: "select_static",
+          name: "admin_panel_select_window",
+          placeholder: { tag: "plain_text", content: "选择窗口" },
+          options: windowOptions,
+        },
+        {
+          tag: "button",
+          name: "admin_panel_open_window",
+          action_type: "form_submit",
+          text: { tag: "plain_text", content: "🟢 开启此窗口" },
+          type: "primary",
+        }
+      ),
+    ],
+  });
 
   elements.push({ tag: "hr" });
 
@@ -223,6 +234,7 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
   elements.push(
     columnSetSingleButton({
       tag: "button",
+      name: "admin_panel_graduation",
       text: { tag: "plain_text", content: "🔴 触发毕业结算" },
       type: "danger",
       value: { action: "admin_panel_graduation" },
@@ -235,6 +247,7 @@ export function buildAdminPanelCard(state: AdminPanelState): FeishuCardJson {
   elements.push(
     columnSetSingleButton({
       tag: "button",
+      name: "admin_panel_refresh",
       text: { tag: "plain_text", content: "🔄 刷新状态" },
       type: "default",
       value: { action: "admin_panel_refresh" },
