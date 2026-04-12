@@ -55,25 +55,79 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
     console.log("[AdminPanel] Starting WebSocket long connection...");
 
+    // -----------------------------------------------------------------------
+    // Card action events arrive via WebSocket with header type="event"
+    // (NOT "card"). The SDK's EventDispatcher routes them by event_type
+    // extracted from the payload header. We register "card.action.trigger"
+    // directly in the EventDispatcher alongside regular event handlers.
+    //
+    // The handler receives the PARSED event data (after SDK's parse() merges
+    // header + event fields into a flat object).
+    // -----------------------------------------------------------------------
     const self = this;
 
-    const dispatcher = new lark.EventDispatcher({
-      encryptKey: this.config.encryptKey
-    }).register({
+    const eventHandlers: Record<string, (data: unknown) => Promise<unknown>> = {
       "im.message.receive_v1": async (data: unknown) => {
         console.log("[AdminPanel] im.message.receive_v1 event received:", JSON.stringify(data).slice(0, 500));
-        const normalized = normalizeFeishuMessageEvent({
-          event: data
-        });
+        const normalized = normalizeFeishuMessageEvent({ event: data });
 
         if (normalized) {
           console.log(`[AdminPanel] Normalized message: rawText="${normalized.rawText}", chatType=${normalized.chatType}, messageType=${normalized.messageType}`);
           await this.onMessage(normalized);
         } else {
-          console.log("[AdminPanel] normalizeFeishuMessageEvent returned undefined — missing messageId/memberId/createTime");
+          console.log("[AdminPanel] normalizeFeishuMessageEvent returned undefined");
         }
-      }
-    });
+      },
+
+      "card.action.trigger": async (data: unknown) => {
+        console.log("[CardAction] card.action.trigger event received:", JSON.stringify(data).slice(0, 500));
+
+        if (!self.cardActionHandler) {
+          console.warn("[CardAction] No card action handler registered");
+          return {};
+        }
+
+        try {
+          // After SDK parse(), the data is a flat merge of header + event fields.
+          // operator, action, context are from the event; event_type etc from header.
+          const d = data as any;
+          const action = d?.action ?? {};
+          const operator = d?.operator ?? {};
+
+          const input: CardActionInput = {
+            operatorOpenId: operator?.open_id ?? d?.open_id ?? "",
+            actionName: action.name ?? action.tag ?? "",
+            actionValue: action.value ?? {},
+            formValue: action.form_value,
+            messageId: d?.open_message_id ?? "",
+            chatId: d?.open_chat_id ?? "",
+          };
+
+          console.log(`[CardAction] Dispatching: action="${input.actionName}", operator=${input.operatorOpenId}, formValue=${JSON.stringify(input.formValue)}`);
+          const result = await self.cardActionHandler(input);
+          console.log(`[CardAction] Result: toast=${!!result.toast}, card=${!!result.card}`);
+
+          if (result.toast) {
+            return { toast: result.toast };
+          }
+          if (result.card) {
+            return { card: { type: "raw", data: result.card } };
+          }
+          return {};
+        } catch (err) {
+          console.error("[CardAction] Error:", err);
+          return { toast: { type: "error", content: "处理失败，请重试" } };
+        }
+      },
+    };
+
+    const dispatcher = new lark.EventDispatcher({
+      encryptKey: this.config.encryptKey
+    }).register(eventHandlers as any);
+
+    // Verify handlers are registered
+    const registeredHandles = (dispatcher as any).handles as Map<string, unknown>;
+    console.log(`[AdminPanel] EventDispatcher handles registered: ${[...registeredHandles.keys()].join(", ")}`);
 
     this.wsClient = new lark.WSClient({
       appId: this.config.appId,
@@ -81,102 +135,11 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
       loggerLevel: lark.LoggerLevel.info
     });
 
-    // -----------------------------------------------------------------------
-    // MONKEY-PATCH: Lark SDK v1.60 WSClient.handleEventData() hardcodes
-    //   `if (type !== "event") return;`
-    // which silently drops all card-type WebSocket messages. We override it
-    // to also process "card" type messages by calling our cardActionHandler.
-    //
-    // SDK code ref: node_modules/@larksuiteoapi/node-sdk/lib/index.js:85544
-    // -----------------------------------------------------------------------
-    const wsClient = this.wsClient;
-    const originalHandleEventData = wsClient.handleEventData.bind(wsClient);
-
-    wsClient.handleEventData = async (data: any) => {
-      const headers: Record<string, string> = (data.headers || []).reduce(
-        (acc: Record<string, string>, cur: { key: string; value: string }) => {
-          acc[cur.key] = cur.value;
-          return acc;
-        },
-        {}
-      );
-      const msgType = headers["type"];
-
-      // Standard events — delegate to original SDK handler (EventDispatcher)
-      if (msgType === "event") {
-        return originalHandleEventData(data);
-      }
-
-      // Card action events — handle directly since SDK drops them
-      if (msgType === "card") {
-        const messageId = headers["message_id"] ?? "";
-        const traceId = headers["trace_id"] ?? "";
-        console.log(`[CardAction] WS card message received, message_id=${messageId}, trace_id=${traceId}`);
-
-        if (!self.cardActionHandler) {
-          console.warn("[CardAction] No card action handler registered, ignoring card event");
-          return;
-        }
-
-        // Reconstruct response frame using the same SDK pattern
-        const respPayload: { code: number; data?: string } = { code: 200 };
-
-        try {
-          // Parse the payload — SDK uses the raw payload bytes
-          const payloadBytes = data.payload;
-          const payloadStr = new TextDecoder("utf-8").decode(payloadBytes);
-          console.log(`[CardAction] Card payload: ${payloadStr.slice(0, 500)}`);
-
-          const cardData = JSON.parse(payloadStr);
-          const action = cardData?.action ?? {};
-          const operator = cardData?.operator ?? {};
-          const context = cardData?.context ?? {};
-
-          const input: CardActionInput = {
-            operatorOpenId: operator.open_id ?? "",
-            actionName: action.name ?? action.tag ?? "",
-            actionValue: action.value ?? {},
-            formValue: action.form_value,
-            messageId: context.open_message_id ?? "",
-            chatId: context.open_chat_id ?? "",
-          };
-
-          console.log(`[CardAction] Dispatching: action="${input.actionName}", operator=${input.operatorOpenId}`);
-          const result = await self.cardActionHandler(input);
-          console.log(`[CardAction] Handler returned: toast=${!!result.toast}, card=${!!result.card}`);
-
-          if (result.toast) {
-            respPayload.data = Buffer.from(JSON.stringify({ toast: result.toast })).toString("base64");
-          } else if (result.card) {
-            respPayload.data = Buffer.from(
-              JSON.stringify({ card: { type: "raw", data: result.card } })
-            ).toString("base64");
-          }
-        } catch (err) {
-          console.error("[CardAction] Error handling card action:", err);
-          respPayload.code = 500;
-          respPayload.data = Buffer.from(
-            JSON.stringify({ toast: { type: "error", content: "处理失败，请重试" } })
-          ).toString("base64");
-        }
-
-        // Send response back through WebSocket using SDK's sendMessage
-        wsClient.sendMessage({
-          ...data,
-          headers: [
-            ...data.headers,
-            { key: "biz_rt", value: "0" }
-          ],
-          payload: new TextEncoder().encode(JSON.stringify(respPayload))
-        });
-      }
-    };
-
-    wsClient.start({
+    this.wsClient.start({
       eventDispatcher: dispatcher,
     });
 
-    console.log("[AdminPanel] WebSocket client started (with card action monkey-patch)");
+    console.log("[AdminPanel] WebSocket client started (card.action.trigger registered in EventDispatcher)");
   }
 
   async stop() {
