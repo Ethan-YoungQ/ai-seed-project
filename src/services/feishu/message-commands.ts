@@ -18,7 +18,8 @@ import {
   buildAdminPanelCard,
   type AdminPanelState,
 } from "./cards/templates/admin-panel-v1.js";
-import { buildQuizCard, type QuizCardState } from "./cards/templates/quiz-v1.js";
+import { buildQuizCard } from "./cards/templates/quiz-v1.js";
+import { fetchQuizByPeriod, type QuizBankDeps } from "./quiz-bank.js";
 import { buildPeerReviewVoteCard } from "./cards/templates/peer-review-vote-v1.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
@@ -63,6 +64,7 @@ export interface MessageCommandDeps {
   ingestor?: AutoCaptureIngestor;
   /** Returns student members for peer review voting */
   listStudents?: () => Array<{ id: string; displayName: string }>;
+  quizBank?: QuizBankDeps;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -215,45 +217,6 @@ async function handleAdminPanelTrigger(
 // Quiz trigger — trainer sends "测验" → bot sends quiz card
 // ============================================================================
 
-/** Demo quiz questions — replace with real data from data/quiz/ */
-const DEMO_QUIZ: QuizCardState = {
-  setCode: "demo-quiz-1",
-  periodNumber: 1,
-  title: "AI 基础知识测验",
-  questions: [
-    {
-      id: "q1",
-      text: "以下哪项是大语言模型（LLM）的核心技术？",
-      options: [
-        { id: "a", text: "A. Transformer 架构", isCorrect: true },
-        { id: "b", text: "B. 决策树算法", isCorrect: false },
-        { id: "c", text: "C. 线性回归", isCorrect: false },
-        { id: "d", text: "D. K-Means 聚类", isCorrect: false },
-      ],
-    },
-    {
-      id: "q2",
-      text: "Prompt Engineering 的主要目标是什么？",
-      options: [
-        { id: "a", text: "A. 训练新的 AI 模型", isCorrect: false },
-        { id: "b", text: "B. 通过优化输入获得更好的 AI 输出", isCorrect: true },
-        { id: "c", text: "C. 修复 AI 模型的 Bug", isCorrect: false },
-        { id: "d", text: "D. 降低 AI 运行成本", isCorrect: false },
-      ],
-    },
-    {
-      id: "q3",
-      text: "以下哪种做法能有效提高 AI 回答质量？",
-      options: [
-        { id: "a", text: "A. 尽量简短地提问", isCorrect: false },
-        { id: "b", text: "B. 提供具体的上下文和示例", isCorrect: true },
-        { id: "c", text: "C. 使用全大写字母", isCorrect: false },
-        { id: "d", text: "D. 重复提问直到满意", isCorrect: false },
-      ],
-    },
-  ],
-};
-
 async function handleQuizTrigger(
   message: NormalizedFeishuMessage,
   deps: MessageCommandDeps,
@@ -263,16 +226,34 @@ async function handleQuizTrigger(
     console.log("[Quiz] Denied: not operator/trainer");
     return;
   }
-
   if (!message.chatId) return;
 
-  // Build and send quiz card
-  const cardJson = buildQuizCard(DEMO_QUIZ);
+  if (!deps.quizBank) {
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId, receiveIdType: "chat_id" as any,
+      text: "⚠️ 题库未配置，请设置 FEISHU_BASE_QUIZ_TABLE 环境变量",
+    });
+    return;
+  }
+
+  const activePeriod = await deps.lifecycle.getActivePeriod();
+  const periodNumber = activePeriod?.number ?? 1;
+
+  const quizState = await fetchQuizByPeriod(deps.quizBank, periodNumber);
+  if (!quizState || quizState.questions.length === 0) {
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId, receiveIdType: "chat_id" as any,
+      text: `⚠️ 第 ${periodNumber} 期暂无测验题目，请在飞书多维表格中录入`,
+    });
+    return;
+  }
+
+  const cardJson = buildQuizCard(quizState);
   await deps.feishuClient.sendCardMessage({
     chatId: message.chatId,
     cardJson: cardJson as unknown as Record<string, unknown>,
   });
-  console.log("[Quiz] Quiz card sent");
+  console.log(`[Quiz] Card sent: period=${periodNumber}, questions=${quizState.questions.length}`);
 }
 
 // ============================================================================
