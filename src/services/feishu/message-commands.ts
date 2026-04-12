@@ -2,11 +2,12 @@
  * Message-based command handler for the Feishu bot.
  *
  * Listens for keyword triggers in group chat messages and responds
- * with interactive cards. This enables non-technical admins to trigger
- * management operations by simply typing a keyword in the group chat.
+ * with interactive cards. Also handles automatic scoring for student
+ * messages via the message classifier.
  *
  * Supported triggers:
  *   "管理" or "管理面板"  → sends the Admin Panel card
+ *   Student messages      → auto-classify → ingest → confirm reply
  */
 
 import type { NormalizedFeishuMessage } from "./normalize-message.js";
@@ -17,6 +18,8 @@ import {
   buildAdminPanelCard,
   type AdminPanelState,
 } from "./cards/templates/admin-panel-v1.js";
+import { classifyMessage } from "./message-classifier.js";
+import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 
 // ============================================================================
 // Keyword definitions
@@ -46,6 +49,8 @@ export interface MessageCommandDeps {
   feishuClient: FeishuApiClient;
   lifecycle: AdminPanelLifecycleDeps;
   cardDeps: Pick<CardHandlerDeps, "repo">;
+  /** Optional: when provided, enables auto-capture for student messages */
+  autoReply?: AutoReplyDeps;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -72,8 +77,59 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
     if (ADMIN_PANEL_KEYWORDS.some((kw) => text === kw)) {
       console.log(`[AdminPanel] Keyword matched! Triggering admin panel for member ${message.memberId}`);
       await handleAdminPanelTrigger(message, deps);
+      return;
     }
+
+    // Auto-capture: classify student messages for scoring
+    await handleAutoCapture(message, deps);
   };
+}
+
+// ============================================================================
+// Auto-capture: classify student messages and trigger scoring
+// ============================================================================
+
+async function handleAutoCapture(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  // Only process group chat messages
+  if (message.chatType !== "group") return;
+
+  // Look up the sender
+  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+
+  // Skip messages from unknown users or non-students
+  // Operators/trainers messages are management commands, not scoring targets
+  if (!member) {
+    console.log(`[AutoCapture] Unknown sender ${message.memberId}, ignoring`);
+    return;
+  }
+  if (member.roleType === "operator" || member.roleType === "trainer") {
+    // Admin/trainer messages that didn't match keywords → ignore
+    return;
+  }
+
+  // Run classifier
+  const result = classifyMessage(message);
+  if (!result) {
+    // No match — silent ignore (don't spam the group)
+    return;
+  }
+
+  console.log(
+    `[AutoCapture] Classified: ${member.displayName} → ${result.itemCode} (${result.confidence}: ${result.reason})`,
+  );
+
+  // Send confirmation reply
+  if (deps.autoReply && message.chatId) {
+    await sendConfirmReply(deps.autoReply, {
+      chatId: message.chatId,
+      memberId: message.memberId,
+      memberName: member.displayName,
+      itemCode: result.itemCode,
+    });
+  }
 }
 
 // ============================================================================

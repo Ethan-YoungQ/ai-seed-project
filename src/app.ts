@@ -135,6 +135,9 @@ export async function createApp(options?: {
               feishuClient: feishuApiClient,
               lifecycle: options.adminPanelLifecycle,
               cardDeps: { repo: cardRepoDeps },
+              autoReply: {
+                sendTextMessage: (input) => feishuApiClient.sendTextMessage(input),
+              },
             });
             await handler(message);
           } else {
