@@ -145,20 +145,17 @@ export function createAdminPanelHandlers(
         ? `，触发窗口结算（${result.shouldSettleWindowId}）`
         : "";
 
-      const state = await buildCurrentState(lifecycle, deps, {
-        lastActionMessage: `第 ${num} 期已开启${settleMsg}`,
-        lastActionSuccess: true,
-      });
-
-      return { newCardJson: buildAdminPanelCard(state) };
+      // WS long connection: card update responses cause 200672.
+      // Return toast instead. User can send "管理" to see updated state.
+      return {
+        toast: { type: "success", content: `✅ 第 ${num} 期已开启${settleMsg}` },
+      };
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "开期失败，请联系技术支持";
-      const state = await buildCurrentState(lifecycle, deps, {
-        lastActionMessage: msg,
-        lastActionSuccess: false,
-      });
-      return { newCardJson: buildAdminPanelCard(state) };
+      return {
+        toast: { type: "error", content: msg },
+      };
     }
   };
 
@@ -188,20 +185,15 @@ export function createAdminPanelHandlers(
       const result = await lifecycle.openWindow(windowCode);
       const verb = result.created ? "已创建" : "已存在";
 
-      const state = await buildCurrentState(lifecycle, deps, {
-        lastActionMessage: `窗口 ${windowCode} ${verb}`,
-        lastActionSuccess: true,
-      });
-
-      return { newCardJson: buildAdminPanelCard(state) };
+      return {
+        toast: { type: "success", content: `✅ 窗口 ${windowCode} ${verb}` },
+      };
     } catch (err) {
       const msg =
         err instanceof Error ? err.message : "开窗失败，请联系技术支持";
-      const state = await buildCurrentState(lifecycle, deps, {
-        lastActionMessage: msg,
-        lastActionSuccess: false,
-      });
-      return { newCardJson: buildAdminPanelCard(state) };
+      return {
+        toast: { type: "error", content: msg },
+      };
     }
   };
 
@@ -216,33 +208,26 @@ export function createAdminPanelHandlers(
     try {
       const result = await lifecycle.closeGraduation();
       if (!result.ok) {
-        const state = await buildCurrentState(lifecycle, deps, {
-          lastActionMessage: `毕业结算失败：${result.reason ?? "未知原因"}`,
-          lastActionSuccess: false,
-        });
-        return { newCardJson: buildAdminPanelCard(state) };
+        return {
+          toast: { type: "error", content: `毕业结算失败：${result.reason ?? "未知原因"}` },
+        };
       }
 
       const settleMsg = result.shouldSettleWindowId
         ? `，FINAL 窗口（${result.shouldSettleWindowId}）进入结算`
         : "";
 
-      const state = await buildCurrentState(lifecycle, deps, {
-        lastActionMessage: `毕业结算已触发${settleMsg}`,
-        lastActionSuccess: true,
-      });
-
-      return { newCardJson: buildAdminPanelCard(state) };
+      return {
+        toast: { type: "success", content: `✅ 毕业结算已触发${settleMsg}` },
+      };
     } catch (err) {
       const msg =
         err instanceof Error
           ? err.message
           : "毕业结算失败，请联系技术支持";
-      const state = await buildCurrentState(lifecycle, deps, {
-        lastActionMessage: msg,
-        lastActionSuccess: false,
-      });
-      return { newCardJson: buildAdminPanelCard(state) };
+      return {
+        toast: { type: "error", content: msg },
+      };
     }
   };
 
@@ -254,12 +239,18 @@ export function createAdminPanelHandlers(
     const denied = requireAdmin(deps, ctx.operatorOpenId);
     if (denied) return denied;
 
-    const state = await buildCurrentState(lifecycle, deps, {
-      lastActionMessage: "状态已刷新",
-      lastActionSuccess: true,
-    });
+    const state = await buildCurrentState(lifecycle, deps);
+    const periodText = state.activePeriod
+      ? `第${state.activePeriod.number}期`
+      : "无";
+    const windowText = state.activeWindow?.code ?? "无";
 
-    return { newCardJson: buildAdminPanelCard(state) };
+    return {
+      toast: {
+        type: "info",
+        content: `周期:${periodText} | 窗口:${windowText} | 学员:${state.stats.activeStudents}/${state.stats.totalMembers} | 待审:${state.stats.pendingReviewCount}`,
+      },
+    };
   };
 
   return { openPeriod, openWindow, graduation, refresh };
