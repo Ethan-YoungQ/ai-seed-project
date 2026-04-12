@@ -106,7 +106,7 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
         const db = (r as any).db;
         const rows = db.prepare(
           `SELECT action_payload, received_at FROM v2_card_interactions
-           WHERE member_id = ? AND card_type = 'quiz-v1'
+           WHERE member_id = ? AND card_type = 'quiz'
            ORDER BY received_at DESC`
         ).all(memberId) as Array<{ action_payload: string; received_at: string }>;
         return rows
