@@ -34,6 +34,9 @@ import {
 } from "./services/feishu/cards/adapters.js";
 import { createAdminPanelHandlers } from "./services/feishu/cards/handlers/admin-panel-handler.js";
 import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/admin-panel-handler.js";
+import { quizSelectHandler, quizSubmitHandler } from "./services/feishu/cards/handlers/quiz-handler.js";
+import { peerReviewVoteHandler } from "./services/feishu/cards/handlers/peer-review-handler.js";
+import { peerReviewSettleHandler } from "./services/feishu/cards/handlers/peer-review-settle-handler.js";
 import { createMessageCommandHandler } from "./services/feishu/message-commands.js";
 
 // ---------------------------------------------------------------------------
@@ -348,6 +351,14 @@ export async function createApp(options?: {
     cardDispatcher.register("admin_panel", "admin_panel_graduation", adminHandlers.graduation);
     cardDispatcher.register("admin_panel", "admin_panel_refresh", adminHandlers.refresh);
   }
+
+  // Quiz card handlers (K2)
+  cardDispatcher.register("quiz", "quiz_select", quizSelectHandler);
+  cardDispatcher.register("quiz", "quiz_submit", quizSubmitHandler);
+
+  // Peer review card handlers (S1/S2)
+  cardDispatcher.register("peer_review_vote", "peer_review_vote", peerReviewVoteHandler);
+  cardDispatcher.register("peer_review_settle", "peer_review_settle", peerReviewSettleHandler);
 
   await app.register(feishuCardsPlugin, {
     dispatcher: cardDispatcher,
