@@ -46,11 +46,14 @@
 - [ ] 配置 systemd 并启动
 - [ ] 验证 `https://domain/api/health` 和 `https://domain/dashboard/`
 
-### Task 0.5: 飞书配置更新（AI 执行）
+### Task 0.5: 飞书和 LLM 配置验证（AI 执行）
 - [ ] 更新 `FEISHU_LEARNER_HOME_URL`
 - [ ] 更新 `FEISHU_OPERATOR_HOME_URL`
 - [ ] 更新 `FEISHU_LEADERBOARD_URL`
 - [ ] 验证 WS 连接正常（发"管理"测试）
+- [ ] **测试 LLM 连通性**：从香港服务器 `curl https://open.bigmodel.cn/api/paas/v4` 确认延迟
+- [ ] 如 GLM 延迟过高（>5s），切换 `LLM_PROVIDER=dashscope` 或 `openai_compatible`
+- [ ] 测试飞书 API 从香港的连通性
 
 ### Task 0.6: 杭州服务器保留回滚
 - [ ] 杭州服务器保留 14 天作为回滚位

@@ -161,21 +161,44 @@ INSTANCE="0cf24a62cd3a463baf31c196913dc3cd"  # 杭州实例，迁移后更新
 PORT=3000
 APP_ENV=production
 DATABASE_URL=./data/app.db
+
+# 飞书
 FEISHU_APP_ID=cli_a95a5b91b8b85cce
 FEISHU_APP_SECRET=<secret>
 FEISHU_EVENT_MODE=long_connection
 FEISHU_BOT_CHAT_ID=oc_a867f87170ab5e892b86ffc2de79790b
 FEISHU_BOT_RECEIVE_ID_TYPE=chat_id
 FEISHU_BASE_ENABLED=true
-FEISHU_BASE_APP_TOKEN=<token>
+FEISHU_BASE_APP_TOKEN=OiclbQXUqaNmY8sthCqc5nbtn7b
+FEISHU_BASE_MEMBERS_TABLE=tblZCvjCzzguQPUF
+FEISHU_BASE_RAW_EVENTS_TABLE=tblDVP971lvEGOo2
+FEISHU_BASE_SCORES_TABLE=tblOM8WqrywdNhBe
+FEISHU_BASE_WARNINGS_TABLE=tblzJII00iyHdsb2
+FEISHU_BASE_SNAPSHOTS_TABLE=tblrv8ZvKjmm4iPH
 FEISHU_LEARNER_HOME_URL=<新域名>/dashboard/
 FEISHU_OPERATOR_HOME_URL=<新域名>/dashboard/
 FEISHU_LEADERBOARD_URL=<新域名>/dashboard/
-LLM_PROVIDER=dashscope
-LLM_TEXT_MODEL=qwen-plus
-LLM_VISION_MODEL=glm-4v
+
+# LLM（当前用智谱 GLM，从香港可能需要调整）
+LLM_ENABLED=true
+LLM_PROVIDER=glm
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4
 LLM_API_KEY=<key>
+LLM_TEXT_MODEL=glm-4.7
+LLM_VISION_MODEL=glm-4.6v
+LLM_TIMEOUT_MS=60000
+LLM_CONCURRENCY=3
 ```
+
+### 5.5 香港迁移特别注意
+
+| 风险 | 说明 | 应对 |
+|------|------|------|
+| **LLM 连通性** | 智谱 GLM API (open.bigmodel.cn) 是大陆服务，从香港访问可能有延迟或限制 | 迁移后测试延迟，必要时切换到阿里云 DashScope 或 OpenAI |
+| **飞书 API** | feishu.cn 域名从香港访问应该正常（飞书有国际版 lark） | 验证 WS 连接稳定性 |
+| **GitHub** | 香港连 GitHub 通常比大陆稳定 | git pull 部署应更可靠 |
+| **SWAS 可用性** | 确认阿里云香港有 SWAS，否则需用 ECS | 购买前确认 |
+| **systemd 服务** | 模板在 `deploy/systemd/ai-seed-project.service`，bootstrap 脚本自动配置 | 运行 bootstrap-server.sh |
 
 ---
 
