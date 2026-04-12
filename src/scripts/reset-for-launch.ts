@@ -76,8 +76,8 @@ const run = db.transaction(() => {
   }
 
   // 4. 关闭所有活跃期间和窗口
-  db.prepare(`UPDATE v2_periods SET status = 'closed', closed_at = datetime('now') WHERE status = 'active'`).run();
-  db.prepare(`UPDATE v2_windows SET status = 'settled', settled_at = datetime('now') WHERE status IN ('active', 'open')`).run();
+  db.prepare(`UPDATE v2_periods SET ended_at = datetime('now'), closed_reason = 'launch_reset' WHERE ended_at IS NULL`).run();
+  db.prepare(`UPDATE v2_windows SET settlement_state = 'settled', settled_at = datetime('now') WHERE settlement_state IN ('open', 'active')`).run();
   console.log(`[reset] 关闭所有活跃期间和窗口`);
 
   // 5. 验证保留成员

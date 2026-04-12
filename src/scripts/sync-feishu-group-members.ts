@@ -6,9 +6,9 @@
 import * as lark from "@larksuiteoapi/node-sdk";
 import Database from "better-sqlite3";
 import { resolve } from "path";
-import { config } from "dotenv";
+import { loadLocalEnv } from "../config/load-env.js";
 
-config();
+loadLocalEnv();
 
 const appId = process.env.FEISHU_APP_ID;
 const appSecret = process.env.FEISHU_APP_SECRET;
