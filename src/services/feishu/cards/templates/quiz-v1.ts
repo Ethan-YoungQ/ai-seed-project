@@ -65,12 +65,12 @@ export function buildQuizCard(state: QuizCardState): FeishuCardJson {
       content: `**${question.text}**`,
     });
 
-    // Option buttons — each in its own row for readability
+    // Option buttons — each needs a unique name (Schema 2.0 requirement)
     for (const option of question.options) {
       elements.push(
         singleButtonRow({
           tag: "button",
-          name: "quiz_select",
+          name: `quiz_select_${question.id}_${option.id}`,
           text: { tag: "plain_text", content: option.text },
           type: "default",
           value: {

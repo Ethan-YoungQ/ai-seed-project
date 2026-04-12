@@ -41,7 +41,7 @@ export function buildPeerReviewVoteCard(state: PeerReviewVoteState): FeishuCardJ
           elements: [
             {
               tag: "button",
-              name: "peer_review_vote",
+              name: `peer_review_vote_${c.memberId}`,
               text: { tag: "plain_text", content: `👍 ${c.displayName}` },
               type: "default",
               value: {
