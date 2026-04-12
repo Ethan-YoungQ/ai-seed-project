@@ -94,13 +94,52 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
       r.updateLiveCardState(id, stateJson, patchedAt);
     },
 
-    // Remaining methods are stubs — wired as handlers are implemented
+    // Remaining methods — partially implemented
     insertLiveCard: notImpl,
     closeLiveCard: notImpl,
     findEventById: notImpl,
     listReviewRequiredEvents: notImpl,
-    listPriorQuizSelections: notImpl,
-    insertPeerReviewVote: notImpl,
+
+    listPriorQuizSelections: async (memberId: string, questionId: string) => {
+      try {
+        // Query card interactions directly for quiz selections
+        const db = (r as any).db;
+        const rows = db.prepare(
+          `SELECT action_payload, received_at FROM v2_card_interactions
+           WHERE member_id = ? AND card_type = 'quiz-v1'
+           ORDER BY received_at DESC`
+        ).all(memberId) as Array<{ action_payload: string; received_at: string }>;
+        return rows
+          .filter((row) => {
+            try { return JSON.parse(row.action_payload).questionId === questionId; }
+            catch { return false; }
+          })
+          .map((row) => {
+            const p = JSON.parse(row.action_payload);
+            return { questionId: p.questionId ?? "", optionId: p.optionId ?? "", selectedAt: row.received_at };
+          });
+      } catch {
+        return [];
+      }
+    },
+
+    insertPeerReviewVote: async (vote: { peerReviewSessionId?: string; voterMemberId?: string; votedMemberId?: string }) => {
+      const id = crypto.randomUUID();
+      const now = new Date().toISOString();
+      // Direct DB access via private field — adapter is the bridging layer
+      const db = (r as any).db;
+      db.prepare(
+        `INSERT OR IGNORE INTO peer_review_votes (id, peer_review_session_id, voter_member_id, voted_member_id, voted_at) VALUES (?, ?, ?, ?, ?)`
+      ).run(id, vote.peerReviewSessionId ?? "", vote.voterMemberId ?? "", vote.votedMemberId ?? "", now);
+      return {
+        id,
+        peerReviewSessionId: vote.peerReviewSessionId ?? "",
+        voterMemberId: vote.voterMemberId ?? "",
+        votedMemberId: vote.votedMemberId ?? "",
+        votedAt: now,
+      };
+    },
+
     insertReactionTrackedMessage: notImpl,
   };
 }

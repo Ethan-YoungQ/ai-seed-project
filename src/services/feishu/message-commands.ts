@@ -18,6 +18,8 @@ import {
   buildAdminPanelCard,
   type AdminPanelState,
 } from "./cards/templates/admin-panel-v1.js";
+import { buildQuizCard, type QuizCardState } from "./cards/templates/quiz-v1.js";
+import { buildPeerReviewVoteCard } from "./cards/templates/peer-review-vote-v1.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
@@ -28,6 +30,8 @@ import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 
 /** Keywords that trigger the admin panel card */
 const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
+const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
+const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
 
 function stripAtMentionPrefix(text: string): string {
   return text.replace(/^@_\S+\s+/g, "").trim();
@@ -56,8 +60,9 @@ export interface MessageCommandDeps {
   lifecycle: AdminPanelLifecycleDeps;
   cardDeps: Pick<CardHandlerDeps, "repo">;
   autoReply?: AutoReplyDeps;
-  /** When provided, classified messages are fed into the scoring pipeline */
   ingestor?: AutoCaptureIngestor;
+  /** Returns student members for peer review voting */
+  listStudents?: () => Array<{ id: string; displayName: string }>;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -67,12 +72,20 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
     // Only process group chat messages (not DMs)
     if (message.chatType !== "group") return;
 
-    // Admin panel: text messages only
+    // Trainer/admin keyword triggers: text messages only
     if (message.messageType === "text") {
       const text = stripAtMentionPrefix(message.rawText.trim());
+
       if (ADMIN_PANEL_KEYWORDS.some((kw) => text === kw)) {
-        console.log(`[MsgHandler] Admin panel trigger for ${message.memberId}`);
         await handleAdminPanelTrigger(message, deps);
+        return;
+      }
+      if (QUIZ_KEYWORDS.some((kw) => text === kw)) {
+        await handleQuizTrigger(message, deps);
+        return;
+      }
+      if (PEER_REVIEW_KEYWORDS.some((kw) => text === kw)) {
+        await handlePeerReviewTrigger(message, deps);
         return;
       }
     }
@@ -196,4 +209,115 @@ async function handleAdminPanelTrigger(
     });
     console.log("[AdminPanel] Card sent");
   }
+}
+
+// ============================================================================
+// Quiz trigger — trainer sends "测验" → bot sends quiz card
+// ============================================================================
+
+/** Demo quiz questions — replace with real data from data/quiz/ */
+const DEMO_QUIZ: QuizCardState = {
+  setCode: "demo-quiz-1",
+  periodNumber: 1,
+  title: "AI 基础知识测验",
+  questions: [
+    {
+      id: "q1",
+      text: "以下哪项是大语言模型（LLM）的核心技术？",
+      options: [
+        { id: "a", text: "A. Transformer 架构", isCorrect: true },
+        { id: "b", text: "B. 决策树算法", isCorrect: false },
+        { id: "c", text: "C. 线性回归", isCorrect: false },
+        { id: "d", text: "D. K-Means 聚类", isCorrect: false },
+      ],
+    },
+    {
+      id: "q2",
+      text: "Prompt Engineering 的主要目标是什么？",
+      options: [
+        { id: "a", text: "A. 训练新的 AI 模型", isCorrect: false },
+        { id: "b", text: "B. 通过优化输入获得更好的 AI 输出", isCorrect: true },
+        { id: "c", text: "C. 修复 AI 模型的 Bug", isCorrect: false },
+        { id: "d", text: "D. 降低 AI 运行成本", isCorrect: false },
+      ],
+    },
+    {
+      id: "q3",
+      text: "以下哪种做法能有效提高 AI 回答质量？",
+      options: [
+        { id: "a", text: "A. 尽量简短地提问", isCorrect: false },
+        { id: "b", text: "B. 提供具体的上下文和示例", isCorrect: true },
+        { id: "c", text: "C. 使用全大写字母", isCorrect: false },
+        { id: "d", text: "D. 重复提问直到满意", isCorrect: false },
+      ],
+    },
+  ],
+};
+
+async function handleQuizTrigger(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+  if (!member || (member.roleType !== "operator" && member.roleType !== "trainer")) {
+    console.log("[Quiz] Denied: not operator/trainer");
+    return;
+  }
+
+  if (!message.chatId) return;
+
+  // Build and send quiz card
+  const cardJson = buildQuizCard(DEMO_QUIZ);
+  await deps.feishuClient.sendCardMessage({
+    chatId: message.chatId,
+    cardJson: cardJson as unknown as Record<string, unknown>,
+  });
+  console.log("[Quiz] Quiz card sent");
+}
+
+// ============================================================================
+// Peer review trigger — trainer sends "互评" → bot sends vote card
+// ============================================================================
+
+async function handlePeerReviewTrigger(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+  if (!member || (member.roleType !== "operator" && member.roleType !== "trainer")) {
+    console.log("[PeerReview] Denied: not operator/trainer");
+    return;
+  }
+
+  if (!message.chatId) return;
+
+  // Get student candidates for voting
+  const students = deps.listStudents?.() ?? [];
+  const candidates = students.map((m) => ({
+    memberId: m.id,
+    displayName: m.displayName,
+  }));
+
+  if (candidates.length === 0) {
+    // Fallback: send a text message
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 暂无学员可以参与互评",
+    });
+    return;
+  }
+
+  const sessionId = `pr-${Date.now()}`;
+  const cardJson = buildPeerReviewVoteCard({
+    sessionId,
+    candidates,
+    maxVotes: Math.min(3, candidates.length),
+  });
+
+  await deps.feishuClient.sendCardMessage({
+    chatId: message.chatId,
+    cardJson: cardJson as unknown as Record<string, unknown>,
+  });
+  console.log(`[PeerReview] Vote card sent, session=${sessionId}, candidates=${candidates.length}`);
 }

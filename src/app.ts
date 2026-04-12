@@ -140,6 +140,12 @@ export async function createApp(options?: {
                 sendTextMessage: (input) => feishuApiClient.sendTextMessage(input),
               },
               ingestor: ingestorInstance ?? undefined,
+              listStudents: () => {
+                const campId = repository.getDefaultCampId() ?? "default";
+                return repository.listMembers(campId)
+                  .filter((m) => m.roleType === "student")
+                  .map((m) => ({ id: m.id, displayName: m.displayName || m.name }));
+              },
             });
             await handler(message);
           } else {
