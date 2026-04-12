@@ -219,32 +219,33 @@ function buildPeriodLifecycle(repo: SqliteRepository, campId: string) {
       const now = new Date().toISOString();
       const isIceBreaker = number === 1;
 
-      // Check if this period already exists (avoid UNIQUE constraint violation)
+      // Check if this period already exists
       const existing = repo.findPeriodByNumber(campId, number);
-      const periodId = existing?.id ?? crypto.randomUUID();
-
-      if (!existing) {
-        repo.insertPeriod({
-          id: periodId,
-          campId,
-          number,
-          isIceBreaker,
-          startedAt: now,
-          openedByOpId: null,
-          createdAt: now,
-          updatedAt: now,
-        });
+      if (existing) {
+        // Period already exists — return its info without re-attaching to windows
+        return { periodId: existing.id, assignedWindowId: null, shouldSettleWindowId: null };
       }
+
+      const periodId = crypto.randomUUID();
+      repo.insertPeriod({
+        id: periodId,
+        campId,
+        number,
+        isIceBreaker,
+        startedAt: now,
+        openedByOpId: null,
+        createdAt: now,
+        updatedAt: now,
+      });
 
       // Find or create a window with an open slot
       let window = repo.findOpenWindowWithOpenSlot(campId);
       let shouldSettleWindowId: string | null = null;
 
       if (!window) {
-        // Determine window code from period number
         const windowCode = resolveWindowCode(number);
-        const existing = repo.findWindowByCode(campId, windowCode);
-        if (!existing) {
+        const existingWindow = repo.findWindowByCode(campId, windowCode);
+        if (!existingWindow) {
           repo.insertWindowShell({
             code: windowCode,
             campId,
@@ -263,7 +264,6 @@ function buildPeriodLifecycle(repo: SqliteRepository, campId: string) {
           repo.attachFirstPeriod(window.id, periodId);
         } else if (!window.lastPeriodId) {
           repo.attachLastPeriod(window.id, periodId);
-          // When the last slot fills, the previous window is ready for settlement
           shouldSettleWindowId = window.id;
         }
       }

@@ -140,14 +140,25 @@ export function createAdminPanelHandlers(
 
     try {
       const result = await lifecycle.openNewPeriod(num);
+      const state = await buildCurrentState(lifecycle, deps);
+      const periodInfo = state.activePeriod
+        ? `当前活跃：第${state.activePeriod.number}期`
+        : "无活跃周期";
+      const windowInfo = state.activeWindow?.code ?? "无";
+
+      if (!result.assignedWindowId && result.periodId) {
+        // Period already existed
+        return {
+          toast: { type: "info", content: `第 ${num} 期已存在 | ${periodInfo} | 窗口:${windowInfo}` },
+        };
+      }
+
       const settleMsg = result.shouldSettleWindowId
-        ? `，触发窗口结算（${result.shouldSettleWindowId}）`
+        ? `，触发窗口结算`
         : "";
 
-      // WS long connection: card update responses cause 200672.
-      // Return toast instead. User can send "管理" to see updated state.
       return {
-        toast: { type: "success", content: `✅ 第 ${num} 期已开启${settleMsg}` },
+        toast: { type: "success", content: `✅ 第 ${num} 期已开启${settleMsg} | ${periodInfo} | 窗口:${windowInfo}` },
       };
     } catch (err) {
       const msg =
@@ -182,10 +193,14 @@ export function createAdminPanelHandlers(
 
     try {
       const result = await lifecycle.openWindow(windowCode);
+      const state = await buildCurrentState(lifecycle, deps);
+      const periodInfo = state.activePeriod
+        ? `第${state.activePeriod.number}期`
+        : "无";
       const verb = result.created ? "已创建" : "已存在";
 
       return {
-        toast: { type: "success", content: `✅ 窗口 ${windowCode} ${verb}` },
+        toast: { type: "success", content: `✅ 窗口 ${windowCode} ${verb} | 周期:${periodInfo} | 窗口:${windowCode}` },
       };
     } catch (err) {
       const msg =
