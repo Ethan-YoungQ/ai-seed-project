@@ -15,6 +15,9 @@ import type { AggregatorDeps } from "./domain/v2/aggregator.js";
 import type { ScoringDimension, ScoringItemCode } from "./domain/v2/scoring-items-config.js";
 import type { SqliteRepository } from "./storage/sqlite-repository.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
+import { OpenAiCompatibleLlmScoringClient } from "./services/v2/llm-scoring-client.js";
+import { LlmScoringWorker } from "./services/v2/llm-scoring-worker.js";
+import type { WorkerDeps, WorkerConfig } from "./services/v2/llm-scoring-worker.js";
 import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/admin-panel-handler.js";
 
 // ---------------------------------------------------------------------------
@@ -331,22 +334,125 @@ function buildWindowSettler(repo: SqliteRepository, _campId: string) {
 }
 
 // ---------------------------------------------------------------------------
-// LLM worker status stub
+// LLM worker (real implementation or no-op when LLM is disabled)
 // ---------------------------------------------------------------------------
 
-function buildLlmWorkerStatus() {
+function buildLlmWorker(
+  repo: SqliteRepository,
+  _aggregator: ScoringAggregator
+): LlmScoringWorker | null {
   const llmConfig = readLlmProviderConfig(process.env);
-  return {
-    getStatus() {
+  if (!llmConfig.enabled) {
+    return null;
+  }
+
+  const llmClient = new OpenAiCompatibleLlmScoringClient(llmConfig);
+
+  const workerConfig: WorkerConfig = {
+    concurrency: llmConfig.concurrency,
+    rateLimitPerSec: llmConfig.concurrency,
+    pollIntervalMs: 5000,
+    taskTimeoutMs: llmConfig.timeoutMs,
+    maxAttempts: 3,
+  };
+
+  const deps: WorkerDeps = {
+    claimNextPendingTask() {
+      const task = repo.claimNextPendingTask(new Date().toISOString());
+      if (!task) return null;
       return {
-        running: llmConfig.enabled,
-        concurrency: llmConfig.concurrency,
-        activeTasks: 0,
-        queueDepth: 0,
-        lastHeartbeatAt: null as string | null,
+        id: task.id,
+        eventId: task.eventId,
+        promptText: task.promptText,
+        attempts: task.attempts,
+        maxAttempts: task.maxAttempts,
       };
     },
+
+    markTaskSucceeded(taskId, result) {
+      repo.markTaskSucceeded(taskId, result);
+    },
+
+    markTaskFailedRetry(taskId, backoffSec, reason) {
+      repo.markTaskFailedRetry(taskId, backoffSec, reason);
+    },
+
+    markTaskFailedTerminal(taskId, reason) {
+      repo.markTaskFailedTerminal(taskId, reason);
+    },
+
+    requeueStaleRunningTasks(olderThanMs) {
+      return repo.requeueStaleRunningTasks(olderThanMs);
+    },
+
+    countPending() {
+      return repo.countLlmTasksByStatus("pending");
+    },
+
+    countRunning() {
+      return repo.countLlmTasksByStatus("running");
+    },
+
+    countSucceededLastHour() {
+      return repo.countLlmTasksSucceededLastHour();
+    },
+
+    countFailedLastHour() {
+      return repo.countLlmTasksFailedLastHour();
+    },
+
+    reviewQueueDepth() {
+      return repo.countReviewRequiredEvents({});
+    },
+
+    recentFailureSummary() {
+      return repo.listRecentFailedLlmTasks(10).map((f) => ({
+        eventId: f.eventId,
+        errorReason: f.errorReason,
+        at: f.finishedAt,
+      }));
+    },
+
+    aggregator: {
+      applyDecision(eventId, decision, note) {
+        const now = new Date().toISOString();
+        if (decision === "approved") {
+          const ev = repo.getEventById(eventId);
+          if (ev) {
+            repo.updateEventStatus({
+              id: eventId,
+              status: "approved",
+              decidedAt: now,
+              reviewNote: note ?? null,
+              reviewedByOpId: null,
+            });
+            repo.incrementMemberDimensionScore({
+              memberId: ev.memberId,
+              periodId: ev.periodId,
+              dimension: ev.dimension as ScoringDimension,
+              delta: ev.scoreDelta,
+              eventAt: now,
+            });
+          }
+        } else {
+          // "rejected" or "review_required"
+          repo.updateEventStatus({
+            id: eventId,
+            status: decision,
+            decidedAt: now,
+            reviewNote: note ?? null,
+            reviewedByOpId: null,
+          });
+        }
+      },
+    },
+
+    llmClient,
   };
+
+  const worker = new LlmScoringWorker(deps, workerConfig);
+  worker.start();
+  return worker;
 }
 
 // ---------------------------------------------------------------------------
@@ -423,7 +529,7 @@ export interface V2ProductionDeps {
   aggregator: ScoringAggregator;
   periodLifecycle: ReturnType<typeof buildPeriodLifecycle>;
   windowSettler: ReturnType<typeof buildWindowSettler>;
-  llmWorker: ReturnType<typeof buildLlmWorkerStatus>;
+  llmWorker: LlmScoringWorker | null;
   adminPanelLifecycle: AdminPanelLifecycleDeps;
 }
 
@@ -438,7 +544,7 @@ export function wireV2Production(repo: SqliteRepository): V2ProductionDeps {
 
   const periodLifecycle = buildPeriodLifecycle(repo, campId);
   const windowSettler = buildWindowSettler(repo, campId);
-  const llmWorker = buildLlmWorkerStatus();
+  const llmWorker = buildLlmWorker(repo, aggregator);
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
 
   return { ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, adminPanelLifecycle: adminPanelLifecycleInstance };

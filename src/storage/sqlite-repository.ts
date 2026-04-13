@@ -1650,6 +1650,53 @@ export class SqliteRepository {
     return Number(result.changes ?? 0);
   }
 
+  countLlmTasksByStatus(status: LlmTaskStatus): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM v2_llm_scoring_tasks WHERE status = ?`
+      )
+      .get(status) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
+  countLlmTasksSucceededLastHour(): number {
+    const cutoff = new Date(Date.now() - 3600 * 1000).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM v2_llm_scoring_tasks
+         WHERE status = 'succeeded' AND finished_at >= ?`
+      )
+      .get(cutoff) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
+  countLlmTasksFailedLastHour(): number {
+    const cutoff = new Date(Date.now() - 3600 * 1000).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS total FROM v2_llm_scoring_tasks
+         WHERE status = 'failed' AND finished_at >= ?`
+      )
+      .get(cutoff) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
+  listRecentFailedLlmTasks(limit: number): Array<{ eventId: string; errorReason: string; finishedAt: string }> {
+    const rows = this.db
+      .prepare(
+        `SELECT event_id, error_reason, finished_at
+         FROM v2_llm_scoring_tasks
+         WHERE status = 'failed'
+         ORDER BY finished_at DESC LIMIT ?`
+      )
+      .all(limit) as Array<Record<string, unknown>>;
+    return rows.map((r) => ({
+      eventId: String(r.event_id),
+      errorReason: r.error_reason === null ? "unknown" : String(r.error_reason),
+      finishedAt: r.finished_at === null ? "" : String(r.finished_at),
+    }));
+  }
+
   private mapLlmTaskRow(row: Record<string, unknown>): LlmScoringTaskRecord {
     return {
       id: String(row.id),
