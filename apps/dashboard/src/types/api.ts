@@ -18,6 +18,7 @@ export interface RankingResponse {
   campId: string;
   rows: RankingRow[];
   groupName?: string;
+  periodCount?: number;
 }
 
 export interface MemberBoardDetail {

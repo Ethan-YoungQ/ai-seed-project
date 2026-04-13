@@ -42,7 +42,7 @@ export function HpBar({ value, max, color = "#00ff88", label }: HpBarProps) {
   const labelStyle: CSSProperties = {
     display: "flex",
     justifyContent: "space-between",
-    fontSize: "10px",
+    fontSize: "12px",
     fontFamily: "var(--font-mono)",
     color: "var(--text-secondary)",
   };

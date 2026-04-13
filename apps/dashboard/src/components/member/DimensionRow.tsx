@@ -24,7 +24,7 @@ export function DimensionRow({ dimKey, value, max = 100 }: DimensionRowProps) {
 
   const rowStyle: CSSProperties = {
     display: "grid",
-    gridTemplateColumns: "80px 1fr 48px",
+    gridTemplateColumns: "100px 1fr 56px",
     alignItems: "center",
     gap: "12px",
   };
@@ -34,18 +34,18 @@ export function DimensionRow({ dimKey, value, max = 100 }: DimensionRowProps) {
     alignItems: "center",
     gap: "6px",
     fontFamily: "var(--font-mono)",
-    fontSize: "11px",
+    fontSize: "14px",
     color,
     whiteSpace: "nowrap",
   };
 
   const iconStyle: CSSProperties = {
-    fontSize: "14px",
+    fontSize: "16px",
   };
 
   const scoreStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "12px",
+    fontSize: "15px",
     color,
     textAlign: "right",
     textShadow: `0 0 8px ${color}88`,

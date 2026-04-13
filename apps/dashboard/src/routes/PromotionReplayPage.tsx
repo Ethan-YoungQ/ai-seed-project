@@ -13,13 +13,13 @@ function NotFoundCard({ message }: { message: string }) {
     textAlign: "center",
     color: "var(--text-secondary)",
     fontFamily: "var(--font-mono)",
-    fontSize: "13px",
+    fontSize: "15px",
   };
 
   const backStyle: CSSProperties = {
     display: "inline-block",
     marginTop: "16px",
-    fontSize: "9px",
+    fontSize: "11px",
     fontFamily: "var(--font-display)",
     color: "var(--accent)",
     textDecoration: "none",
@@ -73,7 +73,7 @@ export function PromotionReplayPage() {
   const backStyle: CSSProperties = {
     display: "inline-block",
     marginBottom: "16px",
-    fontSize: "9px",
+    fontSize: "11px",
     fontFamily: "var(--font-display)",
     color: "var(--text-secondary)",
     textDecoration: "none",

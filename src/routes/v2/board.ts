@@ -63,11 +63,13 @@ export function registerV2BoardRoutes(
       const groupName = boardDeps
         ? await resolveGroupName(boardDeps)
         : null;
+      const periodCount = deps.repository.countPeriods?.(campId) ?? 2;
       return reply.send({
         ok: true,
         campId,
         rows,
         groupName: groupName ?? "AI 训练营",
+        periodCount,
       });
     } catch (err) {
       return reply.code(500).send({ ok: false, code: "internal_error" });

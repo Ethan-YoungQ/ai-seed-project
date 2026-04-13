@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
-import { fetchMemberDetail } from "../lib/api";
+import { fetchMemberDetail, fetchRanking } from "../lib/api";
 import { getMockMemberDetail } from "../lib/mock-data";
 import type { MemberDetailResponse } from "../types/api";
+import { computeBadges } from "../lib/badge-engine";
 
 export interface UseMemberDetailState {
   data: MemberDetailResponse | null;
@@ -30,10 +31,18 @@ export function useMemberDetail(memberId: string): UseMemberDetailState {
     setLoading(true);
     setError(null);
 
-    fetchMemberDetail(memberId)
-      .then((res) => {
+    // Fetch detail + ranking in parallel so we can compute badges
+    Promise.all([fetchMemberDetail(memberId), fetchRanking()])
+      .then(([detailRes, rankingRes]) => {
         if (!cancelled) {
-          setData(res);
+          // Compute badges for this member from ranking data
+          const periodCount = rankingRes.periodCount ?? 2;
+          const badgeMap = computeBadges(rankingRes.rows, periodCount);
+          const memberBadges = badgeMap.get(memberId) ?? [];
+          setData({
+            ...detailRes,
+            detail: { ...detailRes.detail, badges: memberBadges },
+          });
           setLoading(false);
         }
       })

@@ -47,14 +47,14 @@ export function PromotionCard({ promotion, memberId }: PromotionCardProps) {
   };
 
   const arrowStyle: CSSProperties = {
-    fontSize: "16px",
+    fontSize: "20px",
     fontWeight: "bold",
     color: dirConfig.color,
     fontFamily: "var(--font-display)",
   };
 
   const dirLabelStyle: CSSProperties = {
-    fontSize: "9px",
+    fontSize: "11px",
     fontFamily: "var(--font-display)",
     color: dirConfig.color,
     padding: "2px 6px",
@@ -65,14 +65,14 @@ export function PromotionCard({ promotion, memberId }: PromotionCardProps) {
   const metaStyle: CSSProperties = {
     display: "flex",
     gap: "12px",
-    fontSize: "11px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     fontFamily: "var(--font-mono)",
     marginBottom: "6px",
   };
 
   const reasonStyle: CSSProperties = {
-    fontSize: "11px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     fontFamily: "var(--font-mono)",
     fontStyle: "italic",
@@ -80,7 +80,7 @@ export function PromotionCard({ promotion, memberId }: PromotionCardProps) {
   };
 
   const viewMoreStyle: CSSProperties = {
-    fontSize: "9px",
+    fontSize: "11px",
     color: "var(--accent)",
     fontFamily: "var(--font-display)",
     marginTop: "8px",

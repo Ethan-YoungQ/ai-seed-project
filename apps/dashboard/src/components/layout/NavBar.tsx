@@ -11,7 +11,7 @@ export function NavBar() {
     padding: "0.75rem 1.5rem",
     borderBottom: "1px solid var(--border-glow)",
     fontFamily: "var(--font-display)",
-    fontSize: "0.75rem",
+    fontSize: "0.95rem",
     position: "sticky",
     top: 0,
     background: "var(--bg-base)",
@@ -21,7 +21,7 @@ export function NavBar() {
   const logoStyle: CSSProperties = {
     color: "var(--accent)",
     textDecoration: "none",
-    fontSize: "0.65rem",
+    fontSize: "0.8rem",
   };
 
   const linksStyle: CSSProperties = {
@@ -33,13 +33,13 @@ export function NavBar() {
   const statusLinkStyle: CSSProperties = {
     color: "var(--text-secondary)",
     textDecoration: "none",
-    fontSize: "0.55rem",
+    fontSize: "0.7rem",
     letterSpacing: "0.05em",
   };
 
   const versionStyle: CSSProperties = {
     color: "var(--text-secondary)",
-    fontSize: "0.55rem",
+    fontSize: "0.7rem",
   };
 
   return (

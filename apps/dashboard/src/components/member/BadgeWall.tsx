@@ -28,14 +28,14 @@ function BadgeWallItem({ badge }: { badge: EarnedBadge }) {
   };
 
   const emojiStyle: CSSProperties = {
-    fontSize: "28px",
+    fontSize: "34px",
     lineHeight: 1,
     filter: "drop-shadow(0 0 6px rgba(255, 45, 120, 0.4))",
   };
 
   const nameStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "12px",
+    fontSize: "14px",
     color: "var(--text-primary)",
     fontWeight: "bold",
     textAlign: "center",
@@ -43,7 +43,7 @@ function BadgeWallItem({ badge }: { badge: EarnedBadge }) {
 
   const periodStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "10px",
+    fontSize: "12px",
     color: "var(--text-secondary)",
   };
 
@@ -72,7 +72,7 @@ export function BadgeWall({ badges }: BadgeWallProps) {
 
   const titleStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "12px",
+    fontSize: "15px",
     color: "var(--text-primary)",
     letterSpacing: "2px",
   };
@@ -85,7 +85,7 @@ export function BadgeWall({ badges }: BadgeWallProps) {
 
   const countStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "11px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     marginTop: "16px",
     textAlign: "right",
@@ -96,7 +96,7 @@ export function BadgeWall({ badges }: BadgeWallProps) {
   return (
     <NeonCard glowColor="#ff2d78">
       <div style={headerStyle}>
-        <span style={{ fontSize: "18px" }}>{"🏆"}</span>
+        <span style={{ fontSize: "22px" }}>{"🏆"}</span>
         <span style={titleStyle}>{"勋章墙"}</span>
       </div>
       <div style={gridStyle}>

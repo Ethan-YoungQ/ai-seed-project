@@ -15,13 +15,13 @@ export function RankBadge({ rank }: RankBadgeProps) {
 
   if (medal) {
     const style: CSSProperties = {
-      fontSize: "20px",
+      fontSize: "24px",
       lineHeight: "1",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      width: "32px",
-      height: "32px",
+      width: "36px",
+      height: "36px",
     };
     return <span style={style}>{medal}</span>;
   }
@@ -30,9 +30,9 @@ export function RankBadge({ rank }: RankBadgeProps) {
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    width: "32px",
-    height: "32px",
-    fontSize: "11px",
+    width: "36px",
+    height: "36px",
+    fontSize: "14px",
     fontFamily: "var(--font-display)",
     color: "var(--text-secondary)",
   };

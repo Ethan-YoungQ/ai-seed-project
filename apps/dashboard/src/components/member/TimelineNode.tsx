@@ -43,7 +43,7 @@ export function TimelineNode({ windowId, aq, isActive = false, isFirst: _isFirst
 
   const windowLabelStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "8px",
+    fontSize: "10px",
     color: nodeColor,
     whiteSpace: "nowrap",
     textShadow: isActive ? `0 0 6px ${NEON_COLOR}` : "none",
@@ -51,7 +51,7 @@ export function TimelineNode({ windowId, aq, isActive = false, isFirst: _isFirst
 
   const aqLabelStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "9px",
+    fontSize: "11px",
     color: isActive ? NEON_COLOR : "var(--text-secondary)",
     whiteSpace: "nowrap",
     fontWeight: isActive ? "bold" : "normal",

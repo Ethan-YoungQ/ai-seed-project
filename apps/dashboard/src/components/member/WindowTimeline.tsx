@@ -17,7 +17,7 @@ export function WindowTimeline({ snapshots }: WindowTimelineProps) {
     const emptyStyle: CSSProperties = {
       color: "var(--text-secondary)",
       fontFamily: "var(--font-mono)",
-      fontSize: "11px",
+      fontSize: "13px",
       textAlign: "center",
       padding: "16px 0",
     };
@@ -36,7 +36,7 @@ export function WindowTimeline({ snapshots }: WindowTimelineProps) {
 
   const titleStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "10px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     letterSpacing: "0.08em",
     marginBottom: "20px",

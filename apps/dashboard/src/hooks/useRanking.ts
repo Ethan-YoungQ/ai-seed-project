@@ -1,7 +1,18 @@
 import { useState, useEffect } from "react";
 import { fetchRanking } from "../lib/api";
 import { MOCK_RANKING } from "../lib/mock-data";
-import type { RankingResponse } from "../types/api";
+import type { RankingResponse, RankingRow } from "../types/api";
+import { computeBadges } from "../lib/badge-engine";
+
+/** Attach computed badges to ranking rows (pure, no mutation) */
+function attachBadges(rows: RankingRow[], periodCount: number): RankingRow[] {
+  if (rows.length === 0 || periodCount < 2) return rows;
+  const badgeMap = computeBadges(rows, periodCount);
+  return rows.map((row) => ({
+    ...row,
+    badges: badgeMap.get(row.memberId) ?? [],
+  }));
+}
 
 export interface UseRankingState {
   data: RankingResponse | null;
@@ -29,7 +40,10 @@ export function useRanking(campId?: string): UseRankingState {
     fetchRanking(campId)
       .then((res) => {
         if (!cancelled) {
-          setData(res);
+          // Compute badges frontend-side and attach to rows
+          const periodCount = res.periodCount ?? 2;
+          const rowsWithBadges = attachBadges(res.rows, periodCount);
+          setData({ ...res, rows: rowsWithBadges });
           setLoading(false);
         }
       })
@@ -37,7 +51,8 @@ export function useRanking(campId?: string): UseRankingState {
         if (!cancelled) {
           if (import.meta.env.DEV) {
             console.warn("[useRanking] API unavailable, using mock data");
-            setData({ ok: true, campId: "demo", rows: MOCK_RANKING, groupName: "HBU奇点玩家" });
+            const mockWithBadges = attachBadges(MOCK_RANKING, 4);
+            setData({ ok: true, campId: "demo", rows: mockWithBadges, groupName: "HBU奇点玩家" });
           } else {
             setError(_err instanceof Error ? _err.message : "Unknown error");
           }

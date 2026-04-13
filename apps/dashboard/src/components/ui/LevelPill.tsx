@@ -15,7 +15,7 @@ export function LevelPill({ level }: LevelPillProps) {
     padding: "2px 6px",
     border: `2px solid ${config.color}`,
     borderRadius: "4px",
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-display)",
     color: config.color,
     whiteSpace: "nowrap",

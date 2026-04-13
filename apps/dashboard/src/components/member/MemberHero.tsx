@@ -23,7 +23,7 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq, avatarUrl }
 
   const backLinkStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "8px",
+    fontSize: "10px",
     color: "var(--text-secondary)",
     textDecoration: "none",
     letterSpacing: "0.05em",
@@ -38,7 +38,7 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq, avatarUrl }
     gap: "16px",
   };
 
-  const avatarSize = 64;
+  const avatarSize = 80;
   const showImage = avatarUrl && !avatarError;
 
   const avatarContainerStyle: CSSProperties = {
@@ -64,7 +64,7 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq, avatarUrl }
 
   const avatarFallbackStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "24px",
+    fontSize: "30px",
     fontWeight: "bold",
     color: config.color,
     lineHeight: 1,
@@ -73,7 +73,7 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq, avatarUrl }
 
   const nameStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "clamp(14px, 3vw, 22px)",
+    fontSize: "clamp(18px, 3.5vw, 28px)",
     color: "var(--text-primary)",
     letterSpacing: "0.04em",
     lineHeight: 1.4,
@@ -94,14 +94,14 @@ export function MemberHero({ memberName, currentLevel, cumulativeAq, avatarUrl }
 
   const aqLabelStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "10px",
+    fontSize: "12px",
     color: "var(--text-secondary)",
     letterSpacing: "0.08em",
   };
 
   const aqValueStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "clamp(28px, 5vw, 42px)",
+    fontSize: "clamp(34px, 6vw, 52px)",
     color: config.color,
     letterSpacing: "0.02em",
     textShadow: `0 0 16px ${config.color}, 0 0 32px ${config.color}66`,

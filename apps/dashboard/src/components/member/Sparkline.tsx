@@ -25,7 +25,7 @@ export function Sparkline({ dimKey, data }: SparklineProps) {
 
   const labelStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "9px",
+    fontSize: "11px",
     color,
     letterSpacing: "0.06em",
     textShadow: `0 0 6px ${color}88`,
@@ -43,7 +43,7 @@ export function Sparkline({ dimKey, data }: SparklineProps) {
       justifyContent: "center",
       color: "var(--text-secondary)",
       fontFamily: "var(--font-mono)",
-      fontSize: "9px",
+      fontSize: "11px",
     };
     return (
       <div style={wrapperStyle}>
@@ -73,7 +73,7 @@ export function Sparkline({ dimKey, data }: SparklineProps) {
                 border: `1px solid ${color}`,
                 borderRadius: "4px",
                 fontFamily: "var(--font-mono)",
-                fontSize: "10px",
+                fontSize: "12px",
                 color: "var(--text-primary)",
                 padding: "4px 8px",
               }}

@@ -37,7 +37,7 @@ function LargeLevelBadge({ level }: { level: number }) {
   };
 
   const nameStyle: CSSProperties = {
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-display)",
     color: config.color,
     textAlign: "center",
@@ -45,7 +45,7 @@ function LargeLevelBadge({ level }: { level: number }) {
   };
 
   const levelNumStyle: CSSProperties = {
-    fontSize: "9px",
+    fontSize: "11px",
     fontFamily: "var(--font-mono)",
     color: "var(--text-secondary)",
   };
@@ -74,14 +74,14 @@ export function PromotionHero({ fromLevel, toLevel, windowId, promotedAt, member
   };
 
   const titleStyle: CSSProperties = {
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-display)",
     color: "var(--text-secondary)",
     letterSpacing: "0.1em",
   };
 
   const nameStyle: CSSProperties = {
-    fontSize: "14px",
+    fontSize: "18px",
     fontFamily: "var(--font-display)",
     color: "var(--text-primary)",
   };
@@ -95,14 +95,14 @@ export function PromotionHero({ fromLevel, toLevel, windowId, promotedAt, member
   };
 
   const arrowStyle: CSSProperties = {
-    fontSize: "32px",
+    fontSize: "40px",
     fontWeight: "bold",
     color: dirConfig.color,
     textShadow: `0 0 12px ${dirConfig.color}`,
   };
 
   const dirLabelStyle: CSSProperties = {
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-display)",
     color: dirConfig.color,
     padding: "4px 12px",
@@ -114,7 +114,7 @@ export function PromotionHero({ fromLevel, toLevel, windowId, promotedAt, member
   const metaStyle: CSSProperties = {
     display: "flex",
     gap: "16px",
-    fontSize: "11px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     fontFamily: "var(--font-mono)",
     flexWrap: "wrap",

@@ -48,12 +48,12 @@ export function LeaderboardRow({ row }: LeaderboardRowProps) {
 
   const nameStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "14px",
+    fontSize: "18px",
     color: "var(--text-primary)",
     fontWeight: "bold",
   };
 
-  const avatarSize = 32;
+  const avatarSize = 40;
   const showImage = row.avatarUrl && !avatarError;
 
   const avatarContainerStyle: CSSProperties = {
@@ -79,7 +79,7 @@ export function LeaderboardRow({ row }: LeaderboardRowProps) {
 
   const avatarFallbackStyle: CSSProperties = {
     fontFamily: "var(--font-mono)",
-    fontSize: "13px",
+    fontSize: "16px",
     fontWeight: "bold",
     color: config.color,
     lineHeight: 1,
@@ -93,14 +93,14 @@ export function LeaderboardRow({ row }: LeaderboardRowProps) {
 
   const aqStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "12px",
+    fontSize: "15px",
     color: config.color,
     textAlign: "right" as const,
     whiteSpace: "nowrap" as const,
   };
 
   const aqLabelStyle: CSSProperties = {
-    fontSize: "9px",
+    fontSize: "11px",
     color: "var(--text-secondary)",
     fontFamily: "var(--font-mono)",
     textAlign: "right" as const,

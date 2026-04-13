@@ -47,7 +47,7 @@ function CustomAngleAxisTick(props: {
       textAnchor="middle"
       dominantBaseline="central"
       fill={color}
-      fontSize={9}
+      fontSize={12}
       fontFamily="var(--font-display)"
     >
       {label}
@@ -64,7 +64,7 @@ export function AqRadarChart({ dimensions }: AqRadarChartProps) {
 
   const titleStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "10px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     letterSpacing: "0.08em",
     marginBottom: "12px",
@@ -94,7 +94,7 @@ export function AqRadarChart({ dimensions }: AqRadarChartProps) {
               border: "1px solid var(--border-glow)",
               borderRadius: "4px",
               fontFamily: "var(--font-mono)",
-              fontSize: "11px",
+              fontSize: "13px",
               color: "var(--text-primary)",
             }}
             formatter={(value: number, _name: string, entry: { payload?: { subject?: string } }) => {

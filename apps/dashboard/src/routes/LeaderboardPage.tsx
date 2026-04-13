@@ -63,7 +63,7 @@ function ErrorCard({ message, onRetry }: ErrorCardProps) {
   const msgStyle: CSSProperties = {
     color: "#ff2d78",
     fontFamily: "var(--font-mono)",
-    fontSize: "13px",
+    fontSize: "15px",
   };
 
   const btnStyle: CSSProperties = {
@@ -73,7 +73,7 @@ function ErrorCard({ message, onRetry }: ErrorCardProps) {
     borderRadius: "4px",
     padding: "8px 20px",
     fontFamily: "var(--font-display)",
-    fontSize: "10px",
+    fontSize: "12px",
     cursor: "pointer",
   };
 
@@ -97,7 +97,7 @@ export function LeaderboardPage() {
 
   const titleStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "14px",
+    fontSize: "18px",
     color: "var(--text-primary)",
     marginBottom: "20px",
     letterSpacing: "0.05em",
@@ -125,7 +125,7 @@ export function LeaderboardPage() {
     const emptyStyle: CSSProperties = {
       color: "var(--text-secondary)",
       fontFamily: "var(--font-mono)",
-      fontSize: "13px",
+      fontSize: "15px",
       textAlign: "center",
       padding: "48px 0",
     };

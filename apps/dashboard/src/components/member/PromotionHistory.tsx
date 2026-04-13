@@ -20,7 +20,7 @@ export function PromotionHistory({ promotions, memberId }: PromotionHistoryProps
   };
 
   const titleStyle: CSSProperties = {
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-display)",
     color: "var(--text-secondary)",
     letterSpacing: "0.1em",
@@ -37,7 +37,7 @@ export function PromotionHistory({ promotions, memberId }: PromotionHistoryProps
   const emptyStyle: CSSProperties = {
     color: "var(--text-secondary)",
     fontFamily: "var(--font-mono)",
-    fontSize: "12px",
+    fontSize: "14px",
     textAlign: "center",
     padding: "24px 0",
   };

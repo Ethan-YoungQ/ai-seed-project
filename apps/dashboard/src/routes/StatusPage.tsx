@@ -56,13 +56,13 @@ function StatRow({ label, value }: { label: string; value: string | number }) {
   };
 
   const labelStyle: CSSProperties = {
-    fontSize: "11px",
+    fontSize: "14px",
     fontFamily: "var(--font-mono)",
     color: "var(--text-secondary)",
   };
 
   const valueStyle: CSSProperties = {
-    fontSize: "12px",
+    fontSize: "15px",
     fontFamily: "var(--font-display)",
     color: "var(--text-primary)",
   };
@@ -110,7 +110,7 @@ export function StatusPage() {
 
   const titleStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "12px",
+    fontSize: "15px",
     color: "var(--text-primary)",
     marginBottom: "20px",
     letterSpacing: "0.05em",
@@ -125,12 +125,12 @@ export function StatusPage() {
 
   const statusLabelStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "10px",
+    fontSize: "13px",
     color: "var(--text-primary)",
   };
 
   const metaStyle: CSSProperties = {
-    fontSize: "10px",
+    fontSize: "12px",
     fontFamily: "var(--font-mono)",
     color: "var(--text-secondary)",
     marginBottom: "16px",
@@ -145,7 +145,7 @@ export function StatusPage() {
     borderRadius: "4px",
     padding: "4px 10px",
     fontFamily: "var(--font-display)",
-    fontSize: "8px",
+    fontSize: "10px",
     color: "var(--text-secondary)",
     cursor: "pointer",
   };
@@ -153,7 +153,7 @@ export function StatusPage() {
   const errorStyle: CSSProperties = {
     color: "#ff2d78",
     fontFamily: "var(--font-mono)",
-    fontSize: "12px",
+    fontSize: "14px",
     padding: "16px",
     background: "#ff2d7810",
     border: "1px solid #ff2d7840",
@@ -209,14 +209,14 @@ export function StatusPage() {
             </>
           )}
           {state.loading && !state.data && (
-            <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: "12px", padding: "16px 0" }}>
+            <div style={{ color: "var(--text-secondary)", fontFamily: "var(--font-mono)", fontSize: "14px", padding: "16px 0" }}>
               加载中…
             </div>
           )}
         </NeonCard>
       )}
 
-      <div style={{ marginTop: "16px", fontSize: "9px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
+      <div style={{ marginTop: "16px", fontSize: "11px", fontFamily: "var(--font-mono)", color: "var(--text-secondary)" }}>
         每 {REFRESH_INTERVAL_MS / 1000} 秒自动刷新
       </div>
     </div>

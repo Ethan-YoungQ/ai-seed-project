@@ -22,7 +22,7 @@ export function TierBanner({ level, count }: TierBannerProps) {
 
   const nameStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "11px",
+    fontSize: "14px",
     color: config.color,
     flex: 1,
   };
@@ -35,14 +35,14 @@ export function TierBanner({ level, count }: TierBannerProps) {
     background: config.color,
     color: "#000",
     borderRadius: "10px",
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-mono)",
     fontWeight: "bold",
   };
 
   return (
     <div style={containerStyle}>
-      <span style={{ fontSize: "16px" }}>{config.emoji}</span>
+      <span style={{ fontSize: "20px" }}>{config.emoji}</span>
       <span style={nameStyle}>{config.name}</span>
       <span style={countStyle}>{count}</span>
     </div>

@@ -1849,6 +1849,13 @@ export class SqliteRepository {
     return row?.id;
   }
 
+  countPeriods(campId: string): number {
+    const row = this.db.prepare(
+      "SELECT COUNT(*) AS cnt FROM v2_periods WHERE camp_id = ?"
+    ).get(campId) as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  }
+
   getCamp(campId: string): CampRecord | undefined {
     const row = this.db.prepare("SELECT * FROM camps WHERE id = ?").get(campId) as
       | Record<string, unknown>

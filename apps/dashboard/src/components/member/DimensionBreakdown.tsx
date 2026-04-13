@@ -13,7 +13,7 @@ interface DimensionBreakdownProps {
 export function DimensionBreakdown({ dimensions, max = 100 }: DimensionBreakdownProps) {
   const titleStyle: CSSProperties = {
     fontFamily: "var(--font-display)",
-    fontSize: "10px",
+    fontSize: "13px",
     color: "var(--text-secondary)",
     letterSpacing: "0.08em",
     marginBottom: "16px",

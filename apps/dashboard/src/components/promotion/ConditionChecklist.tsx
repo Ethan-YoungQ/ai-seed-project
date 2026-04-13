@@ -53,7 +53,7 @@ function ChecklistView({ items }: { items: ChecklistItem[] }) {
         };
 
         const iconStyle: CSSProperties = {
-          fontSize: "14px",
+          fontSize: "18px",
           flexShrink: 0,
           marginTop: "1px",
         };
@@ -65,14 +65,14 @@ function ChecklistView({ items }: { items: ChecklistItem[] }) {
         };
 
         const labelStyle: CSSProperties = {
-          fontSize: "11px",
+          fontSize: "14px",
           fontFamily: "var(--font-mono)",
           color: "var(--text-primary)",
           lineHeight: 1.5,
         };
 
         const detailStyle: CSSProperties = {
-          fontSize: "10px",
+          fontSize: "12px",
           fontFamily: "var(--font-mono)",
           color: "var(--text-secondary)",
           lineHeight: 1.4,
@@ -94,7 +94,7 @@ function ChecklistView({ items }: { items: ChecklistItem[] }) {
 
 function PlainTextView({ text }: { text: string }) {
   const style: CSSProperties = {
-    fontSize: "12px",
+    fontSize: "14px",
     fontFamily: "var(--font-mono)",
     color: "var(--text-primary)",
     lineHeight: 1.7,
@@ -111,7 +111,7 @@ function PlainTextView({ text }: { text: string }) {
 
 export function ConditionChecklist({ reason }: ConditionChecklistProps) {
   const titleStyle: CSSProperties = {
-    fontSize: "10px",
+    fontSize: "13px",
     fontFamily: "var(--font-display)",
     color: "var(--text-secondary)",
     letterSpacing: "0.1em",
