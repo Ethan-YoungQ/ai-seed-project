@@ -157,6 +157,31 @@ export async function createApp(options?: {
                   .map((m) => ({ id: m.id, displayName: m.displayName || m.name }));
               },
               quizBank: quizBankDeps,
+              autoRegister: async (openId: string) => {
+                try {
+                  // Fetch name and avatar from Feishu API
+                  const profile = feishuApiClient.getMemberProfile
+                    ? await feishuApiClient.getMemberProfile({ userId: openId, userIdType: "open_id" })
+                    : null;
+                  const name = profile?.displayName || `学员${openId.slice(-6)}`;
+                  const avatarUrl = profile?.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`;
+                  const memberId = `user-${openId.slice(-8)}`;
+                  const campId = repository.getDefaultCampId() ?? "default";
+
+                  // Insert as student
+                  const db = (repository as any).db;
+                  db.prepare(
+                    `INSERT OR IGNORE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, source_feishu_open_id, is_participant, is_excluded_from_board, status, hidden_from_board)
+                     VALUES (?, ?, ?, ?, ?, '', 'student', ?, 1, 0, 'active', 0)`
+                  ).run(memberId, campId, name, name, avatarUrl, openId);
+
+                  console.log(`[AutoRegister] Created student: ${name} (${memberId})`);
+                  return { id: memberId, displayName: name };
+                } catch (err) {
+                  console.error("[AutoRegister] Failed:", err);
+                  return null;
+                }
+              },
             });
             await handler(message);
           } else {

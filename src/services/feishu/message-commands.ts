@@ -62,9 +62,10 @@ export interface MessageCommandDeps {
   cardDeps: Pick<CardHandlerDeps, "repo">;
   autoReply?: AutoReplyDeps;
   ingestor?: AutoCaptureIngestor;
-  /** Returns student members for peer review voting */
   listStudents?: () => Array<{ id: string; displayName: string }>;
   quizBank?: QuizBankDeps;
+  /** Auto-register unknown senders as students (fetches name/avatar from Feishu) */
+  autoRegister?: (openId: string) => Promise<{ id: string; displayName: string } | null>;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -105,7 +106,17 @@ async function handleAutoCapture(
   message: NormalizedFeishuMessage,
   deps: MessageCommandDeps,
 ): Promise<void> {
-  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+  let member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+
+  if (!member && deps.autoRegister) {
+    // Auto-register: new student sends first message → create DB record
+    console.log(`[AutoCapture] Unknown sender ${message.memberId}, attempting auto-register...`);
+    const registered = await deps.autoRegister(message.memberId);
+    if (registered) {
+      console.log(`[AutoCapture] Auto-registered: ${registered.displayName} (${registered.id})`);
+      member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+    }
+  }
 
   if (!member) {
     console.log(`[AutoCapture] Unknown sender ${message.memberId}, ignoring`);
