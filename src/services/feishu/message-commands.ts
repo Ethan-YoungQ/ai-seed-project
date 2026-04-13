@@ -21,6 +21,10 @@ import {
 import { buildQuizCard } from "./cards/templates/quiz-v1.js";
 import { fetchQuizByPeriod, type QuizBankDeps } from "./quiz-bank.js";
 import { buildPeerReviewVoteCard } from "./cards/templates/peer-review-vote-v1.js";
+import {
+  buildDashboardPinCard,
+  type DashboardPinState,
+} from "./cards/templates/dashboard-pin-v1.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
@@ -33,6 +37,7 @@ import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
 const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
 const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
+const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板"];
 
 function stripAtMentionPrefix(text: string): string {
   return text.replace(/^@_\S+\s+/g, "").trim();
@@ -56,6 +61,23 @@ export interface AutoCaptureIngestor {
 // Message command handler
 // ============================================================================
 
+/** 看板置顶卡片所需的依赖 */
+export interface DashboardPinDeps {
+  /** 获取排行数据（返回 top N） */
+  fetchRanking: (campId: string) => Array<{
+    memberId: string;
+    memberName: string;
+    cumulativeAq: number;
+    currentLevel: number;
+  }>;
+  /** 获取默认 camp ID */
+  getDefaultCampId: () => string;
+  /** Dashboard 网页 URL */
+  dashboardUrl: string;
+  /** 学员总数 */
+  countStudents?: () => number;
+}
+
 export interface MessageCommandDeps {
   feishuClient: FeishuApiClient;
   lifecycle: AdminPanelLifecycleDeps;
@@ -66,6 +88,8 @@ export interface MessageCommandDeps {
   quizBank?: QuizBankDeps;
   /** Auto-register unknown senders as students (fetches name/avatar from Feishu) */
   autoRegister?: (openId: string) => Promise<{ id: string; displayName: string } | null>;
+  /** 看板置顶卡片依赖 */
+  dashboardPin?: DashboardPinDeps;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -89,6 +113,10 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       }
       if (PEER_REVIEW_KEYWORDS.some((kw) => text === kw)) {
         await handlePeerReviewTrigger(message, deps);
+        return;
+      }
+      if (DASHBOARD_KEYWORDS.some((kw) => text === kw)) {
+        await handleDashboardPinTrigger(message, deps);
         return;
       }
     }
@@ -312,4 +340,78 @@ async function handlePeerReviewTrigger(
     cardJson: cardJson as unknown as Record<string, unknown>,
   });
   console.log(`[PeerReview] Vote card sent, session=${sessionId}, candidates=${candidates.length}`);
+}
+
+// ============================================================================
+// Dashboard pin trigger — any member sends "看板"/"排行" → bot sends pinned card
+// ============================================================================
+
+function formatTime(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+async function handleDashboardPinTrigger(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  if (!message.chatId) return;
+
+  const pinDeps = deps.dashboardPin;
+  if (!pinDeps) {
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 看板功能未配置",
+    });
+    return;
+  }
+
+  try {
+    const campId = pinDeps.getDefaultCampId();
+    const ranking = pinDeps.fetchRanking(campId);
+    const topN = ranking.slice(0, 5).map((r) => ({
+      displayName: r.memberName,
+      cumulativeAq: r.cumulativeAq,
+      currentLevel: r.currentLevel,
+    }));
+
+    const totalMembers = pinDeps.countStudents?.() ?? ranking.length;
+
+    const state: DashboardPinState = {
+      topN,
+      totalMembers,
+      generatedAt: formatTime(new Date()),
+      dashboardUrl: pinDeps.dashboardUrl,
+    };
+
+    const cardJson = buildDashboardPinCard(state);
+    const result = await deps.feishuClient.sendCardMessage({
+      chatId: message.chatId,
+      cardJson: cardJson as unknown as Record<string, unknown>,
+    });
+
+    console.log(`[DashboardPin] Card sent: messageId=${result.messageId}, top=${topN.length}, total=${totalMembers}`);
+
+    // 尝试置顶卡片消息
+    if (result.messageId && deps.feishuClient.pinMessage) {
+      try {
+        await deps.feishuClient.pinMessage({
+          chatId: message.chatId,
+          messageId: result.messageId,
+        });
+        console.log(`[DashboardPin] Message pinned: ${result.messageId}`);
+      } catch (pinErr) {
+        // 置顶失败不影响主流程（可能缺少 im:chat.top_notice:write 权限）
+        console.warn("[DashboardPin] Pin failed (may need im:chat.top_notice:write scope):", pinErr);
+      }
+    }
+  } catch (err) {
+    console.error("[DashboardPin] Error:", err);
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 看板数据获取失败，请稍后重试",
+    });
+  }
 }

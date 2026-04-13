@@ -39,6 +39,11 @@ import { peerReviewVoteHandler } from "./services/feishu/cards/handlers/peer-rev
 import { peerReviewSettleHandler } from "./services/feishu/cards/handlers/peer-review-settle-handler.js";
 import { createMessageCommandHandler } from "./services/feishu/message-commands.js";
 import { fetchQuizByPeriod, type QuizBankDeps } from "./services/feishu/quiz-bank.js";
+import {
+  dashboardPinRefreshHandler,
+  DASHBOARD_PIN_READER_KEY,
+} from "./services/feishu/cards/handlers/dashboard-pin-handler.js";
+import type { DashboardPinState } from "./services/feishu/cards/templates/dashboard-pin-v1.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -136,6 +141,13 @@ export async function createApp(options?: {
 
   const cardRepoDeps = cardRepoAdapter(repository);
 
+  // Dashboard URL：优先 FEISHU_LEADERBOARD_URL 环境变量，否则基于 PUBLIC_HOST 构建
+  const dashboardUrl =
+    feishuConfig.phaseOne?.leaderboardUrl
+    || process.env.PUBLIC_HOST
+      ? `${process.env.PUBLIC_HOST}/dashboard/`
+      : "https://orz.md/dashboard/";
+
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
     ? new LarkFeishuWsRuntime(feishuConfig, async (message) => {
         try {
@@ -157,6 +169,16 @@ export async function createApp(options?: {
                   .map((m) => ({ id: m.id, displayName: m.displayName || m.name }));
               },
               quizBank: quizBankDeps,
+              dashboardPin: {
+                fetchRanking: (campId: string) => repository.fetchRankingByCamp(campId),
+                getDefaultCampId: () => repository.getDefaultCampId() ?? "default",
+                dashboardUrl,
+                countStudents: () => {
+                  const campId = repository.getDefaultCampId() ?? "default";
+                  return repository.listMembers(campId)
+                    .filter((m) => m.roleType === "student").length;
+                },
+              },
               autoRegister: async (openId: string) => {
                 try {
                   // Fetch name and avatar from Feishu API
@@ -402,6 +424,34 @@ export async function createApp(options?: {
   // Peer review card handlers (S1/S2)
   cardDispatcher.register("peer_review_vote", "peer_review_vote", peerReviewVoteHandler);
   cardDispatcher.register("peer_review_settle", "peer_review_settle", peerReviewSettleHandler);
+
+  // Dashboard pin card handler — 刷新按钮
+  // 注入排行数据读取器，供刷新按钮回调使用
+  const dashboardPinDepsOverride = {
+    [DASHBOARD_PIN_READER_KEY]: async (_chatId: string): Promise<DashboardPinState | null> => {
+      try {
+        const campId = repository.getDefaultCampId() ?? "default";
+        const ranking = repository.fetchRankingByCamp(campId);
+        const topN = ranking.slice(0, 5).map((r) => ({
+          displayName: r.memberName,
+          cumulativeAq: r.cumulativeAq,
+          currentLevel: r.currentLevel,
+        }));
+        const totalMembers = repository.listMembers(campId)
+          .filter((m) => m.roleType === "student").length;
+        const pad = (n: number) => String(n).padStart(2, "0");
+        const now = new Date();
+        const generatedAt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+        return { topN, totalMembers, generatedAt, dashboardUrl };
+      } catch {
+        return null;
+      }
+    },
+  };
+  cardDispatcher.register("dashboard_pin", "dashboard_pin_refresh", async (ctx, deps) => {
+    const extendedDeps = { ...deps, ...dashboardPinDepsOverride };
+    return dashboardPinRefreshHandler(ctx, extendedDeps);
+  });
 
   await app.register(feishuCardsPlugin, {
     dispatcher: cardDispatcher,

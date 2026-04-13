@@ -25,7 +25,8 @@ export type CardType =
   | "review_queue"
   | "member_mgmt"
   | "manual_adjust"
-  | "admin_panel";
+  | "admin_panel"
+  | "dashboard_pin";
 
 /** Version directive for card handling strategy */
 export type CardVersionDirective = "current" | "legacy" | "expired";
