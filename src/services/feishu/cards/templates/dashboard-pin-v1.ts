@@ -115,6 +115,10 @@ export function buildDashboardPinCard(state: DashboardPinState): FeishuCardJson 
 
   return {
     schema: "2.0",
+    config: {
+      update_multi: true,
+      enable_forward: true,
+    },
     header: buildHeader({
       title: "📊 成长看板 · 实时排行",
       subtitle: "点击查看完整数据看板",
