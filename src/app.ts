@@ -238,6 +238,11 @@ export async function createApp(options?: {
       wildcard: false,
     });
 
+    // /dashboard（无尾斜杠）→ 301 重定向到 /dashboard/
+    app.get("/dashboard", async (_request, reply) => {
+      return reply.redirect("/dashboard/");
+    });
+
     // SPA fallback: non-asset routes under /dashboard/* return index.html
     const { createReadStream } = await import("fs");
     const indexPath = resolve(dashboardRoot, "index.html");

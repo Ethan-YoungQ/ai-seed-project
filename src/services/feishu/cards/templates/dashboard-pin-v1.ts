@@ -71,35 +71,53 @@ export function buildDashboardPinCard(state: DashboardPinState): FeishuCardJson 
   // 分隔线
   elements.push({ tag: "hr" });
 
-  // 底部信息 + 按钮行
-  const actions: Array<Record<string, unknown>> = [];
+  // 底部按钮行 — Schema 2.0 不支持 action 标签，必须用 column_set
+  const buttonColumns: Array<Record<string, unknown>> = [];
 
   // "查看完整看板" URL 跳转按钮
   if (state.dashboardUrl) {
-    actions.push({
-      tag: "button",
-      text: { tag: "plain_text", content: "📊 查看完整看板" },
-      type: "primary",
-      multi_url: {
-        url: state.dashboardUrl,
-        pc_url: state.dashboardUrl,
-        android_url: state.dashboardUrl,
-        ios_url: state.dashboardUrl
-      }
+    buttonColumns.push({
+      tag: "column",
+      width: "weighted",
+      weight: 1,
+      vertical_align: "center",
+      elements: [
+        {
+          tag: "button",
+          text: { tag: "plain_text", content: "📊 查看完整看板" },
+          type: "primary",
+          multi_url: {
+            url: state.dashboardUrl,
+            pc_url: state.dashboardUrl,
+            android_url: state.dashboardUrl,
+            ios_url: state.dashboardUrl
+          }
+        }
+      ]
     });
   }
 
   // 刷新按钮
-  actions.push({
-    tag: "button",
-    text: { tag: "plain_text", content: "🔄 刷新" },
-    type: "default",
-    value: { action: "dashboard_pin_refresh" }
+  buttonColumns.push({
+    tag: "column",
+    width: "weighted",
+    weight: 1,
+    vertical_align: "center",
+    elements: [
+      {
+        tag: "button",
+        text: { tag: "plain_text", content: "🔄 刷新" },
+        type: "default",
+        value: { action: "dashboard_pin_refresh" }
+      }
+    ]
   });
 
   elements.push({
-    tag: "action",
-    actions
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: buttonColumns
   });
 
   // 底部备注
