@@ -2993,13 +2993,13 @@ export class SqliteRepository {
           CASE WHEN m.display_name != '' THEN m.display_name ELSE m.name END AS member_name,
           m.avatar_url,
           COALESCE(ml.current_level, 1)              AS current_level,
-          COALESCE(ws.cumulative_aq, live.live_aq, 0) AS cumulative_aq,
-          COALESCE(ws.window_aq,    live.live_aq, 0)  AS latest_window_aq,
-          COALESCE(ws.k_score, live.k, 0)            AS k_score,
-          COALESCE(ws.h_score, live.h, 0)            AS h_score,
-          COALESCE(ws.c_score, live.c, 0)            AS c_score,
-          COALESCE(ws.s_score, live.s, 0)            AS s_score,
-          COALESCE(ws.g_score, live.g, 0)            AS g_score
+          COALESCE(ws.cumulative_aq, 0) + COALESCE(live.live_aq, 0) AS cumulative_aq,
+          COALESCE(live.live_aq, ws.window_aq, 0)    AS latest_window_aq,
+          COALESCE(live.k, ws.k_score, 0)            AS k_score,
+          COALESCE(live.h, ws.h_score, 0)            AS h_score,
+          COALESCE(live.c, ws.c_score, 0)            AS c_score,
+          COALESCE(live.s, ws.s_score, 0)            AS s_score,
+          COALESCE(live.g, ws.g_score, 0)            AS g_score
         FROM members m
         LEFT JOIN v2_member_levels ml ON ml.member_id = m.id
         LEFT JOIN (
@@ -3125,27 +3125,43 @@ export class SqliteRepository {
       )
       .all(memberId) as Array<Record<string, unknown>>;
 
-    // If no settled snapshots exist, build a live entry from current dimension scores
-    const liveSeries: Array<Record<string, unknown>> =
-      snapshots.length > 0
-        ? snapshots
-        : (this.db
-            .prepare(
-              `SELECT
-                 'live' AS window_id,
-                 SUM(period_score) AS window_aq,
-                 SUM(period_score) AS cumulative_aq,
-                 SUM(CASE WHEN dimension = 'K' THEN period_score ELSE 0 END) AS k_score,
-                 SUM(CASE WHEN dimension = 'H' THEN period_score ELSE 0 END) AS h_score,
-                 SUM(CASE WHEN dimension = 'C' THEN period_score ELSE 0 END) AS c_score,
-                 SUM(CASE WHEN dimension = 'S' THEN period_score ELSE 0 END) AS s_score,
-                 SUM(CASE WHEN dimension = 'G' THEN period_score ELSE 0 END) AS g_score
-               FROM v2_member_dimension_scores
-               WHERE member_id = ?
-                 AND period_id IN (SELECT id FROM v2_periods WHERE ended_at IS NULL)
-               GROUP BY member_id`
-            )
-            .all(memberId) as Array<Record<string, unknown>>);
+    // 实时周期维度聚合（当前活跃期间）
+    const liveRows = this.db
+      .prepare(
+        `SELECT
+           'live' AS window_id,
+           SUM(period_score) AS window_aq,
+           SUM(period_score) AS cumulative_aq,
+           SUM(CASE WHEN dimension = 'K' THEN period_score ELSE 0 END) AS k_score,
+           SUM(CASE WHEN dimension = 'H' THEN period_score ELSE 0 END) AS h_score,
+           SUM(CASE WHEN dimension = 'C' THEN period_score ELSE 0 END) AS c_score,
+           SUM(CASE WHEN dimension = 'S' THEN period_score ELSE 0 END) AS s_score,
+           SUM(CASE WHEN dimension = 'G' THEN period_score ELSE 0 END) AS g_score
+         FROM v2_member_dimension_scores
+         WHERE member_id = ?
+           AND period_id IN (SELECT id FROM v2_periods WHERE ended_at IS NULL)
+         GROUP BY member_id`
+      )
+      .all(memberId) as Array<Record<string, unknown>>;
+
+    // 组合历史快照 + 当前实时数据，确保 sparklines 显示完整趋势
+    let liveSeries: Array<Record<string, unknown>>;
+    if (snapshots.length > 0) {
+      // 有历史快照：追加当前实时数据作为最新一个数据点
+      if (liveRows.length > 0) {
+        const lastCumAq = Number(snapshots[snapshots.length - 1].cumulative_aq);
+        const liveWindowAq = Number(liveRows[0].window_aq);
+        liveSeries = [
+          ...snapshots,
+          { ...liveRows[0], cumulative_aq: lastCumAq + liveWindowAq },
+        ];
+      } else {
+        liveSeries = snapshots;
+      }
+    } else {
+      // 无历史快照：仅显示当前实时数据
+      liveSeries = liveRows;
+    }
 
     return {
       memberId: String(member.id),
