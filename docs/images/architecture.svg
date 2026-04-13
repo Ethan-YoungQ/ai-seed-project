@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" font-family="system-ui,-apple-system,sans-serif" font-size="13">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0a0a1a"/><stop offset="100%" stop-color="#1a1a3e"/></linearGradient>
+    <linearGradient id="glow1" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#00e5ff"/><stop offset="100%" stop-color="#7c4dff"/></linearGradient>
+    <linearGradient id="glow2" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#ff6d00"/><stop offset="100%" stop-color="#ff1744"/></linearGradient>
+    <linearGradient id="glow3" x1="0" y1="0" x2="1" y2="0"><stop offset="0%" stop-color="#00e676"/><stop offset="100%" stop-color="#00bfa5"/></linearGradient>
+    <filter id="neon"><feGaussianBlur stdDeviation="2" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="900" height="420" fill="url(#bg)" rx="12"/>
+
+  <!-- 飞书群聊 -->
+  <rect x="30" y="60" width="160" height="180" rx="10" fill="none" stroke="url(#glow1)" stroke-width="2" filter="url(#neon)"/>
+  <text x="110" y="90" fill="#00e5ff" text-anchor="middle" font-weight="bold" font-size="14">飞书群聊</text>
+  <text x="110" y="120" fill="#aaa" text-anchor="middle" font-size="12">文字消息</text>
+  <text x="110" y="140" fill="#aaa" text-anchor="middle" font-size="12">图片 / 截图</text>
+  <text x="110" y="160" fill="#aaa" text-anchor="middle" font-size="12">文件 / 视频</text>
+  <text x="110" y="180" fill="#aaa" text-anchor="middle" font-size="12">表情回复</text>
+  <text x="110" y="200" fill="#aaa" text-anchor="middle" font-size="12">互动卡片</text>
+  <text x="110" y="225" fill="#666" text-anchor="middle" font-size="11">WebSocket 实时捕获</text>
+
+  <!-- 箭头1 -->
+  <path d="M195 150 L260 150" stroke="#00e5ff" stroke-width="2" fill="none" marker-end="url(#arrow1)"/>
+  <defs><marker id="arrow1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#00e5ff"/></marker></defs>
+
+  <!-- 消息处理引擎 -->
+  <rect x="265" y="40" width="200" height="260" rx="10" fill="none" stroke="url(#glow2)" stroke-width="2" filter="url(#neon)"/>
+  <text x="365" y="70" fill="#ff6d00" text-anchor="middle" font-weight="bold" font-size="14">消息处理引擎</text>
+
+  <!-- 规则引擎 -->
+  <rect x="280" y="85" width="170" height="55" rx="6" fill="rgba(255,109,0,0.1)" stroke="#ff6d00" stroke-width="1"/>
+  <text x="365" y="108" fill="#ff6d00" text-anchor="middle" font-weight="bold" font-size="12">规则引擎</text>
+  <text x="365" y="128" fill="#aaa" text-anchor="middle" font-size="11">关键词匹配 · 去重 · 限频</text>
+
+  <!-- AI 分类引擎 -->
+  <rect x="280" y="150" width="170" height="55" rx="6" fill="rgba(255,23,68,0.1)" stroke="#ff1744" stroke-width="1"/>
+  <text x="365" y="173" fill="#ff1744" text-anchor="middle" font-weight="bold" font-size="12">AI 分类引擎</text>
+  <text x="365" y="193" fill="#aaa" text-anchor="middle" font-size="11">GLM-4V 多模态识别</text>
+
+  <!-- 评分入库 -->
+  <rect x="280" y="218" width="170" height="40" rx="6" fill="rgba(0,230,118,0.1)" stroke="#00e676" stroke-width="1"/>
+  <text x="365" y="243" fill="#00e676" text-anchor="middle" font-weight="bold" font-size="12">评分 · 晋升 · 勋章</text>
+
+  <!-- 管理员指令 -->
+  <rect x="30" y="280" width="160" height="80" rx="10" fill="none" stroke="#7c4dff" stroke-width="2" filter="url(#neon)"/>
+  <text x="110" y="308" fill="#7c4dff" text-anchor="middle" font-weight="bold" font-size="14">管理员指令</text>
+  <text x="110" y="332" fill="#aaa" text-anchor="middle" font-size="11">管理 · 测验 · 互评</text>
+  <text x="110" y="350" fill="#aaa" text-anchor="middle" font-size="11">调分 · 成员 · 看板</text>
+
+  <!-- 箭头2 -->
+  <path d="M195 320 L260 250" stroke="#7c4dff" stroke-width="2" fill="none" marker-end="url(#arrow2)"/>
+  <defs><marker id="arrow2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#7c4dff"/></marker></defs>
+
+  <!-- 题库 -->
+  <rect x="30" y="380" width="160" height="30" rx="6" fill="none" stroke="#ffab00" stroke-width="1"/>
+  <text x="110" y="400" fill="#ffab00" text-anchor="middle" font-size="11">飞书多维表格 (题库)</text>
+
+  <!-- 箭头3 引擎→数据库 -->
+  <path d="M470 170 L540 170" stroke="#00e676" stroke-width="2" fill="none" marker-end="url(#arrow3)"/>
+  <defs><marker id="arrow3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#00e676"/></marker></defs>
+
+  <!-- SQLite -->
+  <rect x="545" y="100" width="140" height="140" rx="10" fill="none" stroke="url(#glow3)" stroke-width="2" filter="url(#neon)"/>
+  <text x="615" y="140" fill="#00e676" text-anchor="middle" font-weight="bold" font-size="14">SQLite</text>
+  <text x="615" y="165" fill="#aaa" text-anchor="middle" font-size="12">评分事件</text>
+  <text x="615" y="185" fill="#aaa" text-anchor="middle" font-size="12">维度分数</text>
+  <text x="615" y="205" fill="#aaa" text-anchor="middle" font-size="12">晋升记录</text>
+  <text x="615" y="225" fill="#aaa" text-anchor="middle" font-size="12">勋章数据</text>
+
+  <!-- 箭头4 数据库→Dashboard -->
+  <path d="M690 170 L730 170" stroke="#e040fb" stroke-width="2" fill="none" marker-end="url(#arrow4)"/>
+  <defs><marker id="arrow4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6" fill="#e040fb"/></marker></defs>
+
+  <!-- Dashboard -->
+  <rect x="735" y="60" width="145" height="220" rx="10" fill="none" stroke="#e040fb" stroke-width="2" filter="url(#neon)"/>
+  <text x="807" y="95" fill="#e040fb" text-anchor="middle" font-weight="bold" font-size="14">Dashboard</text>
+  <text x="807" y="120" fill="#aaa" text-anchor="middle" font-size="11">赛博朋克大屏</text>
+  <text x="807" y="150" fill="#aaa" text-anchor="middle" font-size="12">实时排行榜</text>
+  <text x="807" y="170" fill="#aaa" text-anchor="middle" font-size="12">五维雷达图</text>
+  <text x="807" y="190" fill="#aaa" text-anchor="middle" font-size="12">段位晋升动画</text>
+  <text x="807" y="210" fill="#aaa" text-anchor="middle" font-size="12">勋章墙</text>
+  <text x="807" y="230" fill="#aaa" text-anchor="middle" font-size="12">成长时间线</text>
+  <text x="807" y="265" fill="#666" text-anchor="middle" font-size="11">React + 手写 CSS</text>
+
+  <!-- 底部标注 -->
+  <text x="450" y="400" fill="#555" text-anchor="middle" font-size="11">全链路 &lt; 3 秒：消息捕获 → AI 分类 → 评分入库 → 排行榜更新</text>
+</svg>

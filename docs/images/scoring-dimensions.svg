@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320" font-family="system-ui,-apple-system,sans-serif">
+  <defs>
+    <linearGradient id="bg2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#0a0a1a"/><stop offset="100%" stop-color="#1a1a3e"/></linearGradient>
+    <filter id="g"><feGaussianBlur stdDeviation="1.5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="600" height="320" fill="url(#bg2)" rx="12"/>
+
+  <!-- 五角连线 -->
+  <polygon points="300,45 458,160 360,285 240,285 142,160" fill="none" stroke="rgba(0,229,255,0.3)" stroke-width="1.5"/>
+  <polygon points="300,80 425,170 348,260 252,260 175,170" fill="rgba(0,229,255,0.08)" stroke="rgba(0,229,255,0.15)" stroke-width="1"/>
+
+  <!-- K 知识力 (top) -->
+  <circle cx="300" cy="40" r="28" fill="rgba(76,175,80,0.15)" stroke="#4caf50" stroke-width="2" filter="url(#g)"/>
+  <text x="300" y="36" fill="#4caf50" text-anchor="middle" font-weight="bold" font-size="16">K</text>
+  <text x="300" y="52" fill="#4caf50" text-anchor="middle" font-size="9">知识力</text>
+  <text x="300" y="18" fill="#aaa" text-anchor="middle" font-size="10">K1 K2 K3 K4</text>
+
+  <!-- H 实操力 (top-right) -->
+  <circle cx="462" cy="158" r="28" fill="rgba(255,152,0,0.15)" stroke="#ff9800" stroke-width="2" filter="url(#g)"/>
+  <text x="462" y="154" fill="#ff9800" text-anchor="middle" font-weight="bold" font-size="16">H</text>
+  <text x="462" y="170" fill="#ff9800" text-anchor="middle" font-size="9">实操力</text>
+  <text x="520" y="140" fill="#aaa" text-anchor="middle" font-size="10">H1 H2 H3</text>
+
+  <!-- C 创新力 (bottom-right) -->
+  <circle cx="365" cy="288" r="28" fill="rgba(156,39,176,0.15)" stroke="#9c27b0" stroke-width="2" filter="url(#g)"/>
+  <text x="365" y="284" fill="#9c27b0" text-anchor="middle" font-weight="bold" font-size="16">C</text>
+  <text x="365" y="300" fill="#9c27b0" text-anchor="middle" font-size="9">创新力</text>
+  <text x="430" y="300" fill="#aaa" text-anchor="middle" font-size="10">C1 C2 C3</text>
+
+  <!-- S 社交力 (bottom-left) -->
+  <circle cx="235" cy="288" r="28" fill="rgba(0,188,212,0.15)" stroke="#00bcd4" stroke-width="2" filter="url(#g)"/>
+  <text x="235" y="284" fill="#00bcd4" text-anchor="middle" font-weight="bold" font-size="16">S</text>
+  <text x="235" y="300" fill="#00bcd4" text-anchor="middle" font-size="9">社交力</text>
+  <text x="170" y="300" fill="#aaa" text-anchor="middle" font-size="10">S1 S2</text>
+
+  <!-- G 成长力 (top-left) -->
+  <circle cx="138" cy="158" r="28" fill="rgba(255,193,7,0.15)" stroke="#ffc107" stroke-width="2" filter="url(#g)"/>
+  <text x="138" y="154" fill="#ffc107" text-anchor="middle" font-weight="bold" font-size="16">G</text>
+  <text x="138" y="170" fill="#ffc107" text-anchor="middle" font-size="9">成长力</text>
+  <text x="78" y="140" fill="#aaa" text-anchor="middle" font-size="10">G1 G2 G3</text>
+
+  <!-- 中心 AQ -->
+  <circle cx="300" cy="170" r="35" fill="rgba(224,64,251,0.1)" stroke="#e040fb" stroke-width="2" filter="url(#g)"/>
+  <text x="300" y="165" fill="#e040fb" text-anchor="middle" font-weight="bold" font-size="20">AQ</text>
+  <text x="300" y="185" fill="#e040fb" text-anchor="middle" font-size="10">综合指数</text>
+</svg>
