@@ -1,8 +1,8 @@
 /**
- * Dashboard pin card template — persistent/pinned card in Feishu group chat.
+ * 战绩天梯榜 — 飞书群聊常驻卡片
  *
- * Shows a compact leaderboard summary (top 5) with a link to the full
- * web dashboard. Supports refresh via card action button.
+ * 简洁的链接卡片，不调用排行 API，仅展示入口链接。
+ * 参考飞书"AI奇点看板已上线"卡片样式。
  */
 
 import type { FeishuCardJson } from "../types.js";
@@ -11,44 +11,11 @@ import { buildHeader } from "./common/header.js";
 export const DASHBOARD_PIN_TEMPLATE_ID = "dashboard_pin" as const;
 
 // ============================================================================
-// State shape
+// State shape — 极简，只需要 URL
 // ============================================================================
-
-export interface DashboardPinEntry {
-  displayName: string;
-  cumulativeAq: number;
-  currentLevel: number;
-}
 
 export interface DashboardPinState {
-  topN: DashboardPinEntry[];
-  totalMembers: number;
-  generatedAt: string;
   dashboardUrl: string;
-}
-
-// ============================================================================
-// Rendering helpers
-// ============================================================================
-
-const LEVEL_BADGES: Record<number, string> = {
-  1: "🌱",
-  2: "🌿",
-  3: "🌳",
-  4: "🌟",
-  5: "💎"
-};
-
-const RANK_MEDALS = ["🥇", "🥈", "🥉"];
-
-function levelBadge(level: number): string {
-  return LEVEL_BADGES[level] ?? `Lv${level}`;
-}
-
-function renderRankLine(rank: number, entry: DashboardPinEntry): string {
-  const medal = rank <= 3 ? RANK_MEDALS[rank - 1] : `${rank}.`;
-  const badge = levelBadge(entry.currentLevel);
-  return `${medal} **${entry.displayName}** ${badge}　AQ ${entry.cumulativeAq}`;
 }
 
 // ============================================================================
@@ -56,80 +23,37 @@ function renderRankLine(rank: number, entry: DashboardPinEntry): string {
 // ============================================================================
 
 export function buildDashboardPinCard(state: DashboardPinState): FeishuCardJson {
-  const rankLines = state.topN.map((entry, i) => renderRankLine(i + 1, entry));
-  const content = rankLines.length > 0
-    ? rankLines.join("\n")
-    : "暂无排行数据";
-
   const elements: Array<Record<string, unknown>> = [
     {
       tag: "markdown",
-      content
-    }
-  ];
-
-  // 分隔线
-  elements.push({ tag: "hr" });
-
-  // 底部按钮行 — Schema 2.0 不支持 action 标签，必须用 column_set
-  const buttonColumns: Array<Record<string, unknown>> = [];
-
-  // "查看完整看板" URL 跳转按钮
-  if (state.dashboardUrl) {
-    buttonColumns.push({
-      tag: "column",
-      width: "weighted",
-      weight: 1,
-      vertical_align: "center",
-      elements: [
+      content: "**战绩天梯榜已上线！**\n\n点击下方按钮查看实时排行榜和个人成绩详情。"
+    },
+    {
+      tag: "column_set",
+      flex_mode: "none",
+      background_style: "default",
+      columns: [
         {
-          tag: "button",
-          text: { tag: "plain_text", content: "📊 查看完整看板" },
-          type: "primary",
-          multi_url: {
-            url: state.dashboardUrl,
-            pc_url: state.dashboardUrl,
-            android_url: state.dashboardUrl,
-            ios_url: state.dashboardUrl
-          }
+          tag: "column",
+          width: "auto",
+          vertical_align: "center",
+          elements: [
+            {
+              tag: "button",
+              text: { tag: "plain_text", content: "📊 打开天梯榜" },
+              type: "primary",
+              multi_url: {
+                url: state.dashboardUrl,
+                pc_url: state.dashboardUrl,
+                android_url: state.dashboardUrl,
+                ios_url: state.dashboardUrl
+              }
+            }
+          ]
         }
       ]
-    });
-  }
-
-  // 刷新按钮
-  buttonColumns.push({
-    tag: "column",
-    width: "weighted",
-    weight: 1,
-    vertical_align: "center",
-    elements: [
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "🔄 刷新" },
-        type: "default",
-        value: { action: "dashboard_pin_refresh" }
-      }
-    ]
-  });
-
-  elements.push({
-    tag: "column_set",
-    flex_mode: "none",
-    background_style: "default",
-    columns: buttonColumns
-  });
-
-  // 底部备注
-  elements.push({
-    tag: "note",
-    elements: [
-      {
-        tag: "plain_text",
-        content: `共 ${state.totalMembers} 名学员 · 更新于 ${state.generatedAt}`
-      }
-    ]
-  });
+    }
+  ];
 
   return {
     schema: "2.0",
@@ -138,9 +62,9 @@ export function buildDashboardPinCard(state: DashboardPinState): FeishuCardJson 
       enable_forward: true,
     },
     header: buildHeader({
-      title: "📊 成长看板 · 实时排行",
-      subtitle: "点击查看完整数据看板",
-      template: "purple"
+      title: "🏆 战绩天梯榜",
+      subtitle: "查看排行榜和个人成绩",
+      template: "green"
     }) as unknown as Record<string, unknown>,
     body: { elements }
   };

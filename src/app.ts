@@ -169,16 +169,7 @@ export async function createApp(options?: {
                   .map((m) => ({ id: m.id, displayName: m.displayName || m.name }));
               },
               quizBank: quizBankDeps,
-              dashboardPin: {
-                fetchRanking: (campId: string) => repository.fetchRankingByCamp(campId),
-                getDefaultCampId: () => repository.getDefaultCampId() ?? "default",
-                dashboardUrl,
-                countStudents: () => {
-                  const campId = repository.getDefaultCampId() ?? "default";
-                  return repository.listMembers(campId)
-                    .filter((m) => m.roleType === "student").length;
-                },
-              },
+              dashboardPin: { dashboardUrl },
               autoRegister: async (openId: string) => {
                 try {
                   // Fetch name and avatar from Feishu API
@@ -432,25 +423,10 @@ export async function createApp(options?: {
 
   // Dashboard pin card handler — 刷新按钮
   // 注入排行数据读取器，供刷新按钮回调使用
+  // 战绩天梯榜刷新按钮处理（简洁卡片无刷新按钮，但保留注册以防将来扩展）
   const dashboardPinDepsOverride = {
-    [DASHBOARD_PIN_READER_KEY]: async (_chatId: string): Promise<DashboardPinState | null> => {
-      try {
-        const campId = repository.getDefaultCampId() ?? "default";
-        const ranking = repository.fetchRankingByCamp(campId);
-        const topN = ranking.slice(0, 5).map((r) => ({
-          displayName: r.memberName,
-          cumulativeAq: r.cumulativeAq,
-          currentLevel: r.currentLevel,
-        }));
-        const totalMembers = repository.listMembers(campId)
-          .filter((m) => m.roleType === "student").length;
-        const pad = (n: number) => String(n).padStart(2, "0");
-        const now = new Date();
-        const generatedAt = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-        return { topN, totalMembers, generatedAt, dashboardUrl };
-      } catch {
-        return null;
-      }
+    [DASHBOARD_PIN_READER_KEY]: async (): Promise<DashboardPinState | null> => {
+      return { dashboardUrl };
     },
   };
   cardDispatcher.register("dashboard_pin", "dashboard_pin_refresh", async (ctx, deps) => {

@@ -61,21 +61,10 @@ export interface AutoCaptureIngestor {
 // Message command handler
 // ============================================================================
 
-/** 看板置顶卡片所需的依赖 */
+/** 战绩天梯榜卡片所需的依赖 — 只需要 URL */
 export interface DashboardPinDeps {
-  /** 获取排行数据（返回 top N） */
-  fetchRanking: (campId: string) => Array<{
-    memberId: string;
-    memberName: string;
-    cumulativeAq: number;
-    currentLevel: number;
-  }>;
-  /** 获取默认 camp ID */
-  getDefaultCampId: () => string;
   /** Dashboard 网页 URL */
   dashboardUrl: string;
-  /** 学员总数 */
-  countStudents?: () => number;
 }
 
 export interface MessageCommandDeps {
@@ -343,13 +332,8 @@ async function handlePeerReviewTrigger(
 }
 
 // ============================================================================
-// Dashboard pin trigger — any member sends "看板"/"排行" → bot sends pinned card
+// 战绩天梯榜 — any member sends "看板"/"排行" → bot sends link card
 // ============================================================================
-
-function formatTime(date: Date): string {
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
 
 async function handleDashboardPinTrigger(
   message: NormalizedFeishuMessage,
@@ -362,26 +346,13 @@ async function handleDashboardPinTrigger(
     await deps.feishuClient.sendTextMessage({
       receiveId: message.chatId,
       receiveIdType: "chat_id",
-      text: "⚠️ 看板功能未配置",
+      text: "⚠️ 天梯榜功能未配置",
     });
     return;
   }
 
   try {
-    const campId = pinDeps.getDefaultCampId();
-    const ranking = pinDeps.fetchRanking(campId);
-    const topN = ranking.slice(0, 5).map((r) => ({
-      displayName: r.memberName,
-      cumulativeAq: r.cumulativeAq,
-      currentLevel: r.currentLevel,
-    }));
-
-    const totalMembers = pinDeps.countStudents?.() ?? ranking.length;
-
     const state: DashboardPinState = {
-      topN,
-      totalMembers,
-      generatedAt: formatTime(new Date()),
       dashboardUrl: pinDeps.dashboardUrl,
     };
 
@@ -391,7 +362,7 @@ async function handleDashboardPinTrigger(
       cardJson: cardJson as unknown as Record<string, unknown>,
     });
 
-    console.log(`[DashboardPin] Card sent: messageId=${result.messageId}, top=${topN.length}, total=${totalMembers}`);
+    console.log(`[DashboardPin] Card sent: messageId=${result.messageId}`);
 
     // 尝试置顶卡片消息
     if (result.messageId && deps.feishuClient.pinMessage) {
@@ -402,8 +373,7 @@ async function handleDashboardPinTrigger(
         });
         console.log(`[DashboardPin] Message pinned: ${result.messageId}`);
       } catch (pinErr) {
-        // 置顶失败不影响主流程（可能缺少 im:chat.top_notice:write 权限）
-        console.warn("[DashboardPin] Pin failed (may need im:chat.top_notice:write scope):", pinErr);
+        console.warn("[DashboardPin] Pin failed:", pinErr);
       }
     }
   } catch (err) {
@@ -411,7 +381,7 @@ async function handleDashboardPinTrigger(
     await deps.feishuClient.sendTextMessage({
       receiveId: message.chatId,
       receiveIdType: "chat_id",
-      text: "⚠️ 看板数据获取失败，请稍后重试",
+      text: "⚠️ 天梯榜发送失败，请稍后重试",
     });
   }
 }
