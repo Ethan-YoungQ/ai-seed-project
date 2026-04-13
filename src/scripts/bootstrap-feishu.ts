@@ -24,10 +24,10 @@ try {
   const result = await service.bootstrap({
     campId: process.env.FEISHU_TEST_CAMP_ID?.trim() || undefined,
     chatId: process.env.FEISHU_TEST_CHAT_ID?.trim() || undefined,
-    chatName: process.env.FEISHU_TEST_CHAT_NAME?.trim() || "Pfizer HBU AI Evaluator Test Group",
+    chatName: process.env.FEISHU_TEST_CHAT_NAME?.trim() || "AI Seed Evaluator Test Group",
     chatOwnerOpenId: process.env.FEISHU_TEST_CHAT_OWNER_OPEN_ID?.trim() || undefined,
     chatMemberOpenIds,
-    baseName: process.env.FEISHU_BASE_NAME?.trim() || "Pfizer HBU AI Evaluator Base"
+    baseName: process.env.FEISHU_BASE_NAME?.trim() || "AI Seed Evaluator Base"
   });
 
   console.log("Feishu bootstrap completed.");

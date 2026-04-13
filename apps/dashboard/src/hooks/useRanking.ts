@@ -52,7 +52,7 @@ export function useRanking(campId?: string): UseRankingState {
           if (import.meta.env.DEV) {
             console.warn("[useRanking] API unavailable, using mock data");
             const mockWithBadges = attachBadges(MOCK_RANKING, 4);
-            setData({ ok: true, campId: "demo", rows: mockWithBadges, groupName: "HBU奇点玩家" });
+            setData({ ok: true, campId: "demo", rows: mockWithBadges, groupName: "AI 训练营" });
           } else {
             setError(_err instanceof Error ? _err.message : "Unknown error");
           }

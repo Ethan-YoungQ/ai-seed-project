@@ -127,7 +127,7 @@ describe("SqliteRepository compatibility migration", () => {
     legacyDb.prepare(
       `INSERT INTO members (id, camp_id, name, department, role_type, is_participant, is_excluded_from_board, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run("user-alice", "camp-demo", "Alice", "HBU", "student", 1, 0, "active");
+    ).run("user-alice", "camp-demo", "Alice", "default", "student", 1, 0, "active");
 
     legacyDb.prepare(
       `INSERT INTO sessions (id, camp_id, title, homework_tag, cycle_type, course_date, deadline_at, window_start, window_end, active)

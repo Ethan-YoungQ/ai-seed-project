@@ -2,7 +2,7 @@ import type { MemberProfile, SessionDefinition } from "../domain/types.js";
 
 export const demoCamp = {
   id: "camp-demo",
-  name: "Pfizer HBU AI Bootcamp",
+  name: "AI Training Camp",
   groupId: "chat-demo",
   startDate: "2026-04-03T09:00:00.000Z",
   endDate: "2026-06-26T09:00:00.000Z",
@@ -64,7 +64,7 @@ export const demoMembers: MemberProfile[] = [
     id: "user-alice",
     campId: demoCamp.id,
     name: "Alice",
-    department: "HBU",
+    department: "default",
     roleType: "student",
     isParticipant: true,
     isExcludedFromBoard: false,

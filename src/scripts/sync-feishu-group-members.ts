@@ -21,11 +21,10 @@ if (!appId || !appSecret || !chatId) {
 }
 
 // 管理员 open_id — 这些人不会被导入为学员
-const ADMIN_OPEN_IDS = new Set([
-  "ou_789911abef736a08f44286493d3285c5", // YongQ
-  "ou_84bdbb1c09ed08547cb700a15acdd0c8", // Karen
-  "ou_0f43d5637375d7914b609b33e8672753", // Dorothy
-]);
+// 从环境变量 ADMIN_OPEN_IDS 读取，逗号分隔，例如: "ou_xxx,ou_yyy,ou_zzz"
+const ADMIN_OPEN_IDS = new Set(
+  (process.env.ADMIN_OPEN_IDS ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+);
 
 const client = new lark.Client({ appId, appSecret, appType: lark.AppType.SelfBuild });
 

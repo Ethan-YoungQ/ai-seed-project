@@ -10,43 +10,43 @@
 -- Distribution across 5 levels: L5(1), L4(2), L3(3), L2(4), L1(4)
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-01', id, '许DC', '许DC', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-01', id, '许DC', '许DC', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-02', id, '张明', '张明', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-02', id, '张明', '张明', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-03', id, '李雪', '李雪', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-03', id, '李雪', '李雪', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
 SELECT 'demo-04', id, '王磊', '王磊', '', 'Marketing', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-05', id, '陈思', '陈思', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-05', id, '陈思', '陈思', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
 SELECT 'demo-06', id, '刘洋', '刘洋', '', 'Sales', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-07', id, '赵琪', '赵琪', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-07', id, '赵琪', '赵琪', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
 SELECT 'demo-08', id, '周杰', '周杰', '', 'Marketing', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-09', id, '吴昊', '吴昊', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-09', id, '吴昊', '吴昊', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
 SELECT 'demo-10', id, '林悦', '林悦', '', 'Sales', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-11', id, '黄丽', '黄丽', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-11', id, '黄丽', '黄丽', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
 SELECT 'demo-12', id, '孙伟', '孙伟', '', 'Marketing', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
-SELECT 'demo-13', id, '郑芳', '郑芳', '', 'HBU', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
+SELECT 'demo-13', id, '郑芳', '郑芳', '', 'default', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;
 
 INSERT OR REPLACE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, is_participant, is_excluded_from_board, status)
 SELECT 'demo-14', id, '马骏', '马骏', '', 'Sales', 'student', 1, 0, 'active' FROM camps WHERE status = 'active' LIMIT 1;

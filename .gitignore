@@ -5,6 +5,8 @@ coverage
 .vite
 data
 .env
+.env.local
+.env.production
 *.tsbuildinfo
 output
 .agents
@@ -21,3 +23,38 @@ dist-dashboard/
 apps/dashboard/node_modules/
 apps/dashboard/src/**/*.js
 apps/dashboard/tests/**/*.js
+
+# Internal project docs (not for public distribution)
+docs/project-memory/
+docs/handoffs/
+docs/superpowers/
+docs/codex-*.md
+docs/ops/
+docs/feishu-thread-handoff-*.md
+docs/final-acceptance-*.md
+docs/hong-kong-*.md
+docs/launch-blueprint-*.md
+docs/project-status-*.md
+docs/smoke-test-checklist-*.md
+docs/release-runbook.md
+docs/release-smoke-tests.md
+docs/admin-operations-manual.md
+docs/rules/
+docs/skills/
+
+# Internal scripts
+scripts/sub4-*.ts
+scripts/sub4-eval-results.json
+scripts/test-vision-model.mjs
+scripts/smoke-test/
+
+# Aliyun CLI binary
+aliyun-cli-windows-latest-amd64/
+
+# Database files
+*.sqlite
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db

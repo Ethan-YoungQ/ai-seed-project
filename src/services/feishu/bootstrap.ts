@@ -118,7 +118,7 @@ export class FeishuBootstrapService {
     const chat = await this.resolveChat(input, appId);
     this.repository.updateCampGroupId(campId, chat.chatId);
 
-    const base = await this.createBaseSchema(input.baseName ?? "Pfizer HBU AI Evaluator Base");
+    const base = await this.createBaseSchema(input.baseName ?? "AI Seed Evaluator Base");
     const phaseOneLinks = buildPhaseOneLinks(this.config);
     const phaseOne = {
       homeTemplates: {
@@ -199,7 +199,7 @@ export class FeishuBootstrapService {
 
     try {
       const created = await this.apiClient.createChat({
-        name: input.chatName ?? "Pfizer HBU AI Evaluator Test Group",
+        name: input.chatName ?? "AI Seed Evaluator Test Group",
         description: "Bootstrap-created test group for Feishu integration verification.",
         ownerOpenId: input.chatOwnerOpenId,
         userOpenIds: input.chatMemberOpenIds,

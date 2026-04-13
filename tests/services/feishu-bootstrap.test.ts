@@ -28,7 +28,7 @@ describe("FeishuBootstrapService", () => {
         searchBaseRecords: vi.fn(async () => []),
         updateBaseRecord: vi.fn(async () => ({ recordId: "rec_001" })),
         searchChats: vi.fn(async () => []),
-        createChat: vi.fn(async () => ({ chatId: "chat-test-001", name: "Pfizer Test Group" })),
+        createChat: vi.fn(async () => ({ chatId: "chat-test-001", name: "AI Seed Test Group" })),
         createBaseApp: vi.fn(async () => ({
           appToken: "bitable_app_token",
           defaultTableId: "tbl_default"
@@ -52,9 +52,9 @@ describe("FeishuBootstrapService", () => {
     );
 
     const result = await service.bootstrap({
-      chatName: "Pfizer Test Group",
+      chatName: "AI Seed Test Group",
       chatMemberOpenIds: ["ou_member_001"],
-      baseName: "Pfizer Evaluator Base"
+      baseName: "AI Seed Evaluator Base"
     });
 
     expect(result.chat.chatId).toBe("chat-test-001");
@@ -134,7 +134,7 @@ describe("FeishuBootstrapService", () => {
 
     await expect(
       service.bootstrap({
-        chatName: "Pfizer Test Group"
+        chatName: "AI Seed Test Group"
       })
     ).rejects.toThrow(/FEISHU_TEST_CHAT_ID|FEISHU_TEST_CHAT_MEMBER_OPEN_IDS/);
   });
