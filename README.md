@@ -91,10 +91,12 @@ AI Seed Project 是一套**飞书原生的智能培训评估系统**——为企
 所有管理操作通过群聊关键词完成，培训师不需要任何技术背景：
 
 ```
-管理 / 管理面板   → 发送管理员控制面板卡片（开期、审核、调分）
-测验 / 随堂测验   → 从飞书多维表格题库抽题，发送互动答题卡片
-互评 / 互评投票   → 发送学员互评投票卡片
-看板 / 排行榜     → 发送 Top 5 排行卡片并置顶，附 Dashboard 链接
+管理 / 管理面板 / 控制面板   → 管理员控制面板（开期、开窗口、毕业结算）
+测验 / 随堂测验 / 考试      → 从飞书多维表格题库抽题，发送互动答题卡片
+互评 / 互评投票 / 投票      → 学员互评投票卡片
+看板 / 排行 / 排行榜        → 战绩天梯榜卡片，一键跳转 Dashboard
+调分 / 手动调分             → 运营手动调分（可绕过自动评分上限）
+成员 / 成员管理             → 成员角色管理（隐藏排行/更改角色）
 ```
 
 ---
@@ -107,7 +109,7 @@ Backend:    Fastify + TypeScript (Node.js)
 Database:   SQLite (better-sqlite3, WAL 模式)
 IM:         飞书开放平台 SDK (WebSocket 长连接)
 AI:         GLM-4 Vision (智谱 AI，多模态)
-Deploy:     PM2 + Nginx，单机即可运行
+Deploy:     systemd + Nginx + Let's Encrypt，单机即可运行
 ```
 
 ---
@@ -241,13 +243,13 @@ ai-seed-project/
 npm install
 npm run build
 
-# Using PM2
-pm2 start dist/main.js --name ai-seed
+# Using systemd (推荐)
+sudo cp deploy/ai-seed-project.service /etc/systemd/system/
+sudo systemctl enable ai-seed-project
+sudo systemctl start ai-seed-project
 
-# Or with the included ops scripts
-npm run ops:deploy       # Linux
-npm run ops:mac:deploy   # macOS
-npm run ops:windows:deploy  # Windows
+# 或直接运行
+node dist/main.js
 ```
 
 ---
@@ -279,6 +281,7 @@ npm run ops:windows:deploy  # Windows
 | Doc | Description |
 |-----|-------------|
 | [Admin Guide](docs/admin-guide.md) | 管理员操作手册（零技术背景适用） |
+| [Student Rules](docs/student-rules-guide.md) | 学员评分/晋升/勋章规则说明 |
 | [Feishu Setup](docs/feishu-setup.md) | 飞书应用配置详细步骤 |
 | [Project Pitch](docs/project-pitch.md) | 项目介绍与使用场景 |
 | [.env.example](.env.example) | 完整环境变量说明 |
