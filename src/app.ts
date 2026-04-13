@@ -188,13 +188,14 @@ export async function createApp(options?: {
     await app.register(fastifyStatic, {
       root: dashboardRoot,
       prefix: "/dashboard/",
-      decorateReply: false,
       wildcard: false,
     });
 
     // SPA fallback: non-asset routes under /dashboard/* return index.html
+    const { createReadStream } = await import("fs");
+    const indexPath = resolve(dashboardRoot, "index.html");
     app.get("/dashboard/*", async (_request, reply) => {
-      return reply.sendFile("index.html", dashboardRoot);
+      return reply.type("text/html").send(createReadStream(indexPath));
     });
   }
 

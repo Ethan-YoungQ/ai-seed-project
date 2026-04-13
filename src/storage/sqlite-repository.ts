@@ -3118,6 +3118,28 @@ export class SqliteRepository {
       )
       .all(memberId) as Array<Record<string, unknown>>;
 
+    // If no settled snapshots exist, build a live entry from current dimension scores
+    const liveSeries: Array<Record<string, unknown>> =
+      snapshots.length > 0
+        ? snapshots
+        : (this.db
+            .prepare(
+              `SELECT
+                 'live' AS window_id,
+                 SUM(period_score) AS window_aq,
+                 SUM(period_score) AS cumulative_aq,
+                 SUM(CASE WHEN dimension = 'K' THEN period_score ELSE 0 END) AS k_score,
+                 SUM(CASE WHEN dimension = 'H' THEN period_score ELSE 0 END) AS h_score,
+                 SUM(CASE WHEN dimension = 'C' THEN period_score ELSE 0 END) AS c_score,
+                 SUM(CASE WHEN dimension = 'S' THEN period_score ELSE 0 END) AS s_score,
+                 SUM(CASE WHEN dimension = 'G' THEN period_score ELSE 0 END) AS g_score
+               FROM v2_member_dimension_scores
+               WHERE member_id = ?
+                 AND period_id IN (SELECT id FROM v2_periods WHERE ended_at IS NULL)
+               GROUP BY member_id`
+            )
+            .all(memberId) as Array<Record<string, unknown>>);
+
     return {
       memberId: String(member.id),
       memberName: String(member.member_name),
@@ -3129,7 +3151,7 @@ export class SqliteRepository {
         windowId: String(p.window_id),
         promotedAt: String(p.evaluated_at),
       })),
-      dimensionSeries: snapshots.map((s) => ({
+      dimensionSeries: liveSeries.map((s) => ({
         windowId: String(s.window_id),
         K: Number(s.k_score),
         H: Number(s.h_score),
@@ -3137,7 +3159,7 @@ export class SqliteRepository {
         S: Number(s.s_score),
         G: Number(s.g_score),
       })),
-      windowSnapshots: snapshots.map((s) => ({
+      windowSnapshots: liveSeries.map((s) => ({
         windowId: String(s.window_id),
         windowAq: Number(s.window_aq),
         cumulativeAq: Number(s.cumulative_aq),
