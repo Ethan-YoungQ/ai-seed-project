@@ -78,10 +78,37 @@ export function registerV2BoardRoutes(
     const params = request.params as { id: string };
 
     try {
-      const detail = deps.repository.fetchMemberBoardDetail(params.id);
-      if (!detail) {
+      const raw = deps.repository.fetchMemberBoardDetail(params.id);
+      if (!raw) {
         return reply.code(404).send({ ok: false, code: "not_found" });
       }
+
+      // Transform to match front-end MemberBoardDetail type
+      const latestDims = raw.dimensionSeries[raw.dimensionSeries.length - 1];
+      const latestSnap = raw.windowSnapshots[raw.windowSnapshots.length - 1];
+
+      const detail = {
+        memberId: raw.memberId,
+        memberName: raw.memberName,
+        avatarUrl: raw.avatarUrl,
+        currentLevel: raw.currentLevel,
+        cumulativeAq: latestSnap?.cumulativeAq ?? 0,
+        dimensions: latestDims
+          ? { K: latestDims.K, H: latestDims.H, C: latestDims.C, S: latestDims.S, G: latestDims.G }
+          : { K: 0, H: 0, C: 0, S: 0, G: 0 },
+        windowSnapshots: raw.windowSnapshots.map((s) => ({
+          windowId: s.windowId,
+          aq: s.windowAq,
+          dims: raw.dimensionSeries.find((d) => d.windowId === s.windowId)
+            ?? { K: 0, H: 0, C: 0, S: 0, G: 0 },
+          settledAt: "",
+        })),
+        promotions: raw.promotions.map((p) => ({
+          ...p,
+          reason: "",
+        })),
+      };
+
       return reply.send({ ok: true, detail });
     } catch (err) {
       return reply.code(500).send({ ok: false, code: "internal_error" });
