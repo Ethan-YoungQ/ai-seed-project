@@ -2938,14 +2938,14 @@ export class SqliteRepository {
           m.id            AS member_id,
           CASE WHEN m.display_name != '' THEN m.display_name ELSE m.name END AS member_name,
           m.avatar_url,
-          COALESCE(ml.current_level, 1)    AS current_level,
-          COALESCE(ws.cumulative_aq, 0)    AS cumulative_aq,
-          COALESCE(ws.window_aq, 0)        AS latest_window_aq,
-          COALESCE(ws.k_score, 0)          AS k_score,
-          COALESCE(ws.h_score, 0)          AS h_score,
-          COALESCE(ws.c_score, 0)          AS c_score,
-          COALESCE(ws.s_score, 0)          AS s_score,
-          COALESCE(ws.g_score, 0)          AS g_score
+          COALESCE(ml.current_level, 1)              AS current_level,
+          COALESCE(ws.cumulative_aq, live.live_aq, 0) AS cumulative_aq,
+          COALESCE(ws.window_aq,    live.live_aq, 0)  AS latest_window_aq,
+          COALESCE(ws.k_score, live.k, 0)            AS k_score,
+          COALESCE(ws.h_score, live.h, 0)            AS h_score,
+          COALESCE(ws.c_score, live.c, 0)            AS c_score,
+          COALESCE(ws.s_score, live.s, 0)            AS s_score,
+          COALESCE(ws.g_score, live.g, 0)            AS g_score
         FROM members m
         LEFT JOIN v2_member_levels ml ON ml.member_id = m.id
         LEFT JOIN (
@@ -2956,6 +2956,19 @@ export class SqliteRepository {
                  ROW_NUMBER() OVER (PARTITION BY member_id ORDER BY snapshot_at DESC) AS rn
           FROM v2_window_snapshots
         ) ws ON ws.member_id = m.id AND ws.rn = 1
+        LEFT JOIN (
+          SELECT
+            member_id,
+            SUM(CASE WHEN dimension = 'K' THEN period_score ELSE 0 END) AS k,
+            SUM(CASE WHEN dimension = 'H' THEN period_score ELSE 0 END) AS h,
+            SUM(CASE WHEN dimension = 'C' THEN period_score ELSE 0 END) AS c,
+            SUM(CASE WHEN dimension = 'S' THEN period_score ELSE 0 END) AS s,
+            SUM(CASE WHEN dimension = 'G' THEN period_score ELSE 0 END) AS g,
+            SUM(period_score) AS live_aq
+          FROM v2_member_dimension_scores
+          WHERE period_id IN (SELECT id FROM v2_periods WHERE ended_at IS NULL)
+          GROUP BY member_id
+        ) live ON live.member_id = m.id
         WHERE m.camp_id = ?
           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
           AND COALESCE(m.hidden_from_board, 0) = 0
