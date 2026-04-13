@@ -1594,7 +1594,8 @@ export class SqliteRepository {
   markTaskFailedRetry(
     taskId: string,
     backoffSeconds: number,
-    errorReason: string
+    errorReason: string,
+    now?: string
   ): void {
     const row = this.db
       .prepare(
@@ -1608,7 +1609,8 @@ export class SqliteRepository {
       this.markTaskFailedTerminal(taskId, errorReason);
       return;
     }
-    const nextEnqueue = new Date(Date.now() + backoffSeconds * 1000).toISOString();
+    const baseTime = now ? new Date(now).getTime() : Date.now();
+    const nextEnqueue = new Date(baseTime + backoffSeconds * 1000).toISOString();
     this.db
       .prepare(
         `UPDATE v2_llm_scoring_tasks

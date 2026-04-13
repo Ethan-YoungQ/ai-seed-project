@@ -527,7 +527,7 @@ describe("SqliteRepository v2 llm_scoring_tasks", () => {
     });
 
     repo.claimNextPendingTask("2026-04-11T08:01:00.000Z");
-    repo.markTaskFailedRetry(taskId, 30, "timeout");
+    repo.markTaskFailedRetry(taskId, 30, "timeout", "2026-04-11T08:01:00.000Z");
 
     // reclaim after backoff window
     const reclaimed = repo.claimNextPendingTask("2026-04-11T08:02:00.000Z");

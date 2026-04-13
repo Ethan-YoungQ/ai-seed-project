@@ -61,14 +61,17 @@ describe("buildQuizCard (quiz-v1 template)", () => {
 
   test("option buttons carry quiz_select, questionId and optionId", () => {
     const card = buildQuizCard(sampleState());
-    // Collect all button value payloads by recursively scanning body elements
+    // Schema 2.0: buttons are inside column_set > column > elements, not "action"
     const buttonValues: Array<Record<string, unknown>> = [];
     for (const el of card.body.elements) {
-      if (el["tag"] === "action") {
-        const actions = el["actions"] as Array<Record<string, unknown>>;
-        for (const action of actions) {
-          if (typeof action["value"] === "string") {
-            buttonValues.push(JSON.parse(action["value"] as string) as Record<string, unknown>);
+      if (el["tag"] === "column_set") {
+        const columns = el["columns"] as Array<Record<string, unknown>>;
+        for (const col of columns ?? []) {
+          const elements = col["elements"] as Array<Record<string, unknown>>;
+          for (const btn of elements ?? []) {
+            if (btn["tag"] === "button" && typeof btn["value"] === "object") {
+              buttonValues.push(btn["value"] as Record<string, unknown>);
+            }
           }
         }
       }

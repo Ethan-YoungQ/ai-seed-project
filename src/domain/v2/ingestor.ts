@@ -177,8 +177,9 @@ export class EventIngestor {
       return { accepted: false, reason: "cap_exceeded" };
     }
 
-    // Step 5: Clamp effective delta
-    const effectiveDelta = Math.min(input.scoreDelta, remaining);
+    // Step 5: Resolve delta — use config default when caller passes 0
+    const requestedDelta = input.scoreDelta > 0 ? input.scoreDelta : config.defaultScoreDelta;
+    const effectiveDelta = Math.min(requestedDelta, remaining);
 
     // Step 6: Idempotency — reject duplicate sourceRef
     const duplicate = this.deps.findEventBySourceRef(

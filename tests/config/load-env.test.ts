@@ -89,7 +89,8 @@ describe("loadLocalEnv", () => {
       "LLM_TIMEOUT_MS",
       "LLM_VISION_MODEL",
       "BOOTSTRAP_OPERATOR_OPEN_IDS",
-      "PORT"
+      "PORT",
+      "FEISHU_BASE_QUIZ_TABLE"
     ];
 
     expect(Array.from(keys).sort()).toEqual([...expectedKeys].sort());
