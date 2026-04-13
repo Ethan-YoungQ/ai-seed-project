@@ -1,106 +1,88 @@
 /**
- * Handler for operator member management card actions (#16).
+ * 成员管理处理器 — WS 模式下统一确认按钮
  *
- * Actions:
- *   member_toggle_hidden  — show/hide a member from the leaderboard
- *   member_change_role    — change a member's role type
+ * 流程：
+ *   1. 用户选成员 select → 缓存 member_mgmt_select_member
+ *   2. 用户选操作 select → 缓存 member_mgmt_select_action
+ *   3. 用户点 "确认操作" → 注入缓存值 → 本处理器执行
+ *   4. 返回 toast（WS 模式下不能返回 newCardJson）
  *
- * All actions require operator role.
+ * 权限：仅运营(operator)和讲师(trainer)可执行。
  */
 
-import {
-  buildMemberMgmtCard,
-  MEMBER_MGMT_TEMPLATE_ID,
-  type MemberMgmtState
-} from "../templates/member-mgmt-v1.js";
+import { MEMBER_MGMT_TEMPLATE_ID } from "../templates/member-mgmt-v1.js";
 import type {
   CardActionContext,
   CardActionResult,
   CardHandler,
-  CardHandlerDeps
+  CardHandlerDeps,
 } from "../types.js";
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function requireOperator(
+function requireAdmin(
   deps: CardHandlerDeps,
-  openId: string
+  openId: string,
 ): CardActionResult | null {
   const member = deps.repo.findMemberByOpenId(openId);
   if (!member) {
-    return { toast: { type: "error", content: "未找到对应成员,请联系管理员" } };
+    return { toast: { type: "error", content: "未找到对应成员" } };
   }
-  if (member.roleType !== "operator") {
-    return { toast: { type: "error", content: "仅运营人员可执行此操作" } };
+  if (member.roleType !== "operator" && member.roleType !== "trainer") {
+    return { toast: { type: "error", content: "仅运营/讲师可执行此操作" } };
   }
   return null;
 }
 
-async function buildRefreshedCard(deps: CardHandlerDeps): Promise<MemberMgmtState> {
-  const members = await deps.adminApiClient.listMembers();
-  return { members };
-}
-
-// ============================================================================
-// member_toggle_hidden handler
-// ============================================================================
-
-export const memberToggleHiddenHandler: CardHandler = async (
+export const memberMgmtConfirmHandler: CardHandler = async (
   ctx: CardActionContext,
-  deps: CardHandlerDeps
+  deps: CardHandlerDeps,
 ): Promise<CardActionResult> => {
-  const denied = requireOperator(deps, ctx.operatorOpenId);
+  const denied = requireAdmin(deps, ctx.operatorOpenId);
   if (denied) return denied;
 
-  const memberId = ctx.actionPayload.memberId;
-  const hidden = ctx.actionPayload.hidden;
+  const memberId = ctx.actionPayload["member_mgmt_select_member"] as string | undefined;
+  const actionType = ctx.actionPayload["member_mgmt_select_action"] as string | undefined;
 
-  if (!memberId || typeof memberId !== "string") {
-    return { toast: { type: "error", content: "缺少 memberId 参数" } };
+  if (!memberId) {
+    return { toast: { type: "error", content: "请先选择成员" } };
   }
-  if (typeof hidden !== "boolean") {
-    return { toast: { type: "error", content: "缺少 hidden 参数" } };
+  if (!actionType) {
+    return { toast: { type: "error", content: "请先选择操作" } };
   }
 
-  await deps.adminApiClient.patchMember(memberId, { hiddenFromBoard: hidden });
+  try {
+    if (actionType === "hide") {
+      await deps.adminApiClient.patchMember(memberId, { hiddenFromBoard: true });
+      return { toast: { type: "success", content: "已从排行榜隐藏该成员" } };
+    }
 
-  const state = await buildRefreshedCard(deps);
-  const newCardJson = buildMemberMgmtCard(state);
+    if (actionType === "show") {
+      await deps.adminApiClient.patchMember(memberId, { hiddenFromBoard: false });
+      return { toast: { type: "success", content: "已恢复该成员在排行榜的显示" } };
+    }
 
-  return { newCardJson };
+    // role_student / role_operator / role_trainer / role_observer
+    if (actionType.startsWith("role_")) {
+      const roleType = actionType.replace("role_", "");
+      const validRoles = ["student", "operator", "trainer", "observer"];
+      if (!validRoles.includes(roleType)) {
+        return { toast: { type: "error", content: "无效的角色类型" } };
+      }
+      const ROLE_LABELS: Record<string, string> = {
+        student: "学员", operator: "运营", trainer: "讲师", observer: "旁听",
+      };
+      await deps.adminApiClient.patchMember(memberId, { roleType });
+      return { toast: { type: "success", content: `已将角色更改为: ${ROLE_LABELS[roleType] ?? roleType}` } };
+    }
+
+    return { toast: { type: "error", content: `未知操作: ${actionType}` } };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "未知错误";
+    return { toast: { type: "error", content: `操作失败: ${msg}` } };
+  }
 };
 
-// ============================================================================
-// member_change_role handler
-// ============================================================================
-
-export const memberChangeRoleHandler: CardHandler = async (
-  ctx: CardActionContext,
-  deps: CardHandlerDeps
-): Promise<CardActionResult> => {
-  const denied = requireOperator(deps, ctx.operatorOpenId);
-  if (denied) return denied;
-
-  const memberId = ctx.actionPayload.memberId;
-  const roleType = ctx.actionPayload.roleType ?? ctx.actionPayload.value;
-
-  if (!memberId || typeof memberId !== "string") {
-    return { toast: { type: "error", content: "缺少 memberId 参数" } };
-  }
-
-  const validRoles = ["student", "operator", "trainer", "observer"];
-  if (!roleType || typeof roleType !== "string" || !validRoles.includes(roleType)) {
-    return { toast: { type: "error", content: "无效的角色类型" } };
-  }
-
-  await deps.adminApiClient.patchMember(memberId, { roleType });
-
-  const state = await buildRefreshedCard(deps);
-  const newCardJson = buildMemberMgmtCard(state);
-
-  return { newCardJson };
-};
+// 兼容旧处理器名（dispatcher 注册时使用）
+export const memberToggleHiddenHandler = memberMgmtConfirmHandler;
+export const memberChangeRoleHandler = memberMgmtConfirmHandler;
 
 export { MEMBER_MGMT_TEMPLATE_ID };

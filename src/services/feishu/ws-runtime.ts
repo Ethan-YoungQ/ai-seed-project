@@ -120,10 +120,20 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
         }
 
         const actionValue = { ...(action.value ?? {}) } as Record<string, unknown>;
-        const cached1 = getCachedSelect(operatorId, "admin_panel_select_period");
-        if (cached1) actionValue["admin_panel_select_period"] = cached1;
-        const cached2 = getCachedSelect(operatorId, "admin_panel_select_window");
-        if (cached2) actionValue["admin_panel_select_window"] = cached2;
+        // 注入所有已缓存的 select 值
+        const cachedKeys = [
+          "admin_panel_select_period",
+          "admin_panel_select_window",
+          "manual_adjust_select_member",
+          "manual_adjust_select_item",
+          "manual_adjust_select_delta",
+          "member_mgmt_select_member",
+          "member_mgmt_select_action",
+        ];
+        for (const key of cachedKeys) {
+          const cached = getCachedSelect(operatorId, key);
+          if (cached) actionValue[key] = cached;
+        }
 
         const input: CardActionInput = {
           operatorOpenId: operatorId,

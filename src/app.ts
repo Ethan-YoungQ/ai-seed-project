@@ -44,6 +44,8 @@ import {
   DASHBOARD_PIN_READER_KEY,
 } from "./services/feishu/cards/handlers/dashboard-pin-handler.js";
 import type { DashboardPinState } from "./services/feishu/cards/templates/dashboard-pin-v1.js";
+import { manualAdjustConfirmHandler } from "./services/feishu/cards/handlers/manual-adjust-handler.js";
+import { memberMgmtConfirmHandler } from "./services/feishu/cards/handlers/member-mgmt-handler.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -170,6 +172,19 @@ export async function createApp(options?: {
               },
               quizBank: quizBankDeps,
               dashboardPin: { dashboardUrl },
+              memberListProvider: {
+                listAllMembers: () => {
+                  const campId = repository.getDefaultCampId() ?? "default";
+                  return repository.listMembers(campId).map((m) => ({
+                    id: m.id,
+                    displayName: m.displayName || m.name,
+                    roleType: m.roleType,
+                    currentLevel: 1,
+                    isParticipant: m.isParticipant,
+                    isExcludedFromBoard: m.isExcludedFromBoard,
+                  }));
+                },
+              },
               autoRegister: async (openId: string) => {
                 try {
                   // Fetch name and avatar from Feishu API
@@ -382,8 +397,38 @@ export async function createApp(options?: {
     aggregator: aggregatorAdapter(v2.aggregator),
     feishuClient: feishuClientAdapter(feishuApiClient),
     adminApiClient: {
-      patchMember: async () => { throw new Error("adminApiClient.patchMember not yet implemented"); },
-      listMembers: async () => { throw new Error("adminApiClient.listMembers not yet implemented"); }
+      patchMember: async (memberId: string, body: { roleType?: string; hiddenFromBoard?: boolean }) => {
+        const db = (repository as any).db;
+        const campId = repository.getDefaultCampId() ?? "default";
+        if (body.hiddenFromBoard !== undefined) {
+          db.prepare("UPDATE members SET is_excluded_from_board = ?, hidden_from_board = ? WHERE id = ?")
+            .run(body.hiddenFromBoard ? 1 : 0, body.hiddenFromBoard ? 1 : 0, memberId);
+        }
+        if (body.roleType) {
+          db.prepare("UPDATE members SET role_type = ? WHERE id = ?")
+            .run(body.roleType, memberId);
+        }
+        const m = repository.listMembers(campId).find((x) => x.id === memberId);
+        return {
+          id: m?.id ?? memberId,
+          displayName: m?.displayName || m?.name || memberId,
+          roleType: (m?.roleType ?? "student") as "student" | "operator" | "trainer" | "observer",
+          isParticipant: m?.isParticipant ?? true,
+          isExcludedFromBoard: m?.isExcludedFromBoard ?? false,
+          currentLevel: 1,
+        };
+      },
+      listMembers: async () => {
+        const campId = repository.getDefaultCampId() ?? "default";
+        return repository.listMembers(campId).map((m) => ({
+          id: m.id,
+          displayName: m.displayName || m.name,
+          roleType: (m.roleType ?? "student") as "student" | "operator" | "trainer" | "observer",
+          isParticipant: m.isParticipant,
+          isExcludedFromBoard: m.isExcludedFromBoard,
+          currentLevel: 1,
+        }));
+      },
     },
     config: {
       groupChatId: feishuConfig?.botChatId ?? "",
@@ -433,6 +478,12 @@ export async function createApp(options?: {
     const extendedDeps = { ...deps, ...dashboardPinDepsOverride };
     return dashboardPinRefreshHandler(ctx, extendedDeps);
   });
+
+  // 手动调分处理器
+  cardDispatcher.register("manual_adjust", "manual_adjust_confirm", manualAdjustConfirmHandler);
+
+  // 成员管理处理器
+  cardDispatcher.register("member_mgmt", "member_mgmt_confirm", memberMgmtConfirmHandler);
 
   await app.register(feishuCardsPlugin, {
     dispatcher: cardDispatcher,

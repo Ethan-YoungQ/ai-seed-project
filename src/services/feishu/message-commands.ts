@@ -25,6 +25,8 @@ import {
   buildDashboardPinCard,
   type DashboardPinState,
 } from "./cards/templates/dashboard-pin-v1.js";
+import { buildManualAdjustCard, type ManualAdjustState } from "./cards/templates/manual-adjust-v1.js";
+import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/member-mgmt-v1.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
@@ -38,6 +40,8 @@ const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
 const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
 const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
 const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板"];
+const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
+const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
 
 function stripAtMentionPrefix(text: string): string {
   return text.replace(/^@_\S+\s+/g, "").trim();
@@ -67,6 +71,18 @@ export interface DashboardPinDeps {
   dashboardUrl: string;
 }
 
+/** 手动调分/成员管理所需的成员列表提供者 */
+export interface MemberListProvider {
+  listAllMembers: () => Array<{
+    id: string;
+    displayName: string;
+    roleType: string;
+    currentLevel: number;
+    isParticipant: boolean;
+    isExcludedFromBoard: boolean;
+  }>;
+}
+
 export interface MessageCommandDeps {
   feishuClient: FeishuApiClient;
   lifecycle: AdminPanelLifecycleDeps;
@@ -79,6 +95,8 @@ export interface MessageCommandDeps {
   autoRegister?: (openId: string) => Promise<{ id: string; displayName: string } | null>;
   /** 看板置顶卡片依赖 */
   dashboardPin?: DashboardPinDeps;
+  /** 成员列表提供者 — 用于调分和成员管理卡片 */
+  memberListProvider?: MemberListProvider;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -106,6 +124,14 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       }
       if (DASHBOARD_KEYWORDS.some((kw) => text === kw)) {
         await handleDashboardPinTrigger(message, deps);
+        return;
+      }
+      if (MANUAL_ADJUST_KEYWORDS.some((kw) => text === kw)) {
+        await handleManualAdjustTrigger(message, deps);
+        return;
+      }
+      if (MEMBER_MGMT_KEYWORDS.some((kw) => text === kw)) {
+        await handleMemberMgmtTrigger(message, deps);
         return;
       }
     }
@@ -382,6 +408,114 @@ async function handleDashboardPinTrigger(
       receiveId: message.chatId,
       receiveIdType: "chat_id",
       text: "⚠️ 天梯榜发送失败，请稍后重试",
+    });
+  }
+}
+
+// ============================================================================
+// 手动调分 — operator/trainer sends "调分" → bot sends adjust card
+// ============================================================================
+
+async function handleManualAdjustTrigger(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+  if (!member || (member.roleType !== "operator" && member.roleType !== "trainer")) {
+    console.log("[ManualAdjust] Denied: not operator/trainer");
+    return;
+  }
+  if (!message.chatId) return;
+
+  const provider = deps.memberListProvider;
+  if (!provider) {
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 调分功能未配置",
+    });
+    return;
+  }
+
+  try {
+    const allMembers = provider.listAllMembers();
+    const state: ManualAdjustState = {
+      members: allMembers.map((m) => ({
+        id: m.id,
+        displayName: m.displayName,
+        roleType: m.roleType as "student" | "operator" | "trainer" | "observer",
+        isParticipant: m.isParticipant,
+        isExcludedFromBoard: m.isExcludedFromBoard,
+        currentLevel: m.currentLevel,
+      })),
+    };
+
+    const cardJson = buildManualAdjustCard(state);
+    await deps.feishuClient.sendCardMessage({
+      chatId: message.chatId,
+      cardJson: cardJson as unknown as Record<string, unknown>,
+    });
+    console.log(`[ManualAdjust] Card sent, members=${state.members.length}`);
+  } catch (err) {
+    console.error("[ManualAdjust] Error:", err);
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 调分卡片发送失败",
+    });
+  }
+}
+
+// ============================================================================
+// 成员管理 — operator/trainer sends "成员" → bot sends mgmt card
+// ============================================================================
+
+async function handleMemberMgmtTrigger(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+  if (!member || (member.roleType !== "operator" && member.roleType !== "trainer")) {
+    console.log("[MemberMgmt] Denied: not operator/trainer");
+    return;
+  }
+  if (!message.chatId) return;
+
+  const provider = deps.memberListProvider;
+  if (!provider) {
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 成员管理功能未配置",
+    });
+    return;
+  }
+
+  try {
+    const allMembers = provider.listAllMembers();
+    const state: MemberMgmtState = {
+      members: allMembers.map((m) => ({
+        id: m.id,
+        displayName: m.displayName,
+        roleType: m.roleType as "student" | "operator" | "trainer" | "observer",
+        isParticipant: m.isParticipant,
+        isExcludedFromBoard: m.isExcludedFromBoard,
+        currentLevel: m.currentLevel,
+      })),
+    };
+
+    const cardJson = buildMemberMgmtCard(state);
+    await deps.feishuClient.sendCardMessage({
+      chatId: message.chatId,
+      cardJson: cardJson as unknown as Record<string, unknown>,
+    });
+    console.log(`[MemberMgmt] Card sent, members=${state.members.length}`);
+  } catch (err) {
+    console.error("[MemberMgmt] Error:", err);
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 成员管理卡片发送失败",
     });
   }
 }

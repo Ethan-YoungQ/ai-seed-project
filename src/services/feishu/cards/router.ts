@@ -68,6 +68,8 @@ export function resolveCardType(actionName: string, actionValue: Record<string, 
   if (actionName.startsWith("llm_")) return "llm_decision";
   if (actionName.startsWith("leaderboard_")) return "leaderboard";
   if (actionName.startsWith("dashboard_pin_")) return "dashboard_pin";
+  if (actionName.startsWith("manual_adjust_")) return "manual_adjust";
+  if (actionName.startsWith("member_mgmt_")) return "member_mgmt";
   if (actionName.startsWith("period_")) return "period_open";
   if (actionName.startsWith("window_")) return "window_open";
   if (actionName.startsWith("level_")) return "level_announcement";

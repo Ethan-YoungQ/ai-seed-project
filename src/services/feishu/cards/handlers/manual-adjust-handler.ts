@@ -1,11 +1,13 @@
 /**
- * Handler for operator manual score adjustment card (#17).
+ * 手动调分处理器 — WS 模式下从 actionPayload 读取缓存的 select 值
  *
- * Actions:
- *   manual_adjust_confirm — validate inputs and call ingestor.ingest with
- *                           sourceType "operator_manual"
+ * 流程：
+ *   1. 用户选 select_static → ws-runtime 缓存值
+ *   2. 用户点 "确认调分" → ws-runtime 注入缓存值到 actionPayload
+ *   3. 本处理器读取 actionPayload 中的 memberId/itemCode/delta
+ *   4. 调用 ingestor.ingest 完成调分
  *
- * Requires operator role.
+ * 权限：仅运营(operator)和讲师(trainer)可执行。
  */
 
 import { MANUAL_ADJUST_TEMPLATE_ID } from "../templates/manual-adjust-v1.js";
@@ -16,84 +18,68 @@ import type {
   CardHandlerDeps
 } from "../types.js";
 
-// ============================================================================
-// Helpers
-// ============================================================================
-
-function requireOperator(
+function requireAdmin(
   deps: CardHandlerDeps,
-  openId: string
+  openId: string,
 ): CardActionResult | null {
   const member = deps.repo.findMemberByOpenId(openId);
   if (!member) {
-    return { toast: { type: "error", content: "未找到对应成员,请联系管理员" } };
+    return { toast: { type: "error", content: "未找到对应成员" } };
   }
-  if (member.roleType !== "operator") {
-    return { toast: { type: "error", content: "仅运营人员可执行此操作" } };
+  if (member.roleType !== "operator" && member.roleType !== "trainer") {
+    return { toast: { type: "error", content: "仅运营/讲师可执行此操作" } };
   }
   return null;
 }
 
-// ============================================================================
-// manual_adjust_confirm handler
-// ============================================================================
-
 export const manualAdjustConfirmHandler: CardHandler = async (
   ctx: CardActionContext,
-  deps: CardHandlerDeps
+  deps: CardHandlerDeps,
 ): Promise<CardActionResult> => {
-  const denied = requireOperator(deps, ctx.operatorOpenId);
+  const denied = requireAdmin(deps, ctx.operatorOpenId);
   if (denied) return denied;
 
-  const { memberId, itemCode, delta, note } = ctx.actionPayload as {
-    memberId?: unknown;
-    itemCode?: unknown;
-    delta?: unknown;
-    note?: unknown;
-  };
+  // WS 模式：select 值通过 ws-runtime 缓存注入到 actionPayload
+  const memberId = ctx.actionPayload["manual_adjust_select_member"] as string | undefined;
+  const itemCode = ctx.actionPayload["manual_adjust_select_item"] as string | undefined;
+  const deltaStr = ctx.actionPayload["manual_adjust_select_delta"] as string | undefined;
 
-  // Validate memberId
-  if (!memberId || typeof memberId !== "string") {
-    return { toast: { type: "error", content: "请选择成员" } };
+  if (!memberId) {
+    return { toast: { type: "error", content: "请先选择成员" } };
+  }
+  if (!itemCode) {
+    return { toast: { type: "error", content: "请先选择评分项" } };
+  }
+  if (!deltaStr) {
+    return { toast: { type: "error", content: "请先选择分值变化" } };
   }
 
-  // Validate itemCode
-  if (!itemCode || typeof itemCode !== "string") {
-    return { toast: { type: "error", content: "请选择项目代码" } };
-  }
-
-  // Validate delta
-  const deltaNum = typeof delta === "number" ? delta : Number(delta);
+  const deltaNum = Number(deltaStr);
   if (!Number.isFinite(deltaNum) || deltaNum === 0) {
+    return { toast: { type: "error", content: "分值变化无效" } };
+  }
+
+  try {
+    const result = await deps.ingestor.ingest({
+      memberId,
+      itemCode,
+      sourceType: "operator_manual",
+      sourceRef: `manual:${ctx.triggerId}`,
+      payload: { operatorOpenId: ctx.operatorOpenId },
+      requestedDelta: deltaNum,
+      requestedAt: ctx.receivedAt,
+    });
+
     return {
       toast: {
-        type: "error",
-        content: "分值变化不能为 0,请输入有效数值"
-      }
+        type: "success",
+        content: `调分成功: ${itemCode} ${deltaNum > 0 ? "+" : ""}${deltaNum} (${result.eventId.slice(0, 8)})`,
+      },
     };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "未知错误";
+    return { toast: { type: "error", content: `调分失败: ${msg}` } };
   }
-
-  const noteStr = typeof note === "string" ? note.trim() : "";
-
-  const result = await deps.ingestor.ingest({
-    memberId,
-    itemCode,
-    sourceType: "operator_manual",
-    sourceRef: ctx.triggerId,
-    payload: {
-      note: noteStr,
-      operatorOpenId: ctx.operatorOpenId
-    },
-    requestedDelta: deltaNum,
-    requestedAt: ctx.receivedAt
-  });
-
-  return {
-    toast: {
-      type: "success",
-      content: `已提交调分: ${deltaNum > 0 ? "+" : ""}${deltaNum} (eventId: ${result.eventId})`
-    }
-  };
 };
 
 export { MANUAL_ADJUST_TEMPLATE_ID };
