@@ -159,7 +159,10 @@ export class EventIngestor {
     );
     const remaining = config.perPeriodCap - approvedSum - pendingSum;
 
-    if (remaining <= 0) {
+    // 运营手动调分 (operator_manual) 绕过每期上限限制
+    const isManualAdjust = input.sourceType === "operator_manual";
+
+    if (remaining <= 0 && !isManualAdjust) {
       // Insert a rejected row for audit trail
       this.deps.insertScoringEvent({
         memberId: input.memberId,
@@ -178,8 +181,9 @@ export class EventIngestor {
     }
 
     // Step 5: Resolve delta — use config default when caller passes 0
+    // 手动调分使用请求的精确值，不受 remaining 限制
     const requestedDelta = input.scoreDelta > 0 ? input.scoreDelta : config.defaultScoreDelta;
-    const effectiveDelta = Math.min(requestedDelta, remaining);
+    const effectiveDelta = isManualAdjust ? requestedDelta : Math.min(requestedDelta, remaining);
 
     // Step 6: Idempotency — reject duplicate sourceRef
     const duplicate = this.deps.findEventBySourceRef(

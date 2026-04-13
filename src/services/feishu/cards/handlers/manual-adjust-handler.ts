@@ -70,10 +70,20 @@ export const manualAdjustConfirmHandler: CardHandler = async (
       requestedAt: ctx.receivedAt,
     });
 
+    // 检查是否被拒绝（如每期上限已满）
+    if (result.status === "rejected") {
+      return {
+        toast: {
+          type: "warning",
+          content: `调分被拒绝: ${result.reason ?? "该评分项可能已达本期上限"}`,
+        },
+      };
+    }
+
     return {
       toast: {
         type: "success",
-        content: `调分成功: ${itemCode} ${deltaNum > 0 ? "+" : ""}${deltaNum} (${result.eventId.slice(0, 8)})`,
+        content: `调分成功: ${itemCode} ${deltaNum > 0 ? "+" : ""}${deltaNum}`,
       },
     };
   } catch (err) {
