@@ -141,12 +141,12 @@ export async function createApp(options?: {
 
   const cardRepoDeps = cardRepoAdapter(repository);
 
-  // Dashboard URL：优先 FEISHU_LEADERBOARD_URL 环境变量，否则基于 PUBLIC_HOST 构建
+  // Dashboard URL：优先 FEISHU_LEADERBOARD_URL，其次 PUBLIC_HOST，最后硬编码
   const dashboardUrl =
     feishuConfig.phaseOne?.leaderboardUrl
-    || process.env.PUBLIC_HOST
+    || (process.env.PUBLIC_HOST
       ? `${process.env.PUBLIC_HOST}/dashboard/`
-      : "https://orz.md/dashboard/";
+      : "https://orz.md/dashboard/");
 
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
     ? new LarkFeishuWsRuntime(feishuConfig, async (message) => {
