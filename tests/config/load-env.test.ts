@@ -45,6 +45,7 @@ describe("loadLocalEnv", () => {
     );
 
     const expectedKeys = [
+      "ADMIN_OPEN_IDS",
       "APP_ENV",
       "DATABASE_URL",
       "FEISHU_APP_ID",
@@ -58,7 +59,9 @@ describe("loadLocalEnv", () => {
       "FEISHU_BASE_SNAPSHOTS_TABLE",
       "FEISHU_BASE_WARNINGS_TABLE",
       "FEISHU_BOT_CHAT_ID",
+      "FEISHU_BOT_OPEN_ID",
       "FEISHU_BOT_RECEIVE_ID_TYPE",
+      "FEISHU_CHAT_BOT_ENABLED",
       "FEISHU_ENCRYPT_KEY",
       "FEISHU_EVENT_MODE",
       "FEISHU_LEARNER_HOME_DOC_TOKEN",
