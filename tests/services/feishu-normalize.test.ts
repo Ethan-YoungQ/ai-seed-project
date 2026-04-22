@@ -136,4 +136,70 @@ describe("normalizeFeishuMessageEvent", () => {
       documentParseStatus: "pending"
     });
   });
+
+  it("extracts mentionedBotIds and cleanedText from @Bot message", () => {
+    const normalized = normalizeFeishuMessageEvent({
+      event: {
+        sender: { sender_type: "user", sender_id: { open_id: "user-alice" } },
+        message: {
+          message_id: "om_mention_001",
+          chat_id: "chat-demo",
+          chat_type: "group",
+          create_time: "1775210400000",
+          message_type: "text",
+          content: JSON.stringify({ text: "@_user_1 什么是 RAG？" }),
+          mentions: [
+            { key: "@_user_1", id: { open_id: "ou_bot_xxx" }, name: "奇点小助" }
+          ]
+        }
+      }
+    });
+
+    expect(normalized).toMatchObject({
+      mentionedBotIds: ["ou_bot_xxx"],
+      cleanedText: "什么是 RAG？"
+    });
+  });
+
+  it("returns empty mentionedBotIds when no mentions field", () => {
+    const normalized = normalizeFeishuMessageEvent({
+      event: {
+        sender: { sender_type: "user", sender_id: { open_id: "user-alice" } },
+        message: {
+          message_id: "om_plain_001",
+          chat_id: "chat-demo",
+          chat_type: "group",
+          create_time: "1775210400000",
+          message_type: "text",
+          content: JSON.stringify({ text: "hello" })
+        }
+      }
+    });
+
+    expect(normalized?.mentionedBotIds).toEqual([]);
+    expect(normalized?.cleanedText).toBe("hello");
+  });
+
+  it("strips multiple @ prefixes in cleanedText", () => {
+    const normalized = normalizeFeishuMessageEvent({
+      event: {
+        sender: { sender_type: "user", sender_id: { open_id: "user-alice" } },
+        message: {
+          message_id: "om_multi_001",
+          chat_id: "chat-demo",
+          chat_type: "group",
+          create_time: "1775210400000",
+          message_type: "text",
+          content: JSON.stringify({ text: "@_user_1 @_user_2 请问" }),
+          mentions: [
+            { key: "@_user_1", id: { open_id: "ou_bot" }, name: "Bot" },
+            { key: "@_user_2", id: { open_id: "ou_karen" }, name: "Karen" }
+          ]
+        }
+      }
+    });
+
+    expect(normalized?.mentionedBotIds).toEqual(["ou_bot", "ou_karen"]);
+    expect(normalized?.cleanedText).toBe("请问");
+  });
 });

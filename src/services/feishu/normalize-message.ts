@@ -52,6 +52,8 @@ export interface NormalizedFeishuMessage {
   documentParseStatus: DocumentParseStatus;
   documentParseReason?: string;
   eventUrl: string;
+  mentionedBotIds: string[];
+  cleanedText: string;
 }
 
 function inferAttachmentTypes(messageType: string | undefined, attachments: Array<{ type?: string }>) {
@@ -120,6 +122,11 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
         message_type?: string;
         content?: string;
         attachments?: Array<{ type?: string }>;
+        mentions?: Array<{
+          key?: string;
+          id?: { open_id?: string };
+          name?: string;
+        }>;
       };
     };
   };
@@ -143,6 +150,12 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
     mimeType: parsedContent.mimeType
   });
 
+  const mentions = raw.event?.message?.mentions ?? [];
+  const mentionedBotIds = mentions
+    .map((m) => m.id?.open_id)
+    .filter((id): id is string => Boolean(id));
+  const cleanedText = rawText.replace(/@_user_\d+\s*/g, "").trim();
+
   return {
     messageId,
     memberId,
@@ -161,6 +174,8 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
     mimeType: parsedContent.mimeType,
     documentText: "",
     documentParseStatus: initialDocumentParseStatus(messageType, fileExt),
-    eventUrl: `feishu://message/${messageId}`
+    eventUrl: `feishu://message/${messageId}`,
+    mentionedBotIds,
+    cleanedText
   };
 }
