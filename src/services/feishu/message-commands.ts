@@ -27,6 +27,7 @@ import {
 } from "./cards/templates/dashboard-pin-v1.js";
 import { buildManualAdjustCard, type ManualAdjustState } from "./cards/templates/manual-adjust-v1.js";
 import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/member-mgmt-v1.js";
+import type { ChatEngine } from "./chat-bot/chat-engine.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
@@ -97,6 +98,11 @@ export interface MessageCommandDeps {
   dashboardPin?: DashboardPinDeps;
   /** 成员列表提供者 — 用于调分和成员管理卡片 */
   memberListProvider?: MemberListProvider;
+  /** ChatBot @ 问答依赖（可选，未配置则不启用 @Bot 功能） */
+  chatBot?: {
+    botOpenId: string;
+    engine: ChatEngine;
+  };
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -105,6 +111,16 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
 
     // Only process group chat messages (not DMs)
     if (message.chatType !== "group") return;
+
+    // 第 0 步：@Bot 问答分支（最高优先级，return 后不走评分）
+    if (
+      deps.chatBot &&
+      message.mentionedBotIds.includes(deps.chatBot.botOpenId) &&
+      message.messageType === "text"
+    ) {
+      await handleChatBotMention(message, deps);
+      return;
+    }
 
     // Trainer/admin keyword triggers: text messages only
     if (message.messageType === "text") {
@@ -517,5 +533,37 @@ async function handleMemberMgmtTrigger(
       receiveIdType: "chat_id",
       text: "⚠️ 成员管理卡片发送失败",
     });
+  }
+}
+
+// ============================================================================
+// ChatBot @ 问答：学员/管理员 @Bot 提问 → LLM 回答
+// ============================================================================
+
+async function handleChatBotMention(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  if (!deps.chatBot || !message.chatId) return;
+
+  try {
+    const result = await deps.chatBot.engine.reply({
+      chatId: message.chatId,
+      openId: message.memberId,
+      messageId: message.messageId,
+      cleanedText: message.cleanedText,
+    });
+
+    console.log(
+      `[ChatBot] reply to ${message.memberId}: used=${result.used}, latency=${result.latencyMs}ms`,
+    );
+
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: result.replyText,
+    });
+  } catch (err) {
+    console.error("[ChatBot] unexpected error:", err);
   }
 }
