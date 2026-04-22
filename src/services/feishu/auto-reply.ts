@@ -102,6 +102,16 @@ export interface AutoReplyDeps {
   }) => Promise<{ messageId?: string }>;
 }
 
+/**
+ * 是否启用自动回复（默认关闭）。
+ * 通过环境变量 FEISHU_AUTO_REPLY_ENABLED=true 启用。
+ * 关闭后 Bot 仍然正常计分，只是不在群里发"签到成功"等回复消息。
+ */
+function isAutoReplyEnabled(): boolean {
+  const v = (process.env.FEISHU_AUTO_REPLY_ENABLED ?? "false").toLowerCase();
+  return v === "true" || v === "1" || v === "yes" || v === "on";
+}
+
 export async function sendConfirmReply(
   deps: AutoReplyDeps,
   opts: {
@@ -111,6 +121,11 @@ export async function sendConfirmReply(
     itemCode: ScoringItemCode;
   },
 ): Promise<void> {
+  // 全局开关：默认关闭自动回复，减少群内噪音
+  if (!isAutoReplyEnabled()) {
+    return;
+  }
+
   // Rate limit check
   if (isRateLimited(opts.memberId, opts.itemCode)) {
     console.log(
