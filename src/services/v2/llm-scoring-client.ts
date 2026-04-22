@@ -24,6 +24,25 @@ export interface LlmScoringClient {
   score(promptText: string, options: LlmScoringOptions): Promise<LlmScoringResult>;
 }
 
+export type ChatRole = "system" | "user" | "assistant";
+
+export interface ChatMessage {
+  role: ChatRole;
+  content: string;
+}
+
+export interface ChatOptions {
+  timeoutMs: number;
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export interface LlmChatClient {
+  readonly provider: string;
+  readonly model: string;
+  chat(messages: ChatMessage[], options: ChatOptions): Promise<string>;
+}
+
 export type FakeProviderFn = (prompt: string) => Promise<LlmScoringResult> | LlmScoringResult;
 
 export interface FakeLlmScoringClientOptions {
@@ -82,7 +101,7 @@ type MessageContent =
       | { type: "image_url"; image_url: { url: string } }
     >;
 
-export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient {
+export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmChatClient {
   readonly provider: string;
   readonly model: string;
   private readonly baseUrl: string;
@@ -191,6 +210,64 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient {
       reason: result.reason,
       raw: body
     };
+  }
+
+  async chat(
+    messages: ChatMessage[],
+    options: ChatOptions
+  ): Promise<string> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: this.model,
+          messages,
+          temperature: options.temperature ?? 0.7,
+          max_tokens: options.maxTokens ?? 800
+        }),
+        signal: controller.signal
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      throw new LlmRetryableError(
+        error instanceof Error ? error.message : "network error"
+      );
+    }
+    clearTimeout(timer);
+
+    if (response.status >= 500) {
+      throw new LlmRetryableError(`http ${response.status}`);
+    }
+    if (response.status === 429) {
+      throw new LlmRetryableError("rate limited");
+    }
+    if (response.status >= 400) {
+      throw new LlmNonRetryableError(`http ${response.status}`);
+    }
+
+    let body: ChatCompletionResponse;
+    try {
+      body = (await response.json()) as ChatCompletionResponse;
+    } catch (error) {
+      throw new LlmNonRetryableError(
+        `failed to parse response json: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+
+    const content = body.choices?.[0]?.message?.content;
+    if (typeof content !== "string" || content.length === 0) {
+      throw new LlmNonRetryableError("missing choices[0].message.content");
+    }
+
+    return content;
   }
 }
 
