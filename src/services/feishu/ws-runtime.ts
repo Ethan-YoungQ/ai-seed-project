@@ -196,6 +196,8 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
           parsedTags: [],
           attachmentCount: 0,
           attachmentTypes: [],
+          mentionedBotIds: [],
+          cleanedText: `[表情回应: ${emoji}]`,
           documentText: "",
           documentParseStatus: "not_applicable",
           eventUrl: `feishu://reaction/${messageId}`,
