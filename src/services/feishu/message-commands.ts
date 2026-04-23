@@ -113,12 +113,13 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
     if (message.chatType !== "group") return;
 
     // 第 0 步：@Bot 问答分支（最高优先级，return 后不走评分）
+    // handleChatBotMention 内部 fire-and-forget，handler 立即返回
     if (
       deps.chatBot &&
       message.mentionedBotIds.includes(deps.chatBot.botOpenId) &&
       message.messageType === "text"
     ) {
-      await handleChatBotMention(message, deps);
+      handleChatBotMention(message, deps);
       return;
     }
 
@@ -540,30 +541,74 @@ async function handleMemberMgmtTrigger(
 // ChatBot @ 问答：学员/管理员 @Bot 提问 → LLM 回答
 // ============================================================================
 
-async function handleChatBotMention(
+/**
+ * 已处理的 messageId 去重缓存（解决飞书 WS 重推事件问题）
+ * 飞书的长连接 SDK 在 handler 处理缓慢时会重推相同事件，
+ * 必须用 messageId 做幂等去重。
+ */
+const processedChatBotMessageIds = new Map<string, number>();
+const MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
+const MAX_DEDUP_CACHE_SIZE = 500;
+
+function isAlreadyProcessed(messageId: string): boolean {
+  const now = Date.now();
+  const ts = processedChatBotMessageIds.get(messageId);
+  if (ts !== undefined && now - ts < MESSAGE_DEDUP_TTL_MS) {
+    return true;
+  }
+  // 记录此次处理
+  processedChatBotMessageIds.set(messageId, now);
+
+  // 定期清理过期条目
+  if (processedChatBotMessageIds.size > MAX_DEDUP_CACHE_SIZE) {
+    for (const [id, t] of processedChatBotMessageIds) {
+      if (now - t > MESSAGE_DEDUP_TTL_MS) {
+        processedChatBotMessageIds.delete(id);
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Fire-and-forget 处理：handler 立即返回，LLM 调用异步执行。
+ * 这样即使 LLM 耗时 15-30s，WS 事件也不会被飞书视作"未处理"而重推。
+ */
+function handleChatBotMention(
   message: NormalizedFeishuMessage,
   deps: MessageCommandDeps,
-): Promise<void> {
+): void {
   if (!deps.chatBot || !message.chatId) return;
 
-  try {
-    const result = await deps.chatBot.engine.reply({
-      chatId: message.chatId,
-      openId: message.memberId,
-      messageId: message.messageId,
-      cleanedText: message.cleanedText,
-    });
-
+  // 幂等去重：防止飞书 WS 重推
+  if (isAlreadyProcessed(message.messageId)) {
     console.log(
-      `[ChatBot] reply to ${message.memberId}: used=${result.used}, latency=${result.latencyMs}ms`,
+      `[ChatBot] Duplicate messageId=${message.messageId}, skipping`,
     );
-
-    await deps.feishuClient.sendTextMessage({
-      receiveId: message.chatId,
-      receiveIdType: "chat_id",
-      text: result.replyText,
-    });
-  } catch (err) {
-    console.error("[ChatBot] unexpected error:", err);
+    return;
   }
+
+  // 后台异步处理，不阻塞 WS 回调
+  void (async () => {
+    try {
+      const result = await deps.chatBot!.engine.reply({
+        chatId: message.chatId!,
+        openId: message.memberId,
+        messageId: message.messageId,
+        cleanedText: message.cleanedText,
+      });
+
+      console.log(
+        `[ChatBot] reply to ${message.memberId}: used=${result.used}, latency=${result.latencyMs}ms`,
+      );
+
+      await deps.feishuClient.sendTextMessage({
+        receiveId: message.chatId!,
+        receiveIdType: "chat_id",
+        text: result.replyText,
+      });
+    } catch (err) {
+      console.error("[ChatBot] unexpected error:", err);
+    }
+  })();
 }
