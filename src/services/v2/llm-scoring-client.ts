@@ -219,6 +219,11 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 
+    // GLM-4.7 / GLM-5 默认启用思考模式（先推理再回答），这会显著增加延迟
+    // 和 token 成本。助教问答场景属于"lightweight requests"，官方推荐关闭。
+    // 参考：https://docs.z.ai/guides/capabilities/thinking-mode
+    const isGlmModel = this.model.toLowerCase().startsWith("glm-");
+
     let response: Response;
     try {
       response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -231,7 +236,8 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
           model: this.model,
           messages,
           temperature: options.temperature ?? 0.7,
-          max_tokens: options.maxTokens ?? 800
+          max_tokens: options.maxTokens ?? 800,
+          ...(isGlmModel ? { thinking: { type: "disabled" } } : {})
         }),
         signal: controller.signal
       });

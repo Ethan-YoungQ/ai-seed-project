@@ -46,6 +46,30 @@ describe("OpenAiCompatibleLlmScoringClient.chat", () => {
     expect(body.messages).toEqual([{ role: "user", content: "你好" }]);
     // chat() should NOT set response_format
     expect(body.response_format).toBeUndefined();
+    // GLM 模型应关闭思考模式以降低延迟
+    expect(body.thinking).toEqual({ type: "disabled" });
+  });
+
+  it("does not set thinking field for non-GLM models", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: "hi" } }] })
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const nonGlmConfig: LlmProviderConfig = {
+      ...config,
+      provider: "openai_compatible",
+      textModel: "gpt-4"
+    };
+    const client = new OpenAiCompatibleLlmScoringClient(nonGlmConfig);
+    await client.chat([{ role: "user", content: "hi" }], { timeoutMs: 5000 });
+
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string
+    );
+    expect(body.thinking).toBeUndefined();
   });
 
   it("throws when response is missing content", async () => {
