@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import { buildSystemPrompt } from "../../../../src/services/feishu/chat-bot/persona";
 
 describe("buildSystemPrompt", () => {
-  it("includes bot name 奇点小助", () => {
+  it("includes bot name HBU AI 助教", () => {
     const prompt = buildSystemPrompt("student", "李明");
-    expect(prompt).toContain("奇点小助");
+    expect(prompt).toContain("HBU AI 助教");
   });
 
   it("includes member name in prompt", () => {

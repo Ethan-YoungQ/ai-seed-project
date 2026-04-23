@@ -599,7 +599,7 @@ function handleChatBotMention(
       });
 
       console.log(
-        `[ChatBot] reply to ${message.memberId}: used=${result.used}, latency=${result.latencyMs}ms`,
+        `[ChatBot] reply chatId=${message.chatId} to ${message.memberId}: used=${result.used}, latency=${result.latencyMs}ms`,
       );
 
       await deps.feishuClient.sendTextMessage({
