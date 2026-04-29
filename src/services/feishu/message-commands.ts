@@ -44,8 +44,17 @@ const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板"];
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
 const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
 
-function stripAtMentionPrefix(text: string): string {
-  return text.replace(/^@_\S+\s+/g, "").trim();
+/**
+ * 清洗指令文本：去除 @mention、全角/半角空格、零宽字符、标点符号
+ * 解决严格 === 匹配导致"调分！"/"调分。"等带标点的消息无法触发的问题
+ */
+function cleanCommandText(raw: string): string {
+  return raw
+    .replace(/@\S+/g, "")                  // 移除所有 @mention
+    .replace(/[\s　 ]+/g, "")     // 移除空格（半角/全角/不换行空格）
+    .replace(/[​-‏﻿]+/g, "") // 移除零宽字符（显式 Unicode 转义）
+    .replace(/[。！？，、；：""''（）《》【】…—！￥…（）—：“”‘’《》\-\+\.\,\!\?\:\;\(\)\[\]\{\}]/g, "") // 移除标点
+    .trim();
 }
 
 // ============================================================================
@@ -125,29 +134,36 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
 
     // Trainer/admin keyword triggers: text messages only
     if (message.messageType === "text") {
-      const text = stripAtMentionPrefix(message.rawText.trim());
+      const text = cleanCommandText(message.rawText);
+      console.log(`[MsgHandler] cmd match: raw="${message.rawText.slice(0, 80)}" → cleaned="${text}"`);
 
-      if (ADMIN_PANEL_KEYWORDS.some((kw) => text === kw)) {
+      if (ADMIN_PANEL_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → ADMIN_PANEL`);
         await handleAdminPanelTrigger(message, deps);
         return;
       }
-      if (QUIZ_KEYWORDS.some((kw) => text === kw)) {
+      if (QUIZ_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → QUIZ`);
         await handleQuizTrigger(message, deps);
         return;
       }
-      if (PEER_REVIEW_KEYWORDS.some((kw) => text === kw)) {
+      if (PEER_REVIEW_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → PEER_REVIEW`);
         await handlePeerReviewTrigger(message, deps);
         return;
       }
-      if (DASHBOARD_KEYWORDS.some((kw) => text === kw)) {
+      if (DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → DASHBOARD`);
         await handleDashboardPinTrigger(message, deps);
         return;
       }
-      if (MANUAL_ADJUST_KEYWORDS.some((kw) => text === kw)) {
+      if (MANUAL_ADJUST_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → MANUAL_ADJUST`);
         await handleManualAdjustTrigger(message, deps);
         return;
       }
-      if (MEMBER_MGMT_KEYWORDS.some((kw) => text === kw)) {
+      if (MEMBER_MGMT_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → MEMBER_MGMT`);
         await handleMemberMgmtTrigger(message, deps);
         return;
       }
