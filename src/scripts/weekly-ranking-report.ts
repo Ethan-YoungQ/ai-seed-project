@@ -56,23 +56,23 @@ export function buildReportCard(
   const top = top3[0];
   if (top) {
     const compliments = [
-      `👏 恭喜 @${top.memberName} 获得本周冠军！维度全能，稳如泰山！`,
-      `🔥 @${top.memberName} 本周表现太亮眼了，全场最佳就是你！`,
-      `⭐ @${top.memberName} 以 ${top.cumulativeAq}AQ 高居榜首，继续保持！`,
+      `🔥 @${top.memberName} 这周直接封神了！维度全能一把抓，${top.cumulativeAq}AQ 绝对实力碾压 🏆 小伙伴们还不快来膜拜！`,
+      `👑 @${top.memberName} 以 ${top.cumulativeAq}AQ 拿下本周冠军，这波操作简直太秀了！yyds！继续保持这个卷王节奏 💪`,
+      `⭐ @${top.memberName} 本周表现杀疯了！${top.cumulativeAq}AQ 的含金量懂得都懂 🎉 期待下周更精彩的操作！`,
     ];
     text += `\n${compliments[Math.floor(Math.random() * compliments.length)]}\n`;
   }
 
   // Bottom 3 section
-  text += `\n【💪 加油后三名】\n`;
+  text += `\n【💪 后三名冲冲冲】\n`;
   for (const entry of bottom3) {
     text += `📌 ${entry.memberName} Lv.${entry.currentLevel} | ${entry.cumulativeAq}AQ\n`;
   }
 
   const encouragements = [
-    `\n🌱 排名不是终点，每一次学习都在积累！下周继续加油！`,
-    `\n💡 进步是一点一点积累的，下周一定会更好！`,
-    `\n🚀 别人跑得快不代表你跑不远，坚持就是胜利！`,
+    `\n🌱 排名只是暂时的！这周的经验就是下周的 buff 🚀 下周就是你起飞的时候！`,
+    `\n💪 一时的落后不代表什么！AI 训练营是一场马拉松，稳住别方，下周冲就完了！`,
+    `\n🔥 乾坤未定，你我皆是黑马！这周积累的下周全爆发出来，干就完了！`,
   ];
   text += encouragements[Math.floor(Math.random() * encouragements.length)];
 

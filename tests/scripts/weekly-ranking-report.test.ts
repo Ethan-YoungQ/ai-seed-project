@@ -58,7 +58,7 @@ describe("buildReportCard", () => {
     const result = buildReportCard(top3, bottom3);
     expect(result).toContain("吴桐");
     expect(result).toContain("班腾飞");
-    expect(result).toContain("加油");
+    expect(result).toContain("冲冲冲");
   });
 
   it("includes dimension scores in top 3 display", () => {
