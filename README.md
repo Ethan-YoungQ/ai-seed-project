@@ -78,14 +78,24 @@
 | **社交力** | S | S1 群消息互动、S2 互评贡献 | 活不活跃、有没有帮助别人 |
 | **成长力** | G | G1 视频学习、G2 课外资源分享、G3 持续活跃 | 有没有反思进步、分享资源 |
 
-### 3. AI 多模态分类：规则引擎 + LLM 双引擎
+### 3. AI 语义评分 + 主动夸赞
 
-简单场景走规则引擎（快速、零成本），复杂内容交给 AI 大模型（GLM-4 Vision）进行多模态理解：
+**语义评分**：从关键词白名单全面升级为 LLM 语义理解。一条消息进入后，AI 一次性评判 9 个评分项的得分（K3/K4/C1/C3/H2/H3/G1/G2/S1），支持图片（GLM-4V-Flash）和文件（glm_file_parser）多模态解析。
 
-- 一张 PPT 截图 → 识别为「成果展示」而非普通聊天图片
-- 一段代码截图 → 识别为「工具实操」并归入执行力维度
-- 一段长文思考 → 区分「深度发言」和「日常闲聊」
-- 一个表情回复 → 区分「点赞认可」和「无意义水群」
+- 告别白名单穷举困境——不再需要手动添加关键词
+- GLM-4-Flash 免费模型驱动文本评分
+- LLM 失败时自动降级到关键词分类器，零数据损失
+
+**主动夸赞 Bot**：Bot 不再被动等待 @ 提问。当检测到学员的精彩分享（总分 ≥ 3 分），Bot 会在群里主动发表彩虹屁夸赞：
+
+```
+@杨斌 这波操作也太秀了吧！多个维度全面开花，直接拉满 🔥
+@王静Effie 哇这个海报审美真的杀疯了！用 ChatGPT 设计的？yyds！
+```
+
+> 夸赞话术采用「小红书/抖音评论区」风格——绝绝子、杀疯了、封神、拿捏，有网感有温度。每人每天最多 3 次，整群每小时最多 5 次，避免扰民。
+
+**每周排行榜结算**：每周四 12:00 自动在群内发布排行榜报告——前三名（🥇🥈🥉 含表彰话术）和后三名（📌 含鼓励话术），由 systemd timer 驱动。
 
 ### 4. 赛博朋克实时大屏
 
@@ -189,7 +199,8 @@ Frontend:   React 18 + TypeScript + Vite (手写 CSS，赛博朋克主题)
 Backend:    Fastify + TypeScript (Node.js)
 Database:   SQLite (better-sqlite3, WAL 模式)
 IM:         飞书开放平台 SDK (WebSocket 长连接)
-AI:         GLM-4 Vision (智谱 AI，多模态)
+AI:         GLM-4-Flash (文本评分, 免费) + GLM-4V-Flash (视觉多模态, 免费)
+Schedule:   systemd timer (每周四 12:00 排行榜结算)
 Deploy:     systemd + Nginx + Let's Encrypt，单机即可运行
 ```
 
@@ -269,6 +280,13 @@ ai-seed-project/
 │   └── src/routes/         # 页面路由
 ├── tests/                  # Vitest 测试套件
 ├── scripts/                # 运维与部署脚本
+│   ├── ops/deploy-app.sh   # 应用部署
+│   ├── ops/deploy-timer.sh # 定时器部署
+│   └── ops/backup-db.sh    # 数据库备份
+├── deploy/systemd/         # systemd 单元
+│   ├── ai-seed-project.service  # 主服务
+│   ├── weekly-ranking.service   # 排行榜脚本服务
+│   └── weekly-ranking.timer     # 每周四 12:00 定时器
 ├── docs/
 │   ├── admin-guide.md      # 管理员操作手册（零技术背景适用）
 │   ├── student-rules-guide.md  # 学员评分/晋升/勋章规则
