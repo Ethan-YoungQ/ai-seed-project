@@ -8,6 +8,8 @@ export interface LlmProviderConfig {
   baseUrl: string;
   apiKey?: string;
   textModel: string;
+  /** Vision model for multimodal (image) scoring. Defaults to "" when unset. */
+  visionModel: string;
   fileModel: string;
   fileExtractor: LlmFileExtractor;
   fileParserToolType: GlmFileParserToolType;
@@ -83,6 +85,7 @@ export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): Llm
   const requestedEnabled = readBoolean(env.LLM_ENABLED, false);
   const textModel =
     env.LLM_TEXT_MODEL?.trim() || (provider === "glm" ? "glm-4.7" : "qwen3-flash");
+  const visionModel = env.LLM_VISION_MODEL?.trim() || "";
   const fileModel = env.LLM_FILE_MODEL?.trim() || (provider === "glm" ? "" : "qwen-doc");
 
   return {
@@ -91,6 +94,7 @@ export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): Llm
     baseUrl,
     apiKey,
     textModel,
+    visionModel,
     fileModel,
     fileExtractor: readFileExtractor(provider, env.LLM_FILE_EXTRACTOR),
     fileParserToolType: readFileParserToolType(env.LLM_FILE_PARSER_TOOL_TYPE),

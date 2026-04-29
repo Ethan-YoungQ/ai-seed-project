@@ -146,6 +146,7 @@ function makeConfig() {
     baseUrl: "https://llm.example.com/v1",
     apiKey: "sk-test",
     textModel: "test-model",
+    visionModel: "",
     fileModel: "",
     fileExtractor: "openai_file_chat" as const,
     fileParserToolType: "lite" as const,
