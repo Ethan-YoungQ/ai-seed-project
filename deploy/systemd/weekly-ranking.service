@@ -1,0 +1,12 @@
+[Unit]
+Description=AI Seed - Weekly Ranking Report
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/ai-seed-project
+Environment=NODE_ENV=production
+EnvironmentFile=-/opt/ai-seed-project/.env
+ExecStart=/usr/bin/node /opt/ai-seed-project/dist/scripts/weekly-ranking-report.js
+User=root

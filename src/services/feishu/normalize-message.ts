@@ -68,6 +68,41 @@ function inferAttachmentTypes(messageType: string | undefined, attachments: Arra
   return [];
 }
 
+interface PostContentBlock {
+  tag?: string;
+  text?: string;
+  href?: string;
+  image_key?: string;
+}
+
+function isPostContent(body: unknown): body is { content: PostContentBlock[][]; title?: string } {
+  const obj = body as Record<string, unknown> | null;
+  if (!obj || !Array.isArray(obj.content)) {
+    return false;
+  }
+  return (obj.content as unknown[]).every(
+    (row) => Array.isArray(row) && row.every((block) => typeof block === "object" && block !== null)
+  );
+}
+
+function extractPostText(body: { content: PostContentBlock[][]; title?: string }): string {
+  const fragments: string[] = [];
+
+  if (body.title) {
+    fragments.push(body.title);
+  }
+
+  for (const row of body.content) {
+    for (const block of row) {
+      if (block.tag === "text" && block.text) {
+        fragments.push(block.text);
+      }
+    }
+  }
+
+  return fragments.join(" ");
+}
+
 function readMessageContent(content: string): {
   text: string;
   fileKey?: string;
@@ -80,7 +115,21 @@ function readMessageContent(content: string): {
       file_key?: string;
       file_name?: string;
       mime_type?: string;
+      content?: PostContentBlock[][];
+      title?: string;
     };
+
+    // Post (rich text) message format: content is an array of arrays of blocks
+    if (isPostContent(parsed)) {
+      return {
+        text: extractPostText(parsed),
+        fileKey: undefined,
+        fileName: undefined,
+        mimeType: undefined
+      };
+    }
+
+    // Standard text/file message format
     return {
       text: parsed.text ?? "",
       fileKey: parsed.file_key,

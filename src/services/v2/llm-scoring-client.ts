@@ -18,10 +18,21 @@ export interface LlmScoringOptions {
   imageUrl?: string;
 }
 
+export interface MultiScoreResult {
+  items: Array<{
+    code: string;
+    score: number;
+    reason: string;
+  }>;
+  raw: unknown;
+}
+
 export interface LlmScoringClient {
   readonly provider: string;
   readonly model: string;
   score(promptText: string, options: LlmScoringOptions): Promise<LlmScoringResult>;
+  /** Unified multi-dimension scoring — returns all applicable items in one call. */
+  multiScore(promptText: string, options: LlmScoringOptions): Promise<MultiScoreResult>;
 }
 
 export type ChatRole = "system" | "user" | "assistant";
@@ -44,6 +55,7 @@ export interface LlmChatClient {
 }
 
 export type FakeProviderFn = (prompt: string) => Promise<LlmScoringResult> | LlmScoringResult;
+export type FakeMultiScoreProviderFn = (prompt: string) => Promise<MultiScoreResult> | MultiScoreResult;
 
 export interface FakeLlmScoringClientOptions {
   responses?: LlmScoringResult[];
@@ -51,6 +63,8 @@ export interface FakeLlmScoringClientOptions {
   delayMs?: number;
   provider_name?: string;
   model?: string;
+  multiScoreResponses?: MultiScoreResult[];
+  multiScoreProvider?: FakeMultiScoreProviderFn;
 }
 
 export class FakeLlmScoringClient implements LlmScoringClient {
@@ -58,6 +72,8 @@ export class FakeLlmScoringClient implements LlmScoringClient {
   readonly model: string;
   private readonly queue: LlmScoringResult[];
   private readonly providerFn: FakeProviderFn | null;
+  private readonly multiQueue: MultiScoreResult[];
+  private readonly multiProviderFn: FakeMultiScoreProviderFn | null;
   private readonly delayMs: number;
 
   constructor(options: FakeLlmScoringClientOptions) {
@@ -65,6 +81,8 @@ export class FakeLlmScoringClient implements LlmScoringClient {
     this.model = options.model ?? "fake-v1";
     this.queue = options.responses ? [...options.responses] : [];
     this.providerFn = options.provider ?? null;
+    this.multiQueue = options.multiScoreResponses ? [...options.multiScoreResponses] : [];
+    this.multiProviderFn = options.multiScoreProvider ?? null;
     this.delayMs = options.delayMs ?? 0;
   }
 
@@ -81,6 +99,23 @@ export class FakeLlmScoringClient implements LlmScoringClient {
     const next = this.queue.shift();
     if (!next) {
       throw new Error("fake queue exhausted");
+    }
+    return next;
+  }
+
+  async multiScore(
+    promptText: string,
+    _options: LlmScoringOptions
+  ): Promise<MultiScoreResult> {
+    if (this.delayMs > 0) {
+      await new Promise<void>((resolve) => setTimeout(resolve, this.delayMs));
+    }
+    if (this.multiProviderFn) {
+      return await this.multiProviderFn(promptText);
+    }
+    const next = this.multiQueue.shift();
+    if (!next) {
+      return { items: [{ code: "K1", score: 0, reason: "fake-auto-pass" }], raw: null };
     }
     return next;
   }
@@ -274,6 +309,114 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     }
 
     return content;
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  multiScore — unified multi-dimension scoring                    */
+  /* ---------------------------------------------------------------- */
+
+  async multiScore(
+    promptText: string,
+    options: LlmScoringOptions
+  ): Promise<MultiScoreResult> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs);
+    const signal = options.signal
+      ? anySignal([options.signal, controller.signal])
+      : controller.signal;
+
+    const content: MessageContent = options.imageUrl
+      ? [
+          { type: "text", text: promptText },
+          { type: "image_url", image_url: { url: options.imageUrl } }
+        ]
+      : promptText;
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${this.apiKey}`
+        },
+        body: JSON.stringify({
+          model: this.model,
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content }]
+        }),
+        signal
+      });
+    } catch (error) {
+      clearTimeout(timer);
+      throw new LlmRetryableError(
+        error instanceof Error ? error.message : "network error"
+      );
+    }
+    clearTimeout(timer);
+
+    if (response.status >= 500) {
+      throw new LlmRetryableError(`http ${response.status}`);
+    }
+    if (response.status === 429) {
+      throw new LlmRetryableError("rate limited");
+    }
+    if (response.status >= 400) {
+      throw new LlmNonRetryableError(`http ${response.status}`);
+    }
+
+    let body: ChatCompletionResponse;
+    try {
+      body = (await response.json()) as ChatCompletionResponse;
+    } catch (error) {
+      throw new LlmNonRetryableError(
+        `failed to parse response json: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+
+    const rawContent = body.choices?.[0]?.message?.content;
+    if (typeof rawContent !== "string") {
+      throw new LlmNonRetryableError("missing choices[0].message.content");
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(rawContent);
+    } catch (error) {
+      throw new LlmNonRetryableError(
+        `content is not json: ${error instanceof Error ? error.message : "unknown"}`
+      );
+    }
+
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new LlmNonRetryableError(
+        `expected JSON object, got: ${rawContent.slice(0, 200)}`
+      );
+    }
+
+    const obj = parsed as Record<string, unknown>;
+
+    // New multi-item format: {items: [{code, score, reason}, ...]}
+    if (Array.isArray(obj.items)) {
+      return {
+        items: obj.items as MultiScoreResult["items"],
+        raw: body
+      };
+    }
+
+    // GLM-4.7 sometimes returns old single-item format {pass, score, reason}
+    // instead of the new multi-dimension {items: [...]} format.
+    // Let the caller fall back to keyword classifier — do NOT silently convert.
+    if (typeof obj.pass === "boolean" && typeof obj.score === "number") {
+      throw new LlmNonRetryableError(
+        `model returned single-item format (pass/score/reason) instead of multi-dimension ` +
+        `{items:[...]}. Raw: ${rawContent.slice(0, 200)}`
+      );
+    }
+
+    throw new LlmNonRetryableError(
+      `unexpected JSON format, raw: ${rawContent.slice(0, 300)}`
+    );
   }
 }
 

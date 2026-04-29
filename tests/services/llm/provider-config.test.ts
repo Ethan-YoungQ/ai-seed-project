@@ -50,6 +50,27 @@ describe("readLlmProviderConfig", () => {
     expect(config.enabled).toBe(false);
   });
 
+  it("reads LLM_VISION_MODEL when provided", () => {
+    const config = readLlmProviderConfig({
+      LLM_ENABLED: "true",
+      LLM_PROVIDER: "glm",
+      LLM_API_KEY: "sk-demo",
+      LLM_VISION_MODEL: "glm-4v-flash"
+    });
+
+    expect(config.visionModel).toBe("glm-4v-flash");
+  });
+
+  it("defaults visionModel to empty string when not set", () => {
+    const config = readLlmProviderConfig({
+      LLM_ENABLED: "true",
+      LLM_PROVIDER: "glm",
+      LLM_API_KEY: "sk-demo"
+    });
+
+    expect(config.visionModel).toBe("");
+  });
+
   it("keeps aliyun defaults available as a rollback path", () => {
     const config = readLlmProviderConfig({
       LLM_ENABLED: "true",

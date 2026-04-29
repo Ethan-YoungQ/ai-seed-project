@@ -3,7 +3,8 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import {
   FakeLlmScoringClient,
   OpenAiCompatibleLlmScoringClient,
-  type LlmScoringResult
+  type LlmScoringResult,
+  type MultiScoreResult
 } from "../../../src/services/v2/llm-scoring-client.js";
 import {
   LlmNonRetryableError,
@@ -12,6 +13,10 @@ import {
 
 function ok(score: number): LlmScoringResult {
   return { pass: true, score, reason: "ok", raw: {} };
+}
+
+function multiOk(items: MultiScoreResult["items"]): MultiScoreResult {
+  return { items, raw: {} };
 }
 
 describe("FakeLlmScoringClient", () => {
@@ -93,6 +98,41 @@ describe("FakeLlmScoringClient", () => {
     expect(client.provider).toBe("fake");
     expect(client.model).toBe("fake-v1");
   });
+
+  /* ---------------------------------------------------------------- */
+  /*  FakeLlmScoringClient — multiScore()                             */
+  /* ---------------------------------------------------------------- */
+
+  test("multiScore: pops multiScoreResponses in order", async () => {
+    const client = new FakeLlmScoringClient({
+      multiScoreResponses: [
+        multiOk([{ code: "K3", score: 3, reason: "good" }]),
+        multiOk([{ code: "C1", score: 4, reason: "creative" }])
+      ]
+    });
+    const a = await client.multiScore("p1", { timeoutMs: 1000 });
+    const b = await client.multiScore("p2", { timeoutMs: 1000 });
+    expect(a.items).toEqual([{ code: "K3", score: 3, reason: "good" }]);
+    expect(b.items).toEqual([{ code: "C1", score: 4, reason: "creative" }]);
+  });
+
+  test("multiScore: uses providerFn when configured", async () => {
+    const fn = vi.fn((prompt: string) => {
+      const parts = prompt.split(":");
+      return Promise.resolve(multiOk([
+        { code: parts[0] ?? "K1", score: Number(parts[1]) || 1, reason: "fn" }
+      ]));
+    });
+    const client = new FakeLlmScoringClient({ multiScoreProvider: fn });
+    const result = await client.multiScore("C3:5", { timeoutMs: 1000 });
+    expect(result.items).toEqual([{ code: "C3", score: 5, reason: "fn" }]);
+  });
+
+  test("multiScore: falls back to auto-pass when no responses configured", async () => {
+    const client = new FakeLlmScoringClient({});
+    const result = await client.multiScore("any prompt", { timeoutMs: 1000 });
+    expect(result.items).toEqual([{ code: "K1", score: 0, reason: "fake-auto-pass" }]);
+  });
 });
 
 /* ------------------------------------------------------------------ */
@@ -106,6 +146,7 @@ function makeConfig() {
     baseUrl: "https://llm.example.com/v1",
     apiKey: "sk-test",
     textModel: "test-model",
+    visionModel: "",
     fileModel: "",
     fileExtractor: "openai_file_chat" as const,
     fileParserToolType: "lite" as const,
@@ -319,6 +360,99 @@ describe("OpenAiCompatibleLlmScoringClient", () => {
     const parsed = JSON.parse(init.body as string);
     expect(parsed.messages).toEqual([
       { role: "user", content: "just text" }
+    ]);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /*  multiScore() — unified multi-dimension scoring                   */
+  /* ---------------------------------------------------------------- */
+
+  test("multiScore: parses {items:[...]} response", async () => {
+    const body = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              items: [
+                { code: "K3", score: 3, reason: "不错的总结" },
+                { code: "C1", score: 4, reason: "创意用法" }
+              ]
+            })
+          }
+        }
+      ]
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => fetchOk(body));
+    const client = new OpenAiCompatibleLlmScoringClient(makeConfig());
+    const result = await client.multiScore("evaluate this", { timeoutMs: 1000 });
+
+    expect(result.items).toHaveLength(2);
+    expect(result.items[0]).toEqual({ code: "K3", score: 3, reason: "不错的总结" });
+    expect(result.items[1]).toEqual({ code: "C1", score: 4, reason: "创意用法" });
+  });
+
+  test("multiScore: returns empty items array when none qualify", async () => {
+    const body = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ items: [] })
+          }
+        }
+      ]
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => fetchOk(body));
+    const client = new OpenAiCompatibleLlmScoringClient(makeConfig());
+    const result = await client.multiScore("hello", { timeoutMs: 1000 });
+
+    expect(result.items).toEqual([]);
+  });
+
+  test("multiScore: throws LlmNonRetryableError on invalid JSON", async () => {
+    const body = {
+      choices: [{ message: { content: "not json" } }]
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => fetchOk(body));
+    const client = new OpenAiCompatibleLlmScoringClient(makeConfig());
+    await expect(
+      client.multiScore("prompt", { timeoutMs: 1000 })
+    ).rejects.toBeInstanceOf(LlmNonRetryableError);
+  });
+
+  test("multiScore: throws LlmNonRetryableError when items field missing", async () => {
+    const body = {
+      choices: [
+        { message: { content: JSON.stringify({ wrong: "format" }) } }
+      ]
+    };
+    vi.spyOn(globalThis, "fetch").mockImplementation(() => fetchOk(body));
+    const client = new OpenAiCompatibleLlmScoringClient(makeConfig());
+    await expect(
+      client.multiScore("prompt", { timeoutMs: 1000 })
+    ).rejects.toBeInstanceOf(LlmNonRetryableError);
+  });
+
+  test("multiScore: sends text content without response_format json_object", async () => {
+    const body = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ items: [{ code: "K3", score: 2, reason: "ok" }] })
+          }
+        }
+      ]
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => fetchOk(body));
+    const client = new OpenAiCompatibleLlmScoringClient(makeConfig());
+    await client.multiScore("some text", { timeoutMs: 2000 });
+
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(init.body as string);
+    expect(parsed.response_format).toEqual({ type: "json_object" });
+    expect(parsed.messages).toEqual([
+      { role: "user", content: "some text" }
     ]);
   });
 });

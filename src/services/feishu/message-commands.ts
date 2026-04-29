@@ -29,8 +29,16 @@ import { buildManualAdjustCard, type ManualAdjustState } from "./cards/templates
 import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/member-mgmt-v1.js";
 import type { ChatEngine } from "./chat-bot/chat-engine.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
+import {
+  needsSemanticScoring,
+  filterScorableItems,
+  buildUnifiedPrompt,
+  type SemanticScoreItem,
+} from "./semantic-classifier.js";
+import type { LlmScoringClient } from "../v2/llm-scoring-client.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
+import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 
 // ============================================================================
 // Keyword definitions
@@ -44,8 +52,17 @@ const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板"];
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
 const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
 
-function stripAtMentionPrefix(text: string): string {
-  return text.replace(/^@_\S+\s+/g, "").trim();
+/**
+ * 清洗指令文本：去除 @mention、全角/半角空格、零宽字符、标点符号
+ * 解决严格 === 匹配导致"调分！"/"调分。"等带标点的消息无法触发的问题
+ */
+function cleanCommandText(raw: string): string {
+  return raw
+    .replace(/@\S+/g, "")                  // 移除所有 @mention
+    .replace(/[\s　 ]+/g, "")     // 移除空格（半角/全角/不换行空格）
+    .replace(/[​-‏﻿]+/g, "") // 移除零宽字符（显式 Unicode 转义）
+    .replace(/[。！？，、；：""''（）《》【】…—！￥…（）—：“”‘’《》\-\+\.\,\!\?\:\;\(\)\[\]\{\}]/g, "") // 移除标点
+    .trim();
 }
 
 // ============================================================================
@@ -103,6 +120,11 @@ export interface MessageCommandDeps {
     botOpenId: string;
     engine: ChatEngine;
   };
+  /** 语义评分配置（可选，未配置则使用旧关键词分类器） */
+  semanticScoring?: {
+    enabled: boolean;
+    llmClient: LlmScoringClient;
+  };
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -123,31 +145,38 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       return;
     }
 
-    // Trainer/admin keyword triggers: text messages only
-    if (message.messageType === "text") {
-      const text = stripAtMentionPrefix(message.rawText.trim());
+    // Trainer/admin keyword triggers: text OR post messages
+    if (message.messageType === "text" || message.messageType === "post") {
+      const text = cleanCommandText(message.rawText);
+      console.log(`[MsgHandler] cmd match: raw="${message.rawText.slice(0, 80)}" → cleaned="${text}"`);
 
-      if (ADMIN_PANEL_KEYWORDS.some((kw) => text === kw)) {
+      if (ADMIN_PANEL_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → ADMIN_PANEL`);
         await handleAdminPanelTrigger(message, deps);
         return;
       }
-      if (QUIZ_KEYWORDS.some((kw) => text === kw)) {
+      if (QUIZ_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → QUIZ`);
         await handleQuizTrigger(message, deps);
         return;
       }
-      if (PEER_REVIEW_KEYWORDS.some((kw) => text === kw)) {
+      if (PEER_REVIEW_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → PEER_REVIEW`);
         await handlePeerReviewTrigger(message, deps);
         return;
       }
-      if (DASHBOARD_KEYWORDS.some((kw) => text === kw)) {
+      if (DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → DASHBOARD`);
         await handleDashboardPinTrigger(message, deps);
         return;
       }
-      if (MANUAL_ADJUST_KEYWORDS.some((kw) => text === kw)) {
+      if (MANUAL_ADJUST_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → MANUAL_ADJUST`);
         await handleManualAdjustTrigger(message, deps);
         return;
       }
-      if (MEMBER_MGMT_KEYWORDS.some((kw) => text === kw)) {
+      if (MEMBER_MGMT_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → MEMBER_MGMT`);
         await handleMemberMgmtTrigger(message, deps);
         return;
       }
@@ -186,56 +215,235 @@ async function handleAutoCapture(
     return;
   }
 
-  // Classify — returns array of all applicable scoring items
-  const results = classifyMessage(message);
-  if (results.length === 0) return;
+  // Step 1: K1 签到始终直接给（不需要 LLM）
+  ingestK1(message, member.id, deps);
 
-  console.log(
-    `[AutoCapture] ${member.displayName}: ${results.map((r) => `${r.itemCode}(${r.reason})`).join(", ")}`,
-  );
+  // Step 2: 判断使用语义评分还是关键词分类器
+  const useSemantic = deps.semanticScoring?.enabled;
 
-  // Ingest each classified scoring item
-  let primaryResult: ClassificationResult | null = null;
+  if (useSemantic) {
+    // --- 语义评分路径（异步 fire-and-forget） ---
+    if (needsSemanticScoring(message)) {
+      void semanticClassifyAndIngest(message, member.id, member.displayName, deps);
+    }
+  } else {
+    // --- 关键词分类器路径（保持现有行为） ---
+    const results = classifyMessage(message);
+    if (results.length === 0) return;
 
-  for (const result of results) {
-    if (deps.ingestor) {
-      try {
-        const outcome = deps.ingestor.ingest({
-          memberId: member.id,
-          itemCode: result.itemCode,
-          scoreDelta: 0, // let Ingestor use defaultScoreDelta from config
-          sourceRef: `msg:${message.messageId}:${result.itemCode}`,
-          payloadText: message.rawText.slice(0, 500),
-        });
-        if (outcome.accepted && !primaryResult) {
-          primaryResult = result;
+    console.log(
+      `[AutoCapture] ${member.displayName}: ${results.map((r) => `${r.itemCode}(${r.reason})`).join(", ")}`,
+    );
+
+    let primaryResult: ClassificationResult | null = null;
+
+    for (const result of results) {
+      if (deps.ingestor) {
+        try {
+          const outcome = deps.ingestor.ingest({
+            memberId: member.id,
+            itemCode: result.itemCode,
+            scoreDelta: 0,
+            sourceRef: `msg:${message.messageId}:${result.itemCode}`,
+            payloadText: message.rawText.slice(0, 500),
+          });
+          if (outcome.accepted && !primaryResult) {
+            primaryResult = result;
+          }
+          console.log(
+            `[AutoCapture] Ingest ${result.itemCode}: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
+          );
+        } catch (err) {
+          console.error(`[AutoCapture] Ingest error for ${result.itemCode}:`, err);
         }
-        console.log(
-          `[AutoCapture] Ingest ${result.itemCode}: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
-        );
-      } catch (err) {
-        console.error(`[AutoCapture] Ingest error for ${result.itemCode}:`, err);
+      } else {
+        if (!primaryResult) primaryResult = result;
       }
-    } else {
-      // No ingestor wired — still track the primary result for reply
-      if (!primaryResult) primaryResult = result;
+    }
+
+    const replyItem = primaryResult && primaryResult.itemCode !== "K1"
+      ? primaryResult
+      : results.find((r) => r.itemCode !== "K1") ?? primaryResult;
+
+    if (replyItem && deps.autoReply && message.chatId) {
+      await sendConfirmReply(deps.autoReply, {
+        chatId: message.chatId,
+        memberId: message.memberId,
+        memberName: member.displayName,
+        itemCode: replyItem.itemCode,
+      });
+    }
+  }
+}
+
+// ============================================================================
+// K1 签到 — 快速路径，不依赖 LLM
+// ============================================================================
+
+function ingestK1(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  deps: MessageCommandDeps,
+): void {
+  if (!deps.ingestor) return;
+
+  try {
+    const outcome = deps.ingestor.ingest({
+      memberId,
+      itemCode: "K1",
+      scoreDelta: 0,
+      sourceRef: `msg:${message.messageId}:K1`,
+      payloadText: message.rawText.slice(0, 100),
+    });
+    console.log(
+      `[AutoCapture] K1: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
+    );
+  } catch (err) {
+    console.error("[AutoCapture] K1 ingest error:", err);
+  }
+}
+
+// ============================================================================
+// 语义评分 — 异步 fire-and-forget + LLM 降级
+// ============================================================================
+
+async function semanticClassifyAndIngest(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  displayName: string,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const llmClient = deps.semanticScoring?.llmClient;
+  if (!llmClient || !deps.ingestor) return;
+
+  const promptText = buildUnifiedPrompt(message.rawText);
+
+  let items: SemanticScoreItem[];
+  try {
+    const result = await llmClient.multiScore(promptText, { timeoutMs: 15000 });
+    items = filterScorableItems(result.items);
+    console.log(
+      `[SemanticScoring] ${displayName}: ${items.map((i) => `${i.code}(${i.reason})`).join(", ") || "(none)"}`,
+    );
+  } catch (err) {
+    console.error(`[SemanticScoring] LLM failed for ${displayName}, falling back to keyword classifier:`, err);
+    // 降级：LLM 失败时回退到关键词分类器
+    fallbackToLegacyClassifier(message, memberId, displayName, deps);
+    return;
+  }
+
+  // 逐项入账
+  let primaryCode: ScoringItemCode | null = null;
+  for (const item of items) {
+    try {
+      const outcome = deps.ingestor.ingest({
+        memberId,
+        itemCode: item.code,
+        scoreDelta: item.score,
+        sourceRef: `llm:${message.messageId}:${item.code}`,
+        payloadText: message.rawText.slice(0, 500),
+      });
+      if (outcome.accepted && !primaryCode) {
+        primaryCode = item.code;
+      }
+      console.log(
+        `[SemanticScoring] Ingest ${item.code}: accepted=${outcome.accepted}`,
+      );
+    } catch (err) {
+      console.error(`[SemanticScoring] Ingest error for ${item.code}:`, err);
     }
   }
 
-  // Send ONE confirmation reply for the highest-value accepted item
-  // (skip K1 if a more specific item was also accepted)
-  const replyItem = primaryResult && primaryResult.itemCode !== "K1"
-    ? primaryResult
-    : results.find((r) => r.itemCode !== "K1") ?? primaryResult;
-
-  if (replyItem && deps.autoReply && message.chatId) {
+  // 发送确认回复
+  if (primaryCode && deps.autoReply && message.chatId) {
     await sendConfirmReply(deps.autoReply, {
       chatId: message.chatId,
       memberId: message.memberId,
-      memberName: member.displayName,
-      itemCode: replyItem.itemCode,
+      memberName: displayName,
+      itemCode: primaryCode,
     });
   }
+}
+
+/**
+ * 降级到旧关键词分类器（LLM 调用失败时使用）
+ */
+function fallbackToLegacyClassifier(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  displayName: string,
+  deps: MessageCommandDeps,
+): void {
+  const results = classifyMessage(message);
+  if (results.length === 0 || !deps.ingestor) return;
+
+  // Track total score from classified item defaultScoreDelta values
+  let totalScore = 0;
+
+  for (const result of results) {
+    if (result.itemCode === "K1") continue; // K1 already ingested
+    const cfg = SCORING_ITEMS[result.itemCode];
+    totalScore += cfg?.defaultScoreDelta ?? 0;
+    try {
+      deps.ingestor.ingest({
+        memberId,
+        itemCode: result.itemCode,
+        scoreDelta: 0,
+        sourceRef: `fallback:${message.messageId}:${result.itemCode}`,
+        payloadText: message.rawText.slice(0, 500),
+      });
+    } catch (err) {
+      console.error(`[Fallback] Ingest error for ${result.itemCode}:`, err);
+    }
+  }
+
+  // Proactive praise: if total default score >= 3 ("nice" threshold)
+  if (totalScore < 3) return;
+  if (!deps.autoReply || !message.chatId) return;
+
+  // Dedup: skip if already processed via ChatBot path
+  if (isAlreadyProcessed(message.messageId)) {
+    console.log(
+      `[Fallback] Praise skipped: messageId=${message.messageId} already processed`,
+    );
+    return;
+  }
+
+  // Cooldown: minimum 120s between any two praise messages
+  const now = Date.now();
+  if (now - lastPraiseAt < PRAISE_COOLDOWN_MS) {
+    console.log(
+      `[Fallback] Praise skipped: cooldown (${Math.ceil((PRAISE_COOLDOWN_MS - (now - lastPraiseAt)) / 1000)}s remaining)`,
+    );
+    return;
+  }
+  lastPraiseAt = now;
+
+  // Build praise text with the member's name — random 彩虹屁 template
+  const praiseTemplates = [
+    `@${displayName} 这波操作也太秀了吧！多个维度全面开花，${totalScore} 分直接拉满 🔥 继续保持！`,
+    `@${displayName} 绝绝子！你在 ${totalScore} 分的好成绩证明了自己，太厉害了 👏 期待更多精彩分享！`,
+    `@${displayName} 这个分享质量太高了！直接拿下 ${totalScore} 分，yyds！小伙伴们都来学习一下～`,
+    `@${displayName} 优秀！${totalScore} 分的表现说明你真的用心了 💪 下次继续卷起来！`,
+    `@${displayName} 哇这波分享有东西啊！${totalScore} 分的好成绩实至名归 🎉 墙裂建议大家都看看！`,
+  ];
+  const praiseText = praiseTemplates[Math.floor(Math.random() * praiseTemplates.length)];
+
+  // Send praise as a text message (not a reply, since this is the fallback path)
+  void (async () => {
+    try {
+      await deps.autoReply!.sendTextMessage({
+        receiveId: message.chatId!,
+        receiveIdType: "chat_id" as any,
+        text: praiseText,
+      });
+      console.log(
+        `[Fallback] Praise sent to ${displayName}: totalScore=${totalScore}`,
+      );
+    } catch (err) {
+      console.error(`[Fallback] Failed to send praise:`, err);
+    }
+  })();
 }
 
 // ============================================================================
@@ -547,6 +755,13 @@ async function handleMemberMgmtTrigger(
 const processedChatBotMessageIds = new Map<string, number>();
 const MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
 const MAX_DEDUP_CACHE_SIZE = 500;
+
+// ============================================================================
+// Praise cooldown — prevent excessive praise in fallback path
+// ============================================================================
+
+const PRAISE_COOLDOWN_MS = 120 * 1000; // 120 seconds
+let lastPraiseAt = 0;
 
 /**
  * 消息时效性窗口：超过此时间的 @Bot 消息不回复

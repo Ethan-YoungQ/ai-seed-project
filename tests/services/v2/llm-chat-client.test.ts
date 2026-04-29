@@ -9,6 +9,7 @@ describe("OpenAiCompatibleLlmScoringClient.chat", () => {
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
     apiKey: "test-key",
     textModel: "glm-5",
+    visionModel: "",
     fileModel: "",
     fileExtractor: "glm_file_parser",
     fileParserToolType: "lite",
