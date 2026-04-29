@@ -50,9 +50,11 @@ export const LLM_SCORABLE_ITEMS: ReadonlySet<ScoringItemCode> = new Set([
 // Unified scoring prompt
 // ============================================================================
 
-const SYSTEM_PREFIX = `你是 AI 训练营评分助手。对学员的消息，判断每条评分项是否得分。
-输出严格 JSON，格式：{"items":[{"code":"K3","score":3,"reason":"不错的总结"}]}
-只输出得分项（score > 0），不得分的项不输出。reason 用中文口语化表达。`;
+const SYSTEM_PREFIX = `你是 AI 训练营评分助手。对学员的消息判断每条评分项是否得分。
+【必须严格输出如下 JSON 格式，不要输出任何其他内容】
+{"items":[{"code":"K3","score":3,"reason":"不错的总结"},{"code":"C1","score":4,"reason":"创意用法"}]}
+如果没有任何得分项，输出：{"items":[]}
+得分项 (score > 0) 才输出，不得分不输出。reason 用中文口语化。`;
 
 const ITEM_STANDARDS: Record<string, string> = {
   K3: "K3 知识总结 (0-3分)：用自己的话总结 AI 知识点，≥30字",

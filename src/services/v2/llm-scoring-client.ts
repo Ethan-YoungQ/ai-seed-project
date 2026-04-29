@@ -388,18 +388,35 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
       );
     }
 
-    if (
-      typeof parsed !== "object" ||
-      parsed === null ||
-      !Array.isArray((parsed as { items?: unknown }).items)
-    ) {
-      throw new LlmNonRetryableError("missing items array in response");
+    if (typeof parsed !== "object" || parsed === null) {
+      throw new LlmNonRetryableError(
+        `expected JSON object, got: ${rawContent.slice(0, 200)}`
+      );
     }
 
-    return {
-      items: (parsed as { items: MultiScoreResult["items"] }).items,
-      raw: body
-    };
+    const obj = parsed as Record<string, unknown>;
+
+    // New multi-item format: {items: [{code, score, reason}, ...]}
+    if (Array.isArray(obj.items)) {
+      return {
+        items: obj.items as MultiScoreResult["items"],
+        raw: body
+      };
+    }
+
+    // GLM-4.7 sometimes returns old single-item format {pass, score, reason}
+    // instead of the new multi-dimension {items: [...]} format.
+    // Let the caller fall back to keyword classifier — do NOT silently convert.
+    if (typeof obj.pass === "boolean" && typeof obj.score === "number") {
+      throw new LlmNonRetryableError(
+        `model returned single-item format (pass/score/reason) instead of multi-dimension ` +
+        `{items:[...]}. Raw: ${rawContent.slice(0, 200)}`
+      );
+    }
+
+    throw new LlmNonRetryableError(
+      `unexpected JSON format, raw: ${rawContent.slice(0, 300)}`
+    );
   }
 }
 
