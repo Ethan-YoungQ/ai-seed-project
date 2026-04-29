@@ -119,7 +119,7 @@ describe("message-commands fallback praise", () => {
     const praiseCalls = sendTextMessage.mock.calls.filter(
       (call: any[]) => {
         const text = call[0]?.text ?? "";
-        return typeof text === "string" && text.includes("太棒了");
+        return typeof text === "string" && text.includes("@测试学员");
       },
     );
     expect(praiseCalls.length).toBe(1);
@@ -128,7 +128,7 @@ describe("message-commands fallback praise", () => {
     // Verify praise contains the member's name
     expect(praiseText).toContain("@测试学员");
     // Verify praise contains a score value
-    expect(praiseText).toMatch(/总得分 \d+ 分/);
+    expect(praiseText).toMatch(/(\d+) 分/);
 
     // Verify praise sends to the correct group chat (not a DM)
     const sentInput = praiseCalls[0][0];

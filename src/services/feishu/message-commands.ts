@@ -419,9 +419,15 @@ function fallbackToLegacyClassifier(
   }
   lastPraiseAt = now;
 
-  // Build praise text with the member's name
-  const praiseText =
-    `@${displayName} 太棒了！你刚才的分享在多个维度都有贡献，总得分 ${totalScore} 分 👏\n继续保持，期待你更多精彩的表现！`;
+  // Build praise text with the member's name — random 彩虹屁 template
+  const praiseTemplates = [
+    `@${displayName} 这波操作也太秀了吧！多个维度全面开花，${totalScore} 分直接拉满 🔥 继续保持！`,
+    `@${displayName} 绝绝子！你在 ${totalScore} 分的好成绩证明了自己，太厉害了 👏 期待更多精彩分享！`,
+    `@${displayName} 这个分享质量太高了！直接拿下 ${totalScore} 分，yyds！小伙伴们都来学习一下～`,
+    `@${displayName} 优秀！${totalScore} 分的表现说明你真的用心了 💪 下次继续卷起来！`,
+    `@${displayName} 哇这波分享有东西啊！${totalScore} 分的好成绩实至名归 🎉 墙裂建议大家都看看！`,
+  ];
+  const praiseText = praiseTemplates[Math.floor(Math.random() * praiseTemplates.length)];
 
   // Send praise as a text message (not a reply, since this is the fallback path)
   void (async () => {
