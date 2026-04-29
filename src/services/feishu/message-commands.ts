@@ -144,8 +144,8 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       return;
     }
 
-    // Trainer/admin keyword triggers: text messages only
-    if (message.messageType === "text") {
+    // Trainer/admin keyword triggers: text OR post messages
+    if (message.messageType === "text" || message.messageType === "post") {
       const text = cleanCommandText(message.rawText);
       console.log(`[MsgHandler] cmd match: raw="${message.rawText.slice(0, 80)}" → cleaned="${text}"`);
 
