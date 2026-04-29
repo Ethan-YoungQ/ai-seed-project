@@ -4,6 +4,8 @@ import {
   filterScorableItems,
   LLM_SCORABLE_ITEMS,
   needsSemanticScoring,
+  routeMultimodal,
+  type MultimodalRoute,
 } from "../../../src/services/feishu/semantic-classifier";
 import type { NormalizedFeishuMessage } from "../../../src/services/feishu/normalize-message";
 
@@ -164,5 +166,45 @@ describe("needsSemanticScoring", () => {
 
   it("returns false for empty text", () => {
     expect(needsSemanticScoring(makeMsg({ rawText: "" }))).toBe(false);
+  });
+});
+
+// ============================================================================
+// routeMultimodal — multimodal routing
+// ============================================================================
+
+describe("routeMultimodal", () => {
+  it("routes text messages to text mode", () => {
+    const route = routeMultimodal(makeMsg({ rawText: "hello world test message" }));
+    expect(route.mode).toBe("text");
+    expect(route.imageUrl).toBeUndefined();
+    expect(route.promptText).toContain("hello world test message");
+  });
+
+  it("routes image messages to image mode", () => {
+    const route = routeMultimodal(makeMsg({ messageType: "image", rawText: "check this" }));
+    expect(route.mode).toBe("image");
+    expect(route.promptText).toContain("check this");
+  });
+
+  it("routes image messages with empty text to default caption", () => {
+    const route = routeMultimodal(makeMsg({ messageType: "image", rawText: "" }));
+    expect(route.mode).toBe("image");
+    expect(route.promptText).toContain("图片");
+  });
+
+  it("routes file messages to file mode", () => {
+    const route = routeMultimodal(makeMsg({
+      messageType: "file",
+      rawText: "homework.pdf",
+      attachmentTypes: ["pdf"],
+    }));
+    expect(route.mode).toBe("file");
+    expect(route.promptText).toContain("pdf");
+  });
+
+  it("imageUrl is undefined for non-image messages", () => {
+    expect(routeMultimodal(makeMsg({ messageType: "text" })).imageUrl).toBeUndefined();
+    expect(routeMultimodal(makeMsg({ messageType: "file" })).imageUrl).toBeUndefined();
   });
 });

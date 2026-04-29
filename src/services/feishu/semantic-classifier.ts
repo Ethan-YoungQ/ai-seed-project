@@ -146,3 +146,52 @@ export function needsSemanticScoring(message: NormalizedFeishuMessage): boolean 
 
   return true;
 }
+
+// ============================================================================
+// Multimodal routing — determine which model/prompt to use
+// ============================================================================
+
+export type ScoringMode = "text" | "image" | "file";
+
+export interface MultimodalRoute {
+  mode: ScoringMode;
+  /** For image mode: the image URL to pass to the vision model */
+  imageUrl?: string;
+  /** The prompt text to send (for file mode: extracted text) */
+  promptText: string;
+}
+
+/**
+ * Determine the scoring mode and extract the appropriate content
+ * based on the message type.
+ */
+export function routeMultimodal(
+  message: NormalizedFeishuMessage,
+): MultimodalRoute {
+  if (message.messageType === "image") {
+    // Image: route to vision model with image_url
+    // The actual image URL resolution happens in message-commands.ts
+    // where we have access to the Feishu API client
+    return {
+      mode: "image",
+      imageUrl: undefined, // caller resolves the URL
+      promptText: buildUnifiedPrompt(message.rawText || "分享了一张图片"),
+    };
+  }
+
+  if (message.messageType === "file") {
+    // File: route to glm_file_parser → extracted text → text model
+    return {
+      mode: "file",
+      promptText: buildUnifiedPrompt(
+        message.rawText || `[文件: ${message.attachmentTypes.join(", ")}]`,
+      ),
+    };
+  }
+
+  // Default: text
+  return {
+    mode: "text",
+    promptText: buildUnifiedPrompt(message.rawText),
+  };
+}
