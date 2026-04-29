@@ -38,6 +38,7 @@ import {
 import type { LlmScoringClient } from "../v2/llm-scoring-client.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
+import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 
 // ============================================================================
 // Keyword definitions
@@ -370,14 +371,19 @@ async function semanticClassifyAndIngest(
 function fallbackToLegacyClassifier(
   message: NormalizedFeishuMessage,
   memberId: string,
-  _displayName: string,
+  displayName: string,
   deps: MessageCommandDeps,
 ): void {
   const results = classifyMessage(message);
   if (results.length === 0 || !deps.ingestor) return;
 
+  // Track total score from classified item defaultScoreDelta values
+  let totalScore = 0;
+
   for (const result of results) {
     if (result.itemCode === "K1") continue; // K1 already ingested
+    const cfg = SCORING_ITEMS[result.itemCode];
+    totalScore += cfg?.defaultScoreDelta ?? 0;
     try {
       deps.ingestor.ingest({
         memberId,
@@ -390,6 +396,48 @@ function fallbackToLegacyClassifier(
       console.error(`[Fallback] Ingest error for ${result.itemCode}:`, err);
     }
   }
+
+  // Proactive praise: if total default score >= 3 ("nice" threshold)
+  if (totalScore < 3) return;
+  if (!deps.autoReply || !message.chatId) return;
+
+  // Dedup: skip if already processed via ChatBot path
+  if (isAlreadyProcessed(message.messageId)) {
+    console.log(
+      `[Fallback] Praise skipped: messageId=${message.messageId} already processed`,
+    );
+    return;
+  }
+
+  // Cooldown: minimum 120s between any two praise messages
+  const now = Date.now();
+  if (now - lastPraiseAt < PRAISE_COOLDOWN_MS) {
+    console.log(
+      `[Fallback] Praise skipped: cooldown (${Math.ceil((PRAISE_COOLDOWN_MS - (now - lastPraiseAt)) / 1000)}s remaining)`,
+    );
+    return;
+  }
+  lastPraiseAt = now;
+
+  // Build praise text with the member's name
+  const praiseText =
+    `@${displayName} 太棒了！你刚才的分享在多个维度都有贡献，总得分 ${totalScore} 分 👏\n继续保持，期待你更多精彩的表现！`;
+
+  // Send praise as a text message (not a reply, since this is the fallback path)
+  void (async () => {
+    try {
+      await deps.autoReply!.sendTextMessage({
+        receiveId: message.chatId!,
+        receiveIdType: "chat_id" as any,
+        text: praiseText,
+      });
+      console.log(
+        `[Fallback] Praise sent to ${displayName}: totalScore=${totalScore}`,
+      );
+    } catch (err) {
+      console.error(`[Fallback] Failed to send praise:`, err);
+    }
+  })();
 }
 
 // ============================================================================
@@ -701,6 +749,13 @@ async function handleMemberMgmtTrigger(
 const processedChatBotMessageIds = new Map<string, number>();
 const MESSAGE_DEDUP_TTL_MS = 10 * 60 * 1000;
 const MAX_DEDUP_CACHE_SIZE = 500;
+
+// ============================================================================
+// Praise cooldown — prevent excessive praise in fallback path
+// ============================================================================
+
+const PRAISE_COOLDOWN_MS = 120 * 1000; // 120 seconds
+let lastPraiseAt = 0;
 
 /**
  * 消息时效性窗口：超过此时间的 @Bot 消息不回复
