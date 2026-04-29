@@ -8,11 +8,17 @@
  * - Avoid being annoying — the bot should add warmth, not noise
  */
 
-import type { SemanticScoreItem } from "../semantic-classifier.js";
+import type { ScoringItemCode } from "../../../domain/v2/scoring-items-config.js";
 
 // ============================================================================
 // Public types
 // ============================================================================
+
+export interface SemanticScoreItem {
+  code: ScoringItemCode;
+  score: number;
+  reason: string;
+}
 
 export type PraiseLevel = "none" | "nice" | "great" | "outstanding";
 

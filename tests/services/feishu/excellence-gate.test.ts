@@ -4,8 +4,8 @@ import {
   checkPraiseRateLimit,
   createPraiseRateState,
   type PraiseRateState,
+  type SemanticScoreItem,
 } from "../../../src/services/feishu/chat-bot/excellence-gate";
-import type { SemanticScoreItem } from "../../../src/services/feishu/semantic-classifier";
 
 function items(scores: Array<[string, number]>): SemanticScoreItem[] {
   return scores.map(([code, score]) => ({
@@ -68,10 +68,13 @@ describe("checkPraiseRateLimit", () => {
   });
 
   it("blocks when student daily cap reached", () => {
-    // Exhaust student quota
+    // Exhaust student quota (advance time between calls to bypass cooldown)
     checkPraiseRateLimit(state, "student-1");
+    vi.advanceTimersByTime(121_000);
     checkPraiseRateLimit(state, "student-1");
+    vi.advanceTimersByTime(121_000);
     checkPraiseRateLimit(state, "student-1");
+    vi.advanceTimersByTime(121_000);
     // 4th attempt should fail
     expect(checkPraiseRateLimit(state, "student-1")).toEqual({
       allowed: false,
@@ -82,6 +85,7 @@ describe("checkPraiseRateLimit", () => {
   it("blocks when chat hourly cap reached", () => {
     for (let i = 0; i < 5; i++) {
       checkPraiseRateLimit(state, `student-${i}`);
+      vi.advanceTimersByTime(121_000); // bypass cooldown
     }
     expect(checkPraiseRateLimit(state, "student-6")).toEqual({
       allowed: false,
