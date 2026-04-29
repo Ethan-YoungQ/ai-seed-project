@@ -29,6 +29,13 @@ import { buildManualAdjustCard, type ManualAdjustState } from "./cards/templates
 import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/member-mgmt-v1.js";
 import type { ChatEngine } from "./chat-bot/chat-engine.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
+import {
+  needsSemanticScoring,
+  filterScorableItems,
+  buildUnifiedPrompt,
+  type SemanticScoreItem,
+} from "./semantic-classifier.js";
+import type { LlmScoringClient } from "../v2/llm-scoring-client.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 
@@ -111,6 +118,11 @@ export interface MessageCommandDeps {
   chatBot?: {
     botOpenId: string;
     engine: ChatEngine;
+  };
+  /** 语义评分配置（可选，未配置则使用旧关键词分类器） */
+  semanticScoring?: {
+    enabled: boolean;
+    llmClient: LlmScoringClient;
   };
 }
 
@@ -202,55 +214,181 @@ async function handleAutoCapture(
     return;
   }
 
-  // Classify — returns array of all applicable scoring items
-  const results = classifyMessage(message);
-  if (results.length === 0) return;
+  // Step 1: K1 签到始终直接给（不需要 LLM）
+  ingestK1(message, member.id, deps);
 
-  console.log(
-    `[AutoCapture] ${member.displayName}: ${results.map((r) => `${r.itemCode}(${r.reason})`).join(", ")}`,
-  );
+  // Step 2: 判断使用语义评分还是关键词分类器
+  const useSemantic = deps.semanticScoring?.enabled;
 
-  // Ingest each classified scoring item
-  let primaryResult: ClassificationResult | null = null;
+  if (useSemantic) {
+    // --- 语义评分路径（异步 fire-and-forget） ---
+    if (needsSemanticScoring(message)) {
+      void semanticClassifyAndIngest(message, member.id, member.displayName, deps);
+    }
+  } else {
+    // --- 关键词分类器路径（保持现有行为） ---
+    const results = classifyMessage(message);
+    if (results.length === 0) return;
 
-  for (const result of results) {
-    if (deps.ingestor) {
-      try {
-        const outcome = deps.ingestor.ingest({
-          memberId: member.id,
-          itemCode: result.itemCode,
-          scoreDelta: 0, // let Ingestor use defaultScoreDelta from config
-          sourceRef: `msg:${message.messageId}:${result.itemCode}`,
-          payloadText: message.rawText.slice(0, 500),
-        });
-        if (outcome.accepted && !primaryResult) {
-          primaryResult = result;
+    console.log(
+      `[AutoCapture] ${member.displayName}: ${results.map((r) => `${r.itemCode}(${r.reason})`).join(", ")}`,
+    );
+
+    let primaryResult: ClassificationResult | null = null;
+
+    for (const result of results) {
+      if (deps.ingestor) {
+        try {
+          const outcome = deps.ingestor.ingest({
+            memberId: member.id,
+            itemCode: result.itemCode,
+            scoreDelta: 0,
+            sourceRef: `msg:${message.messageId}:${result.itemCode}`,
+            payloadText: message.rawText.slice(0, 500),
+          });
+          if (outcome.accepted && !primaryResult) {
+            primaryResult = result;
+          }
+          console.log(
+            `[AutoCapture] Ingest ${result.itemCode}: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
+          );
+        } catch (err) {
+          console.error(`[AutoCapture] Ingest error for ${result.itemCode}:`, err);
         }
-        console.log(
-          `[AutoCapture] Ingest ${result.itemCode}: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
-        );
-      } catch (err) {
-        console.error(`[AutoCapture] Ingest error for ${result.itemCode}:`, err);
+      } else {
+        if (!primaryResult) primaryResult = result;
       }
-    } else {
-      // No ingestor wired — still track the primary result for reply
-      if (!primaryResult) primaryResult = result;
+    }
+
+    const replyItem = primaryResult && primaryResult.itemCode !== "K1"
+      ? primaryResult
+      : results.find((r) => r.itemCode !== "K1") ?? primaryResult;
+
+    if (replyItem && deps.autoReply && message.chatId) {
+      await sendConfirmReply(deps.autoReply, {
+        chatId: message.chatId,
+        memberId: message.memberId,
+        memberName: member.displayName,
+        itemCode: replyItem.itemCode,
+      });
+    }
+  }
+}
+
+// ============================================================================
+// K1 签到 — 快速路径，不依赖 LLM
+// ============================================================================
+
+function ingestK1(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  deps: MessageCommandDeps,
+): void {
+  if (!deps.ingestor) return;
+
+  try {
+    const outcome = deps.ingestor.ingest({
+      memberId,
+      itemCode: "K1",
+      scoreDelta: 0,
+      sourceRef: `msg:${message.messageId}:K1`,
+      payloadText: message.rawText.slice(0, 100),
+    });
+    console.log(
+      `[AutoCapture] K1: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
+    );
+  } catch (err) {
+    console.error("[AutoCapture] K1 ingest error:", err);
+  }
+}
+
+// ============================================================================
+// 语义评分 — 异步 fire-and-forget + LLM 降级
+// ============================================================================
+
+async function semanticClassifyAndIngest(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  displayName: string,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const llmClient = deps.semanticScoring?.llmClient;
+  if (!llmClient || !deps.ingestor) return;
+
+  const promptText = buildUnifiedPrompt(message.rawText);
+
+  let items: SemanticScoreItem[];
+  try {
+    const result = await llmClient.multiScore(promptText, { timeoutMs: 15000 });
+    items = filterScorableItems(result.items);
+    console.log(
+      `[SemanticScoring] ${displayName}: ${items.map((i) => `${i.code}(${i.reason})`).join(", ") || "(none)"}`,
+    );
+  } catch (err) {
+    console.error(`[SemanticScoring] LLM failed for ${displayName}, falling back to keyword classifier:`, err);
+    // 降级：LLM 失败时回退到关键词分类器
+    fallbackToLegacyClassifier(message, memberId, displayName, deps);
+    return;
+  }
+
+  // 逐项入账
+  let primaryCode: ScoringItemCode | null = null;
+  for (const item of items) {
+    try {
+      const outcome = deps.ingestor.ingest({
+        memberId,
+        itemCode: item.code,
+        scoreDelta: item.score,
+        sourceRef: `llm:${message.messageId}:${item.code}`,
+        payloadText: message.rawText.slice(0, 500),
+      });
+      if (outcome.accepted && !primaryCode) {
+        primaryCode = item.code;
+      }
+      console.log(
+        `[SemanticScoring] Ingest ${item.code}: accepted=${outcome.accepted}`,
+      );
+    } catch (err) {
+      console.error(`[SemanticScoring] Ingest error for ${item.code}:`, err);
     }
   }
 
-  // Send ONE confirmation reply for the highest-value accepted item
-  // (skip K1 if a more specific item was also accepted)
-  const replyItem = primaryResult && primaryResult.itemCode !== "K1"
-    ? primaryResult
-    : results.find((r) => r.itemCode !== "K1") ?? primaryResult;
-
-  if (replyItem && deps.autoReply && message.chatId) {
+  // 发送确认回复
+  if (primaryCode && deps.autoReply && message.chatId) {
     await sendConfirmReply(deps.autoReply, {
       chatId: message.chatId,
       memberId: message.memberId,
-      memberName: member.displayName,
-      itemCode: replyItem.itemCode,
+      memberName: displayName,
+      itemCode: primaryCode,
     });
+  }
+}
+
+/**
+ * 降级到旧关键词分类器（LLM 调用失败时使用）
+ */
+function fallbackToLegacyClassifier(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  _displayName: string,
+  deps: MessageCommandDeps,
+): void {
+  const results = classifyMessage(message);
+  if (results.length === 0 || !deps.ingestor) return;
+
+  for (const result of results) {
+    if (result.itemCode === "K1") continue; // K1 already ingested
+    try {
+      deps.ingestor.ingest({
+        memberId,
+        itemCode: result.itemCode,
+        scoreDelta: 0,
+        sourceRef: `fallback:${message.messageId}:${result.itemCode}`,
+        payloadText: message.rawText.slice(0, 500),
+      });
+    } catch (err) {
+      console.error(`[Fallback] Ingest error for ${result.itemCode}:`, err);
+    }
   }
 }
 
