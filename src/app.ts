@@ -37,7 +37,7 @@ import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/a
 import { quizSelectHandler, quizSubmitHandler, QUIZ_SET_RESOLVER_KEY, type ResolvedQuizSet } from "./services/feishu/cards/handlers/quiz-handler.js";
 import { peerReviewVoteHandler } from "./services/feishu/cards/handlers/peer-review-handler.js";
 import { peerReviewSettleHandler } from "./services/feishu/cards/handlers/peer-review-settle-handler.js";
-import { createMessageCommandHandler } from "./services/feishu/message-commands.js";
+import { createMessageCommandHandler, type MessageCommandDeps } from "./services/feishu/message-commands.js";
 import { fetchQuizByPeriod, type QuizBankDeps } from "./services/feishu/quiz-bank.js";
 import {
   dashboardPinRefreshHandler,
@@ -54,6 +54,28 @@ import { OpenAiCompatibleLlmScoringClient } from "./services/v2/llm-scoring-clie
 // ---------------------------------------------------------------------------
 // v2 admin middleware
 // ---------------------------------------------------------------------------
+
+/**
+ * Read semantic scoring config from environment variables.
+ * Returns undefined when disabled.
+ */
+function readSemanticScoringConfig(
+  env: NodeJS.ProcessEnv,
+): MessageCommandDeps["semanticScoring"] | undefined {
+  const enabled = (env.FEISHU_SEMANTIC_SCORING_ENABLED ?? "false").toLowerCase() === "true";
+  if (!enabled) return undefined;
+
+  const llmConfig = readLlmProviderConfig(env);
+  if (!llmConfig.enabled) {
+    console.log("[SemanticScoring] LLM not configured, disabling semantic scoring");
+    return undefined;
+  }
+
+  return {
+    enabled: true,
+    llmClient: new OpenAiCompatibleLlmScoringClient(llmConfig),
+  };
+}
 
 function readOpenIdHeader(request: { headers: Record<string, unknown> }): string | null {
   const raw = request.headers["x-feishu-open-id"];
@@ -246,6 +268,7 @@ export async function createApp(options?: {
                 }
               },
               chatBot,
+              semanticScoring: readSemanticScoringConfig(process.env),
             });
             await handler(message);
           } else {
