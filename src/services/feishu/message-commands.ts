@@ -172,11 +172,7 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
         await handlePeerReviewTrigger(message, deps);
         return;
       }
-      if (DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
-        console.log(`[MsgHandler] → DASHBOARD`);
-        await handleDashboardPinTrigger(message, deps);
-        return;
-      }
+      // 排行榜/天梯榜必须 @Bot 触发，不走普通关键词
       if (MANUAL_ADJUST_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → MANUAL_ADJUST`);
         await handleManualAdjustTrigger(message, deps);
