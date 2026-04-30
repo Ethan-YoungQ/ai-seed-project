@@ -318,9 +318,10 @@ async function semanticClassifyAndIngest(
 
   const promptText = buildUnifiedPrompt(message.rawText);
 
-  // Pre-check: @mention of non-bot member → S1 (社交互动)
+  // Pre-check: @mention of group member → S1 (社交互动)
+  // @Bot messages are already filtered before auto-capture, so @ = real person
   const mentionItems: SemanticScoreItem[] = [];
-  if (message.rawText.includes("@") && message.mentionedBotIds.length === 0) {
+  if (message.rawText.includes("@")) {
     mentionItems.push({ code: "S1", score: 3, reason: "群内互动/帮助他人（@提及）" });
   }
 

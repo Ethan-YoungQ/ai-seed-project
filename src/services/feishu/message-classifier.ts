@@ -94,8 +94,9 @@ export function classifyMessage(
     results.push({ itemCode: "H2", confidence: "rule", reason: "图片消息（实操分享）" });
   }
 
-  // S1: Peer help via @mentioning non-bot group members
-  if (text.includes("@") && message.mentionedBotIds.length === 0) {
+  // S1: Peer help via @mentioning group members (non-bot)
+  // @Bot messages are filtered out before auto-capture, so any @ here = @real person
+  if (text.includes("@")) {
     results.push({ itemCode: "S1", confidence: "rule", reason: "群内互动/帮助他人（@提及）" });
   }
 
@@ -106,9 +107,9 @@ export function classifyMessage(
     }
   }
 
-  // --- K1 签到: ANY student activity counts as daily check-in ---
-  // Always added last. The Ingestor's per-period cap + dedup
-  // ensures only one K1 per day is actually scored.
+  // --- K1 签到: ANY student activity counts as check-in ---
+  // Always added last. The Ingestor's per-period cap (3)
+  // ensures only one K1 per period is actually scored.
   results.push({ itemCode: "K1", confidence: "rule", reason: "群内活动自动签到" });
 
   return results;

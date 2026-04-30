@@ -171,12 +171,14 @@ describe("classifyMessage", () => {
     expect(itemCodes(results)).toContain("S1");
   });
 
-  it("S1: NOT triggered when only @mentioning the bot", () => {
+  it("S1: triggers even for @bot messages (handler filters @Bot before classifyMessage)", () => {
+    // @Bot filtering happens in createMessageCommandHandler, not in classifyMessage.
+    // By the time classifyMessage runs, @Bot messages have already been returned early.
     const results = classifyMessage(makeMsg({
       rawText: "@奇点小助教 如何提高社交分数",
       mentionedBotIds: ["ou_e271b45da7e392a822c3f0d8cc7d82ec"],
     }));
-    expect(itemCodes(results)).not.toContain("S1");
+    expect(itemCodes(results)).toContain("S1");
   });
 
   // ==========================================================================
