@@ -318,10 +318,23 @@ async function semanticClassifyAndIngest(
 
   const promptText = buildUnifiedPrompt(message.rawText);
 
+  // Pre-check: @mention of non-bot member → S1 (社交互动)
+  const mentionItems: SemanticScoreItem[] = [];
+  if (message.rawText.includes("@") && message.mentionedBotIds.length === 0) {
+    mentionItems.push({ code: "S1", score: 3, reason: "群内互动/帮助他人（@提及）" });
+  }
+
   let items: SemanticScoreItem[];
   try {
     const result = await llmClient.multiScore(promptText, { timeoutMs: 15000 });
     items = filterScorableItems(result.items);
+    // Merge LLM items with pre-check items (dedup)
+    const llmCodes = new Set(items.map((i) => i.code));
+    for (const mi of mentionItems) {
+      if (!llmCodes.has(mi.code)) {
+        items.push(mi);
+      }
+    }
     console.log(
       `[SemanticScoring] ${displayName}: ${items.map((i) => `${i.code}(${i.reason})`).join(", ") || "(none)"}`,
     );
