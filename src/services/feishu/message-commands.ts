@@ -598,13 +598,29 @@ async function handlePeerReviewTrigger(
 
 // ============================================================================
 // 战绩天梯榜 — any member sends "看板"/"排行" → bot sends link card
+// Rate limited: at most once per 30 seconds per chat to avoid spam
 // ============================================================================
+
+const pinCooldowns = new Map<string, number>();
+const PIN_COOLDOWN_MS = 30_000;
 
 async function handleDashboardPinTrigger(
   message: NormalizedFeishuMessage,
   deps: MessageCommandDeps,
 ): Promise<void> {
   if (!message.chatId) return;
+
+  // Rate limit: prevent spam from casual chat keywords
+  const now = Date.now();
+  const lastPin = pinCooldowns.get(message.chatId) ?? 0;
+  if (now - lastPin < PIN_COOLDOWN_MS) {
+    console.log(
+      `[DashboardPin] Rate limited: chatId=${message.chatId}, ` +
+      `remaining=${Math.ceil((PIN_COOLDOWN_MS - (now - lastPin)) / 1000)}s`
+    );
+    return;
+  }
+  pinCooldowns.set(message.chatId, now);
 
   const pinDeps = deps.dashboardPin;
   if (!pinDeps) {
