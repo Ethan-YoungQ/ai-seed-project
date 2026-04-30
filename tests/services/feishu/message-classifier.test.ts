@@ -94,26 +94,13 @@ describe("classifyMessage", () => {
   });
 
   // ==========================================================================
-  // G1: Learning reflection
+  // G1: Learning reflection — 由 AI 语义评分处理，不走关键词
   // ==========================================================================
-  it.each([
-    "完成学习打卡今天的内容了",
-    "完成视频学习确实很有收获",
-    "看完了今天的全部内容啦",
-    "听过这节课感觉学到了很多呢",
-    "读了这个材料收获真的很大",
-    "学习心得分享一下给大家看看",
-    "我的学习笔记整理出来了",
-    "总结一下今天的学习内容吧",
-    "有点挑战但是学到很多新知识",
-    "今天学到不少东西真不错",
-    "今天学到了不少东西",
-    "收获很大，理解了RAG的原理",
-    "反思了一下自己的学习方法",
-    "看完课程后对AI有了新的认识",
-  ])("G1: keyword in text '%s'", (text) => {
-    const results = classifyMessage(makeMsg({ rawText: text }));
-    expect(itemCodes(results)).toContain("G1");
+  it("G1: no longer uses keywords (handled by LLM semantic scoring)", () => {
+    // G1_KEYWORDS 已清空，关键词路径不再触发 G1
+    const results = classifyMessage(makeMsg({ rawText: "今天学到了不少东西" }));
+    // 关键词路径不返回 G1，但 LLM 语义路径会处理
+    expect(itemCodes(results)).not.toContain("G1");
   });
 
   // ==========================================================================
