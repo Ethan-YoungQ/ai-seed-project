@@ -118,9 +118,9 @@ async function main() {
   }));
 
   const top3 = entries.slice(0, TOP_N);
-  const bottom3 = [...entries
-    .filter((e) => e.cumulativeAq > 0)
-    .slice(-BOTTOM_N)]
+  // Bottom 3 includes everyone (including zero scores) except the top ranking ones
+  const bottom3 = [...entries]
+    .slice(-BOTTOM_N)
     .reverse();
 
   const cardText = buildReportCard(top3, bottom3);

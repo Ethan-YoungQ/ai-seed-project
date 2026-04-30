@@ -76,4 +76,16 @@ describe("buildReportCard", () => {
     const result = buildReportCard(top3, []);
     expect(result).toContain("22AQ");
   });
+
+  it("includes zero-score students in bottom 3", () => {
+    const top3 = [makeEntry({ rank: 1, memberName: "杨斌", cumulativeAq: 22 })];
+    const bottom3 = [
+      makeEntry({ rank: 14, memberName: "吴桐", cumulativeAq: 0 }),
+      makeEntry({ rank: 15, memberName: "班腾飞", cumulativeAq: 0 }),
+    ];
+    const result = buildReportCard(top3, bottom3);
+    expect(result).toContain("吴桐");
+    expect(result).toContain("班腾飞");
+    expect(result).toContain("0AQ");
+  });
 });
