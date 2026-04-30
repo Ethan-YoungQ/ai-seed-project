@@ -107,6 +107,10 @@ describe("classifyMessage", () => {
     "总结一下今天的学习内容吧",
     "有点挑战但是学到很多新知识",
     "今天学到不少东西真不错",
+    "今天学到了不少东西",
+    "收获很大，理解了RAG的原理",
+    "反思了一下自己的学习方法",
+    "看完课程后对AI有了新的认识",
   ])("G1: keyword in text '%s'", (text) => {
     const results = classifyMessage(makeMsg({ rawText: text }));
     expect(itemCodes(results)).toContain("G1");
