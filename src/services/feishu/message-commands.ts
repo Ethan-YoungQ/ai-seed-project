@@ -48,7 +48,7 @@ import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
 const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
 const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
-const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板"];
+const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板", "天梯榜"];
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
 const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
 
@@ -141,7 +141,14 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       message.mentionedBotIds.includes(deps.chatBot.botOpenId) &&
       message.messageType === "text"
     ) {
-      handleChatBotMention(message, deps);
+      // 排行榜关键词走卡片推送，不走 chatbot
+      const cleaned = cleanCommandText(message.rawText);
+      if (DASHBOARD_KEYWORDS.some((kw) => cleaned.includes(kw))) {
+        console.log(`[MsgHandler] → DASHBOARD_PIN (via @Bot)`);
+        await handleDashboardPinTrigger(message, deps);
+      } else {
+        handleChatBotMention(message, deps);
+      }
       return;
     }
 
