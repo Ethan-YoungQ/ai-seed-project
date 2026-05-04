@@ -129,12 +129,56 @@ describe("message-commands fallback praise", () => {
     expect(praiseText).toContain("@测试学员");
     // Verify praise contains a score value
     expect(praiseText).toMatch(/(\d+) 分/);
+    expect(praiseText.length).toBeLessThanOrEqual(120);
+    expect(praiseText).toMatch(/AI|prompt|链接|分享|实战|作品|作业|流程|亮点|脑洞|拿捏|封神|炸场|绝|秀|硬核/i);
+    expect(praiseText).not.toContain("多个维度全面开花");
 
     // Verify praise sends to the correct group chat (not a DM)
     const sentInput = praiseCalls[0][0];
     expect(sentInput.receiveId).toBe("chat-001");
     // Verify it is NOT sent as a reply (no replyMessageId)
     expect(sentInput.replyMessageId).toBeUndefined();
+  });
+
+  it("uses LLM-generated praise after semantic scoring accepts a high-score contribution", async () => {
+    vi.setSystemTime(new Date("2026-04-29T12:03:00Z"));
+    const chat = vi.fn().mockResolvedValue("@测试学员 这份 AI 流程设计太会抓重点了，业务痛点被你一把拿捏，6 分含金量拉满！");
+    const deps = buildDeps({
+      semanticScoring: {
+        enabled: true,
+        llmClient: {
+          provider: "fake",
+          model: "fake",
+          multiScore: vi.fn().mockResolvedValue({
+            items: [
+              { code: "C1", score: 4, reason: "AI 工具实战" },
+              { code: "G2", score: 3, reason: "经验分享" },
+            ],
+            raw: null,
+          }),
+          score: vi.fn(),
+          chat,
+        } as any,
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(
+      makeMsg({
+        rawText:
+          "我用 AI 设计了一套肺癌高危人群定位流程，并把 prompt 和复盘经验分享给大家。",
+      }),
+    );
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    expect(chat).toHaveBeenCalledTimes(1);
+    const praiseCalls = sendTextMessage.mock.calls.filter(
+      (call: any[]) => typeof call[0]?.text === "string" && call[0].text.includes("@测试学员"),
+    );
+    expect(praiseCalls.length).toBe(1);
+    expect(praiseCalls[0][0].text).toContain("业务痛点");
+    expect(praiseCalls[0][0].replyMessageId).toBeUndefined();
   });
 
   it("does NOT send praise when total score < 3", async () => {
@@ -155,5 +199,89 @@ describe("message-commands fallback praise", () => {
       },
     );
     expect(praiseCalls.length).toBe(0);
+  });
+});
+
+describe("message-commands chat bot recent context", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("records recent group messages and passes resolved context blocks to ChatEngine", async () => {
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "结合你的 PDF 看，第二提问方向是准确的。",
+      used: "llm",
+      latencyMs: 12,
+    });
+    const record = vi.fn();
+    const resolveMentionContext = vi.fn().mockResolvedValue([
+      {
+        title: "用户最近文件",
+        content: "文件名：个人报告任务一李洁娴.pdf\n内容摘录：第二提问：业务场景客户触达",
+      },
+    ]);
+    const sendTextMessage = vi.fn().mockResolvedValue({ messageId: "reply-001" });
+    const deps: MessageCommandDeps = {
+      feishuClient: {
+        sendTextMessage,
+        sendCardMessage: vi.fn().mockResolvedValue({ messageId: "card-001" }),
+      } as any,
+      lifecycle: {} as any,
+      cardDeps: { repo: { findMemberByOpenId: vi.fn() } } as any,
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record,
+          resolveMentionContext,
+        },
+      },
+    };
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      messageId: "om_file_lijiexian",
+      messageType: "file",
+      rawText: "",
+      fileKey: "file_v3_lijiexian",
+      fileName: "个人报告任务一李洁娴.pdf",
+      fileExt: "pdf",
+      documentParseStatus: "pending",
+    }));
+    await handler(makeMsg({
+      messageId: "om_mention_lijiexian",
+      rawText: "@_user_1 麻烦结合我交的作业，分析针对业务场景的第二提问是否准确，谢谢",
+      cleanedText: "麻烦结合我交的作业，分析针对业务场景的第二提问是否准确，谢谢",
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(record).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: "om_file_lijiexian",
+      fileName: "个人报告任务一李洁娴.pdf",
+    }));
+    expect(resolveMentionContext).toHaveBeenCalledWith(expect.objectContaining({
+      currentMessage: expect.objectContaining({ messageId: "om_mention_lijiexian" }),
+      feishuClient: deps.feishuClient,
+    }));
+    expect(reply).toHaveBeenCalledWith(expect.objectContaining({
+      cleanedText: "麻烦结合我交的作业，分析针对业务场景的第二提问是否准确，谢谢",
+      contextBlocks: [
+        {
+          title: "用户最近文件",
+          content: "文件名：个人报告任务一李洁娴.pdf\n内容摘录：第二提问：业务场景客户触达",
+        },
+      ],
+    }));
+    expect(sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      receiveId: "chat-001",
+      text: "结合你的 PDF 看，第二提问方向是准确的。",
+    }));
   });
 });

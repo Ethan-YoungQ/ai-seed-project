@@ -3,6 +3,7 @@ import { LlmRetryableError } from "../../../domain/v2/errors.js";
 import type { ConversationMemory } from "./conversation-memory.js";
 import type { RateLimiter } from "./rate-limiter.js";
 import { buildSystemPrompt, type AssistantRole } from "./persona.js";
+import type { ChatContextBlock } from "./recent-context.js";
 
 export interface ChatEngineRepo {
   findMemberByOpenId(openId: string): {
@@ -27,6 +28,7 @@ export interface ChatReplyInput {
   openId: string;
   messageId: string;
   cleanedText: string;
+  contextBlocks?: ChatContextBlock[];
 }
 
 export type ChatReplyUsed =
@@ -47,6 +49,7 @@ export interface ChatEngine {
 
 const LLM_TIMEOUT_MS = 15000;
 const LLM_TEMPERATURE = 0.7;
+const MAX_CONTEXT_CHARS = 20_000;
 
 function buildRateLimitedReply(
   memberName: string,
@@ -69,9 +72,7 @@ function formatReply(
   role: AssistantRole
 ): string {
   void memberName;
-  if (role === "student") {
-    return `${content}\n\n💬 欢迎其他同学也来分享你们的想法！`;
-  }
+  void role;
   return content;
 }
 
@@ -87,6 +88,23 @@ async function callWithRetry(
     }
     throw err;
   }
+}
+
+function buildContextMessage(blocks: ChatContextBlock[] | undefined): ChatMessage | null {
+  const usableBlocks = (blocks ?? []).filter((block) => block.content.trim().length > 0);
+  if (usableBlocks.length === 0) return null;
+
+  const content = usableBlocks
+    .map((block) => `【${block.title}】\n${block.content.trim()}`)
+    .join("\n\n");
+
+  return {
+    role: "user",
+    content:
+      "以下是群聊最近上下文，只能作为回答依据之一。请优先基于这些上下文回答；" +
+      "如果上下文不足或文件解析失败，要明确说明缺少什么，不要编造。\n\n" +
+      content.slice(0, MAX_CONTEXT_CHARS),
+  };
 }
 
 export function createChatEngine(deps: ChatEngineDeps): ChatEngine {
@@ -119,9 +137,11 @@ export function createChatEngine(deps: ChatEngineDeps): ChatEngine {
         };
       }
 
+      const contextMessage = buildContextMessage(input.contextBlocks);
       const messages: ChatMessage[] = [
         { role: "system", content: buildSystemPrompt(role, memberName) },
         ...deps.memory.get(input.openId),
+        ...(contextMessage ? [contextMessage] : []),
         { role: "user", content: input.cleanedText }
       ];
 

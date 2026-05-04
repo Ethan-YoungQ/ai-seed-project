@@ -56,6 +56,20 @@ describe("buildSystemPrompt", () => {
     expect(prompt).toContain("150 字");
   });
 
+  it("does not force repetitive generic praise openings", () => {
+    const prompt = buildSystemPrompt("student", "李明");
+    expect(prompt).not.toContain("哪怕问题很基础，也说\"这个问题问得好\"类似的话");
+    expect(prompt).toContain("不要固定使用");
+    expect(prompt).toContain("这个问题问得");
+  });
+
+  it("asks for short specific internet-style micro praise when praising", () => {
+    const prompt = buildSystemPrompt("student", "李明");
+    expect(prompt).toContain("具体微夸");
+    expect(prompt).toContain("15-35 字");
+    expect(prompt).toContain("抓住对方内容里的一个具体亮点");
+  });
+
   it("generates output for any role without throwing", () => {
     for (const role of ["student", "trainer", "operator", "observer"] as const) {
       expect(() => buildSystemPrompt(role, "测试")).not.toThrow();

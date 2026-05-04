@@ -176,42 +176,42 @@ export async function createApp(options?: {
       ? `${process.env.PUBLIC_HOST}/dashboard/`
       : "https://orz.md/dashboard/");
 
+  const chatBotEnabled =
+    (process.env.FEISHU_CHAT_BOT_ENABLED ?? "false").toLowerCase() === "true";
+  const botOpenId = process.env.FEISHU_BOT_OPEN_ID?.trim();
+  const llmConfigForChat = readLlmProviderConfig(process.env);
+  const chatBot: MessageCommandDeps["chatBot"] =
+    chatBotEnabled && botOpenId && llmConfigForChat.enabled
+      ? {
+          botOpenId,
+          engine: createChatEngine({
+            llmClient: new OpenAiCompatibleLlmScoringClient(llmConfigForChat),
+            memory: createConversationMemory(),
+            rateLimiter: createRateLimiter(),
+            repo: {
+              findMemberByOpenId(openId: string) {
+                const m = repository.findMemberByFeishuOpenId(openId);
+                if (!m) return null;
+                return {
+                  id: m.id,
+                  displayName: m.displayName || m.name || "同学",
+                  roleType: m.roleType,
+                  isParticipant: m.isParticipant,
+                  isExcludedFromBoard: m.isExcludedFromBoard,
+                  currentLevel: 1,
+                };
+              }
+            }
+          })
+        }
+      : undefined;
+
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
     ? new LarkFeishuWsRuntime(feishuConfig, async (message) => {
         try {
           console.log(`[AdminPanel] WS onMessage callback fired, message=${!!message}, adminPanelLifecycle=${!!options?.adminPanelLifecycle}, feishuApiClient=${!!feishuApiClient}`);
           if (options?.adminPanelLifecycle && feishuApiClient && message) {
             const ingestorInstance = options?.ingestor as import("./services/feishu/message-commands.js").AutoCaptureIngestor | undefined;
-
-            // 构造 ChatBot 依赖（可选，根据环境变量启用）
-            const chatBotEnabled =
-              (process.env.FEISHU_CHAT_BOT_ENABLED ?? "false").toLowerCase() === "true";
-            const botOpenId = process.env.FEISHU_BOT_OPEN_ID?.trim();
-            const llmConfigForChat = readLlmProviderConfig(process.env);
-            const chatBot = chatBotEnabled && botOpenId && llmConfigForChat.enabled
-              ? {
-                  botOpenId,
-                  engine: createChatEngine({
-                    llmClient: new OpenAiCompatibleLlmScoringClient(llmConfigForChat),
-                    memory: createConversationMemory(),
-                    rateLimiter: createRateLimiter(),
-                    repo: {
-                      findMemberByOpenId(openId: string) {
-                        const m = repository.findMemberByFeishuOpenId(openId);
-                        if (!m) return null;
-                        return {
-                          id: m.id,
-                          displayName: m.displayName || m.name || "同学",
-                          roleType: m.roleType,
-                          isParticipant: m.isParticipant,
-                          isExcludedFromBoard: m.isExcludedFromBoard,
-                          currentLevel: 1,
-                        };
-                      }
-                    }
-                  })
-                }
-              : undefined;
 
             const handler = createMessageCommandHandler({
               feishuClient: feishuApiClient,

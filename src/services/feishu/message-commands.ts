@@ -28,6 +28,10 @@ import {
 import { buildManualAdjustCard, type ManualAdjustState } from "./cards/templates/manual-adjust-v1.js";
 import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/member-mgmt-v1.js";
 import type { ChatEngine } from "./chat-bot/chat-engine.js";
+import {
+  defaultRecentChatContextProvider,
+  type RecentChatContextProvider,
+} from "./chat-bot/recent-context.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
 import {
   needsSemanticScoring,
@@ -35,10 +39,11 @@ import {
   buildUnifiedPrompt,
   type SemanticScoreItem,
 } from "./semantic-classifier.js";
-import type { LlmScoringClient } from "../v2/llm-scoring-client.js";
+import type { ChatMessage, LlmChatClient, LlmScoringClient } from "../v2/llm-scoring-client.js";
 import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
+import { buildPraisePrompt } from "./chat-bot/persona.js";
 
 // ============================================================================
 // Keyword definitions
@@ -48,7 +53,7 @@ import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
 const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
 const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
-const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板"];
+const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板", "天梯榜"];
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
 const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
 
@@ -119,6 +124,7 @@ export interface MessageCommandDeps {
   chatBot?: {
     botOpenId: string;
     engine: ChatEngine;
+    contextProvider?: RecentChatContextProvider;
   };
   /** 语义评分配置（可选，未配置则使用旧关键词分类器） */
   semanticScoring?: {
@@ -134,14 +140,27 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
     // Only process group chat messages (not DMs)
     if (message.chatType !== "group") return;
 
-    // 第 0 步：@Bot 问答分支（最高优先级，return 后不走评分）
-    // handleChatBotMention 内部 fire-and-forget，handler 立即返回
-    if (
+    const chatContextProvider = deps.chatBot?.contextProvider ?? defaultRecentChatContextProvider;
+    const isChatBotMention = Boolean(
       deps.chatBot &&
       message.mentionedBotIds.includes(deps.chatBot.botOpenId) &&
       message.messageType === "text"
-    ) {
-      handleChatBotMention(message, deps);
+    );
+    if (deps.chatBot && !isChatBotMention) {
+      chatContextProvider.record(message);
+    }
+
+    // 第 0 步：@Bot 问答分支（最高优先级，return 后不走评分）
+    // handleChatBotMention 内部 fire-and-forget，handler 立即返回
+    if (isChatBotMention) {
+      // 排行榜关键词走卡片推送，不走 chatbot
+      const cleaned = cleanCommandText(message.rawText);
+      if (DASHBOARD_KEYWORDS.some((kw) => cleaned.includes(kw))) {
+        console.log(`[MsgHandler] → DASHBOARD_PIN (via @Bot)`);
+        await handleDashboardPinTrigger(message, deps);
+      } else {
+        handleChatBotMention(message, deps);
+      }
       return;
     }
 
@@ -165,11 +184,7 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
         await handlePeerReviewTrigger(message, deps);
         return;
       }
-      if (DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
-        console.log(`[MsgHandler] → DASHBOARD`);
-        await handleDashboardPinTrigger(message, deps);
-        return;
-      }
+      // 排行榜/天梯榜必须 @Bot 触发，不走普通关键词
       if (MANUAL_ADJUST_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → MANUAL_ADJUST`);
         await handleManualAdjustTrigger(message, deps);
@@ -223,6 +238,15 @@ async function handleAutoCapture(
 
   if (useSemantic) {
     // --- 语义评分路径（异步 fire-and-forget） ---
+    const fastPathResult = ingestSemanticFastPathItems(message, member.id, deps);
+    if (fastPathResult && deps.autoReply && message.chatId) {
+      await sendConfirmReply(deps.autoReply, {
+        chatId: message.chatId,
+        memberId: message.memberId,
+        memberName: member.displayName,
+        itemCode: fastPathResult.itemCode,
+      });
+    }
     if (needsSemanticScoring(message)) {
       void semanticClassifyAndIngest(message, member.id, member.displayName, deps);
     }
@@ -304,6 +328,43 @@ function ingestK1(
 }
 
 // ============================================================================
+// 语义评分快速路径 — 非 LLM 结构化项
+// ============================================================================
+
+function ingestSemanticFastPathItems(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  deps: MessageCommandDeps,
+): ClassificationResult | null {
+  if (!deps.ingestor) return null;
+
+  const results = classifyMessage(message).filter((result) => result.itemCode === "H1");
+  let primaryResult: ClassificationResult | null = null;
+
+  for (const result of results) {
+    try {
+      const outcome = deps.ingestor.ingest({
+        memberId,
+        itemCode: result.itemCode,
+        scoreDelta: 0,
+        sourceRef: `msg:${message.messageId}:${result.itemCode}`,
+        payloadText: (message.rawText || message.fileName || "").slice(0, 500),
+      });
+      if (outcome.accepted && !primaryResult) {
+        primaryResult = result;
+      }
+      console.log(
+        `[AutoCapture] FastPath ${result.itemCode}: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
+      );
+    } catch (err) {
+      console.error(`[AutoCapture] FastPath ingest error for ${result.itemCode}:`, err);
+    }
+  }
+
+  return primaryResult;
+}
+
+// ============================================================================
 // 语义评分 — 异步 fire-and-forget + LLM 降级
 // ============================================================================
 
@@ -318,10 +379,27 @@ async function semanticClassifyAndIngest(
 
   const promptText = buildUnifiedPrompt(message.rawText);
 
+  // Pre-check deterministic structural items that should create scoring tasks
+  // even when the semantic classifier misses them.
+  const precheckItems = classifyMessage(message)
+    .filter((result) => ["H2", "H3", "G2", "S1"].includes(result.itemCode))
+    .map((result) => ({
+      code: result.itemCode,
+      score: SCORING_ITEMS[result.itemCode].defaultScoreDelta,
+      reason: result.reason,
+    }));
+
   let items: SemanticScoreItem[];
   try {
     const result = await llmClient.multiScore(promptText, { timeoutMs: 15000 });
     items = filterScorableItems(result.items);
+    // Merge LLM items with pre-check items (dedup)
+    const llmCodes = new Set(items.map((i) => i.code));
+    for (const mi of precheckItems) {
+      if (!llmCodes.has(mi.code)) {
+        items.push(mi);
+      }
+    }
     console.log(
       `[SemanticScoring] ${displayName}: ${items.map((i) => `${i.code}(${i.reason})`).join(", ") || "(none)"}`,
     );
@@ -334,6 +412,8 @@ async function semanticClassifyAndIngest(
 
   // 逐项入账
   let primaryCode: ScoringItemCode | null = null;
+  const acceptedItems: SemanticScoreItem[] = [];
+  let acceptedScore = 0;
   for (const item of items) {
     try {
       const outcome = deps.ingestor.ingest({
@@ -346,12 +426,30 @@ async function semanticClassifyAndIngest(
       if (outcome.accepted && !primaryCode) {
         primaryCode = item.code;
       }
+      if (outcome.accepted) {
+        acceptedItems.push(item);
+        acceptedScore += item.score;
+      }
       console.log(
         `[SemanticScoring] Ingest ${item.code}: accepted=${outcome.accepted}`,
       );
     } catch (err) {
       console.error(`[SemanticScoring] Ingest error for ${item.code}:`, err);
     }
+  }
+
+  if (
+    acceptedScore >= 3 &&
+    await sendProactivePraise({
+      deps,
+      message,
+      displayName,
+      totalScore: acceptedScore,
+      highlights: buildPraiseHighlights(acceptedItems),
+      preferLlm: true,
+    })
+  ) {
+    return;
   }
 
   // 发送确认回复
@@ -379,11 +477,13 @@ function fallbackToLegacyClassifier(
 
   // Track total score from classified item defaultScoreDelta values
   let totalScore = 0;
+  const scoredResults: ClassificationResult[] = [];
 
   for (const result of results) {
     if (result.itemCode === "K1") continue; // K1 already ingested
     const cfg = SCORING_ITEMS[result.itemCode];
     totalScore += cfg?.defaultScoreDelta ?? 0;
+    scoredResults.push(result);
     try {
       deps.ingestor.ingest({
         memberId,
@@ -417,33 +517,182 @@ function fallbackToLegacyClassifier(
     );
     return;
   }
-  lastPraiseAt = now;
-
-  // Build praise text with the member's name — random 彩虹屁 template
-  const praiseTemplates = [
-    `@${displayName} 这波操作也太秀了吧！多个维度全面开花，${totalScore} 分直接拉满 🔥 继续保持！`,
-    `@${displayName} 绝绝子！你在 ${totalScore} 分的好成绩证明了自己，太厉害了 👏 期待更多精彩分享！`,
-    `@${displayName} 这个分享质量太高了！直接拿下 ${totalScore} 分，yyds！小伙伴们都来学习一下～`,
-    `@${displayName} 优秀！${totalScore} 分的表现说明你真的用心了 💪 下次继续卷起来！`,
-    `@${displayName} 哇这波分享有东西啊！${totalScore} 分的好成绩实至名归 🎉 墙裂建议大家都看看！`,
-  ];
-  const praiseText = praiseTemplates[Math.floor(Math.random() * praiseTemplates.length)];
 
   // Send praise as a text message (not a reply, since this is the fallback path)
   void (async () => {
-    try {
-      await deps.autoReply!.sendTextMessage({
-        receiveId: message.chatId!,
-        receiveIdType: "chat_id" as any,
-        text: praiseText,
-      });
-      console.log(
-        `[Fallback] Praise sent to ${displayName}: totalScore=${totalScore}`,
-      );
-    } catch (err) {
-      console.error(`[Fallback] Failed to send praise:`, err);
-    }
+    await sendProactivePraise({
+      deps,
+      message,
+      displayName,
+      totalScore,
+      highlights: buildPraiseHighlights(scoredResults),
+      preferLlm: false,
+    });
   })();
+}
+
+function hasChatCapability(client: LlmScoringClient | undefined): client is LlmScoringClient & LlmChatClient {
+  return typeof (client as { chat?: unknown } | undefined)?.chat === "function";
+}
+
+function buildPraiseHighlights(
+  items: Array<SemanticScoreItem | ClassificationResult>,
+): string[] {
+  const labels: Record<string, string> = {
+    K3: "知识总结",
+    K4: "提问质量",
+    H1: "作业提交",
+    H2: "文件作业",
+    H3: "视频学习",
+    C1: "AI 工具实战",
+    C2: "互动反馈",
+    C3: "创意作品",
+    S1: "持续打卡",
+    S2: "互助答疑",
+    G1: "外部资源链接",
+    G2: "经验复盘分享",
+    G3: "阶段成长",
+  };
+
+  const highlights: string[] = [];
+  for (const item of items) {
+    const code = "code" in item ? item.code : item.itemCode;
+    const reason = "reason" in item ? item.reason : "";
+    const label = labels[code] ?? code;
+    const text = reason && !reason.includes("keyword") ? `${label}:${reason}` : label;
+    if (!highlights.includes(text)) highlights.push(text);
+  }
+  return highlights.slice(0, 4);
+}
+
+function inferMessageFocus(rawText: string, highlights: string[]): string {
+  if (/肺癌|高危|患者|医疗|药师|慢病/.test(rawText)) return "医疗业务场景";
+  if (/prompt|提示词/i.test(rawText)) return "prompt 思路";
+  if (/AI|智能体|RAG|工作流/i.test(rawText)) return "AI 实战";
+  if (/复盘|分享|经验/.test(rawText)) return "经验复盘";
+  return highlights[0]?.split(":")[0] ?? "这次分享";
+}
+
+function stableIndex(seed: string, modulo: number): number {
+  let hash = 0;
+  for (const char of seed) {
+    hash = (hash * 31 + char.charCodeAt(0)) >>> 0;
+  }
+  return hash % modulo;
+}
+
+export function buildFallbackPraiseText(
+  displayName: string,
+  totalScore: number,
+  rawText: string,
+  highlights: string[],
+  seed: string,
+): string {
+  const focus = inferMessageFocus(rawText, highlights);
+  const templates = [
+    `@${displayName} 这份${focus}有点炸场，关键思路被你拿捏住了，${totalScore} 分含金量拉满 🔥`,
+    `@${displayName} ${focus}这波太会了！有行动、有复盘、有分享，${totalScore} 分直接封神 👏`,
+    `@${displayName} 这次${focus}不是随便交差，细节和落地感都在线，${totalScore} 分很硬核！`,
+    `@${displayName} ${focus}的亮点很清楚，能把想法讲到可执行，这波 ${totalScore} 分拿得漂亮 ✨`,
+    `@${displayName} 你这段${focus}像把思路开了倍速，重点抓得准，${totalScore} 分稳稳入账！`,
+    `@${displayName} 这波${focus}有梗也有料，既能落地又能启发同学，${totalScore} 分实至名归！`,
+  ];
+  return templates[stableIndex(seed || `${displayName}:${totalScore}:${rawText}`, templates.length)];
+}
+
+function normalizePraiseText(text: string, displayName: string): string {
+  const cleaned = text.replace(/\s+/g, " ").trim();
+  if (cleaned.startsWith(`@${displayName}`)) return cleaned;
+  return `@${displayName} ${cleaned}`.trim();
+}
+
+async function buildLlmPraiseText(input: {
+  client: LlmScoringClient & LlmChatClient;
+  displayName: string;
+  totalScore: number;
+  rawText: string;
+  highlights: string[];
+}): Promise<string | null> {
+  const messages: ChatMessage[] = [
+    {
+      role: "system",
+      content: buildPraisePrompt(input.displayName, input.highlights, input.totalScore),
+    },
+    {
+      role: "user",
+      content:
+        `学员原消息：${input.rawText.slice(0, 800)}\n` +
+        "请只输出一条群聊夸赞，45-90 字，避免套话，不要解释。",
+    },
+  ];
+  const text = await input.client.chat(messages, {
+    timeoutMs: 8000,
+    temperature: 0.95,
+    maxTokens: 180,
+  });
+  const normalized = normalizePraiseText(text, input.displayName);
+  return normalized.length <= 140 ? normalized : null;
+}
+
+async function sendProactivePraise(input: {
+  deps: MessageCommandDeps;
+  message: NormalizedFeishuMessage;
+  displayName: string;
+  totalScore: number;
+  highlights: string[];
+  preferLlm: boolean;
+}): Promise<boolean> {
+  if (!input.deps.autoReply || !input.message.chatId) return false;
+
+  const now = Date.now();
+  if (now - lastPraiseAt < PRAISE_COOLDOWN_MS) {
+    console.log(
+      `[Praise] skipped: cooldown (${Math.ceil((PRAISE_COOLDOWN_MS - (now - lastPraiseAt)) / 1000)}s remaining)`,
+    );
+    return false;
+  }
+
+  let praiseText: string | null = null;
+  const client = input.deps.semanticScoring?.llmClient;
+  if (input.preferLlm && hasChatCapability(client)) {
+    try {
+      praiseText = await buildLlmPraiseText({
+        client,
+        displayName: input.displayName,
+        totalScore: input.totalScore,
+        rawText: input.message.rawText,
+        highlights: input.highlights,
+      });
+    } catch (err) {
+      console.error("[Praise] LLM praise failed, using local fallback:", err);
+    }
+  }
+
+  if (!praiseText) {
+    praiseText = buildFallbackPraiseText(
+      input.displayName,
+      input.totalScore,
+      input.message.rawText,
+      input.highlights,
+      input.message.messageId,
+    );
+  }
+
+  try {
+    await input.deps.autoReply.sendTextMessage({
+      receiveId: input.message.chatId,
+      receiveIdType: "chat_id" as any,
+      text: praiseText,
+    });
+    lastPraiseAt = now;
+    console.log(
+      `[Praise] sent to ${input.displayName}: totalScore=${input.totalScore}`,
+    );
+    return true;
+  } catch (err) {
+    console.error("[Praise] Failed to send praise:", err);
+    return false;
+  }
 }
 
 // ============================================================================
@@ -584,13 +833,29 @@ async function handlePeerReviewTrigger(
 
 // ============================================================================
 // 战绩天梯榜 — any member sends "看板"/"排行" → bot sends link card
+// Rate limited: at most once per 30 seconds per chat to avoid spam
 // ============================================================================
+
+const pinCooldowns = new Map<string, number>();
+const PIN_COOLDOWN_MS = 30_000;
 
 async function handleDashboardPinTrigger(
   message: NormalizedFeishuMessage,
   deps: MessageCommandDeps,
 ): Promise<void> {
   if (!message.chatId) return;
+
+  // Rate limit: prevent spam from casual chat keywords
+  const now = Date.now();
+  const lastPin = pinCooldowns.get(message.chatId) ?? 0;
+  if (now - lastPin < PIN_COOLDOWN_MS) {
+    console.log(
+      `[DashboardPin] Rate limited: chatId=${message.chatId}, ` +
+      `remaining=${Math.ceil((PIN_COOLDOWN_MS - (now - lastPin)) / 1000)}s`
+    );
+    return;
+  }
+  pinCooldowns.set(message.chatId, now);
 
   const pinDeps = deps.dashboardPin;
   if (!pinDeps) {
@@ -830,11 +1095,30 @@ function handleChatBotMention(
   // 后台异步处理，不阻塞 WS 回调
   void (async () => {
     try {
+      const contextProvider = deps.chatBot!.contextProvider ?? defaultRecentChatContextProvider;
+      let contextBlocks;
+      try {
+        contextBlocks = await contextProvider.resolveMentionContext({
+          currentMessage: message,
+          feishuClient: deps.feishuClient,
+        });
+      } catch (contextErr) {
+        const reason = contextErr instanceof Error ? contextErr.message : "context_resolution_failed";
+        console.error("[ChatBot] context resolution failed:", contextErr);
+        contextBlocks = [
+          {
+            title: "上下文读取状态",
+            content: `尝试读取最近上下文失败：${reason}`,
+          },
+        ];
+      }
+
       const result = await deps.chatBot!.engine.reply({
         chatId: message.chatId!,
         openId: message.memberId,
         messageId: message.messageId,
         cleanedText: message.cleanedText,
+        contextBlocks,
       });
 
       console.log(

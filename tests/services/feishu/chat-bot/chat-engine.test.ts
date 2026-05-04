@@ -65,7 +65,7 @@ describe("ChatEngine.reply", () => {
     expect(result.replyText).toContain("有什么可以帮你的");
   });
 
-  it("returns LLM response with encouragement for student", async () => {
+  it("returns LLM response for student without appending a fixed ending", async () => {
     const engine = createChatEngine({
       llmClient: makeFakeClient(["RAG 是检索增强生成"]),
       memory: createConversationMemory(),
@@ -82,7 +82,7 @@ describe("ChatEngine.reply", () => {
 
     expect(result.used).toBe("llm");
     expect(result.replyText).toContain("RAG 是检索增强生成");
-    expect(result.replyText).toContain("欢迎其他同学");
+    expect(result.replyText).not.toContain("欢迎其他同学");
   });
 
   it("returns LLM response without encouragement for trainer", async () => {
@@ -171,6 +171,46 @@ describe("ChatEngine.reply", () => {
     expect(secondCallMessages[3]).toEqual({ role: "user", content: "Q2" });
   });
 
+  it("injects recent chat context before the user question", async () => {
+    const llm = vi.fn().mockResolvedValue("你的第二提问基本准确，但业务对象需要更具体。");
+    const engine = createChatEngine({
+      llmClient: {
+        provider: "fake",
+        model: "fake-v1",
+        chat: llm
+      },
+      memory: createConversationMemory(),
+      rateLimiter: { check: () => ({ allowed: true }), markUsed: () => { /* noop */ } },
+      repo: makeRepoStub({ u1: { displayName: "李洁娴", roleType: "student" } })
+    });
+
+    await engine.reply({
+      chatId: "c1",
+      openId: "u1",
+      messageId: "m2",
+      cleanedText: "麻烦结合我交的作业，分析针对业务场景的第二提问是否准确",
+      contextBlocks: [
+        {
+          title: "用户最近文件",
+          content: "文件名：个人报告任务一李洁娴.pdf\n内容摘录：第二提问：业务场景中如何设计更精准的客户触达？"
+        }
+      ]
+    });
+
+    expect(llm).toHaveBeenCalledTimes(1);
+    const messages = llm.mock.calls[0][0] as ChatMessage[];
+    expect(messages.at(-2)).toEqual({
+      role: "user",
+      content: expect.stringContaining("用户最近文件")
+    });
+    expect(messages.at(-2)?.content).toContain("个人报告任务一李洁娴.pdf");
+    expect(messages.at(-2)?.content).toContain("第二提问");
+    expect(messages.at(-1)).toEqual({
+      role: "user",
+      content: "麻烦结合我交的作业，分析针对业务场景的第二提问是否准确"
+    });
+  });
+
   it("defaults to student role when member not found", async () => {
     const engine = createChatEngine({
       llmClient: makeFakeClient(["answer"]),
@@ -187,6 +227,6 @@ describe("ChatEngine.reply", () => {
     });
 
     expect(result.used).toBe("llm");
-    expect(result.replyText).toContain("欢迎其他同学");
+    expect(result.replyText).not.toContain("欢迎其他同学");
   });
 });
