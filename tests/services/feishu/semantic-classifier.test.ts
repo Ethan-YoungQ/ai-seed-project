@@ -152,8 +152,8 @@ describe("needsSemanticScoring", () => {
     expect(needsSemanticScoring(makeMsg({ rawText: "[表情回应: thumbsup]" }))).toBe(false);
   });
 
-  it("returns true for normal text messages >= 10 chars", () => {
-    expect(needsSemanticScoring(makeMsg({ rawText: "今天学到了不少东西分享一下" }))).toBe(true);
+  it("returns true for normal text messages >= 20 chars", () => {
+    expect(needsSemanticScoring(makeMsg({ rawText: "我今天学到了不少东西分享给大家一起共勉呀" }))).toBe(true);
   });
 
   it("returns true for image messages regardless of text length", () => {

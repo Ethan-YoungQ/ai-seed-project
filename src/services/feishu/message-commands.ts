@@ -30,6 +30,8 @@ import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/mem
 import type { ChatEngine } from "./chat-bot/chat-engine.js";
 import {
   defaultRecentChatContextProvider,
+  createLocalDocumentTextExtractor,
+  type DocumentTextExtractor,
   type RecentChatContextProvider,
 } from "./chat-bot/recent-context.js";
 import { classifyMessage, type ClassificationResult } from "./message-classifier.js";
@@ -40,7 +42,7 @@ import {
   type SemanticScoreItem,
 } from "./semantic-classifier.js";
 import type { ChatMessage, LlmChatClient, LlmScoringClient } from "../v2/llm-scoring-client.js";
-import { sendConfirmReply, type AutoReplyDeps } from "./auto-reply.js";
+import type { AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 import { buildPraisePrompt } from "./chat-bot/persona.js";
@@ -131,6 +133,8 @@ export interface MessageCommandDeps {
     enabled: boolean;
     llmClient: LlmScoringClient;
   };
+  /** 文档文本提取器（可选，默认使用本地 pdf-parse + mammoth） */
+  documentExtractor?: DocumentTextExtractor;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -238,15 +242,8 @@ async function handleAutoCapture(
 
   if (useSemantic) {
     // --- 语义评分路径（异步 fire-and-forget） ---
-    const fastPathResult = ingestSemanticFastPathItems(message, member.id, deps);
-    if (fastPathResult && deps.autoReply && message.chatId) {
-      await sendConfirmReply(deps.autoReply, {
-        chatId: message.chatId,
-        memberId: message.memberId,
-        memberName: member.displayName,
-        itemCode: fastPathResult.itemCode,
-      });
-    }
+    ingestSemanticFastPathItems(message, member.id, deps);
+    // No confirm reply for routine submissions — only proactive praise (score >= 3) below
     if (needsSemanticScoring(message)) {
       void semanticClassifyAndIngest(message, member.id, member.displayName, deps);
     }
@@ -285,18 +282,7 @@ async function handleAutoCapture(
       }
     }
 
-    const replyItem = primaryResult && primaryResult.itemCode !== "K1"
-      ? primaryResult
-      : results.find((r) => r.itemCode !== "K1") ?? primaryResult;
-
-    if (replyItem && deps.autoReply && message.chatId) {
-      await sendConfirmReply(deps.autoReply, {
-        chatId: message.chatId,
-        memberId: message.memberId,
-        memberName: member.displayName,
-        itemCode: replyItem.itemCode,
-      });
-    }
+    // No confirm reply for routine submissions — only proactive praise (score >= 3) below
   }
 }
 
@@ -365,6 +351,69 @@ function ingestSemanticFastPathItems(
 }
 
 // ============================================================================
+// 文档文本提取 — 下载文件并解析正文内容
+// ============================================================================
+
+/**
+ * Ensure that document text is extracted for file messages that support it.
+ * Downloads the file via Feishu API, extracts text with the configured extractor,
+ * and writes results to message.documentText / message.documentParseStatus.
+ *
+ * Returns the best available text for scoring: documentText if extraction
+ * succeeded, otherwise rawText.
+ */
+async function ensureDocumentText(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<string> {
+  if (
+    message.documentParseStatus !== "pending" ||
+    !message.fileKey ||
+    !message.messageId
+  ) {
+    return message.rawText;
+  }
+
+  const extractor = deps.documentExtractor ?? createLocalDocumentTextExtractor();
+
+  try {
+    const file = await deps.feishuClient.getMessageFile({
+      messageId: message.messageId,
+      fileKey: message.fileKey,
+      fileName: message.fileName,
+    });
+
+    const result = await extractor.extract({
+      bytes: file.bytes,
+      fileExt: file.fileExt ?? message.fileExt,
+      fileName: file.fileName ?? message.fileName,
+      mimeType: file.mimeType ?? message.mimeType,
+    });
+
+    message.documentParseStatus = result.status;
+    message.documentText = result.text;
+
+    if (result.status === "parsed" && result.text) {
+      console.log(
+        `[DocExtract] Parsed ${message.fileExt ?? "file"}: ${result.text.length} chars`,
+      );
+      return `${message.rawText}\n\n【文件正文内容】\n${result.text}`;
+    }
+
+    console.log(
+      `[DocExtract] ${result.status}${result.reason ? `: ${result.reason}` : ""}`,
+    );
+    return message.rawText;
+  } catch (err) {
+    message.documentParseStatus = "failed";
+    message.documentParseReason =
+      err instanceof Error ? err.message : "document_extract_failed";
+    console.error(`[DocExtract] Download/extract failed:`, err);
+    return message.rawText;
+  }
+}
+
+// ============================================================================
 // 语义评分 — 异步 fire-and-forget + LLM 降级
 // ============================================================================
 
@@ -377,7 +426,9 @@ async function semanticClassifyAndIngest(
   const llmClient = deps.semanticScoring?.llmClient;
   if (!llmClient || !deps.ingestor) return;
 
-  const promptText = buildUnifiedPrompt(message.rawText);
+  // Extract document text for file messages so the LLM can see the actual content
+  const scoreText = await ensureDocumentText(message, deps);
+  const promptText = buildUnifiedPrompt(scoreText);
 
   // Pre-check deterministic structural items that should create scoring tasks
   // even when the semantic classifier misses them.
@@ -406,7 +457,7 @@ async function semanticClassifyAndIngest(
   } catch (err) {
     console.error(`[SemanticScoring] LLM failed for ${displayName}, falling back to keyword classifier:`, err);
     // 降级：LLM 失败时回退到关键词分类器
-    fallbackToLegacyClassifier(message, memberId, displayName, deps);
+    await fallbackToLegacyClassifier(message, memberId, displayName, deps);
     return;
   }
 
@@ -421,7 +472,7 @@ async function semanticClassifyAndIngest(
         itemCode: item.code,
         scoreDelta: item.score,
         sourceRef: `llm:${message.messageId}:${item.code}`,
-        payloadText: message.rawText.slice(0, 500),
+        payloadText: scoreText.slice(0, 500),
       });
       if (outcome.accepted && !primaryCode) {
         primaryCode = item.code;
@@ -452,28 +503,23 @@ async function semanticClassifyAndIngest(
     return;
   }
 
-  // 发送确认回复
-  if (primaryCode && deps.autoReply && message.chatId) {
-    await sendConfirmReply(deps.autoReply, {
-      chatId: message.chatId,
-      memberId: message.memberId,
-      memberName: displayName,
-      itemCode: primaryCode,
-    });
-  }
+  // No confirm reply for routine submissions — only proactive praise (score >= 3) above
 }
 
 /**
  * 降级到旧关键词分类器（LLM 调用失败时使用）
  */
-function fallbackToLegacyClassifier(
+async function fallbackToLegacyClassifier(
   message: NormalizedFeishuMessage,
   memberId: string,
   displayName: string,
   deps: MessageCommandDeps,
-): void {
+): Promise<void> {
   const results = classifyMessage(message);
   if (results.length === 0 || !deps.ingestor) return;
+
+  // Extract document text for file messages
+  const scoreText = await ensureDocumentText(message, deps);
 
   // Track total score from classified item defaultScoreDelta values
   let totalScore = 0;
@@ -490,7 +536,7 @@ function fallbackToLegacyClassifier(
         itemCode: result.itemCode,
         scoreDelta: 0,
         sourceRef: `fallback:${message.messageId}:${result.itemCode}`,
-        payloadText: message.rawText.slice(0, 500),
+        payloadText: scoreText.slice(0, 500),
       });
     } catch (err) {
       console.error(`[Fallback] Ingest error for ${result.itemCode}:`, err);
@@ -612,7 +658,14 @@ async function buildLlmPraiseText(input: {
   totalScore: number;
   rawText: string;
   highlights: string[];
+  documentText?: string;
 }): Promise<string | null> {
+  let userContent = `学员原消息：${input.rawText.slice(0, 800)}`;
+  if (input.documentText) {
+    userContent += `\n学员提交的文件内容摘录：${input.documentText.slice(0, 2000)}`;
+  }
+  userContent += "\n请只输出一条群聊夸赞，45-90 字，避免套话，不要解释。";
+
   const messages: ChatMessage[] = [
     {
       role: "system",
@@ -620,9 +673,7 @@ async function buildLlmPraiseText(input: {
     },
     {
       role: "user",
-      content:
-        `学员原消息：${input.rawText.slice(0, 800)}\n` +
-        "请只输出一条群聊夸赞，45-90 字，避免套话，不要解释。",
+      content: userContent,
     },
   ];
   const text = await input.client.chat(messages, {
@@ -652,6 +703,15 @@ async function sendProactivePraise(input: {
     return false;
   }
 
+  // Skip praise for very short messages (trivial chat, not a substantive contribution)
+  // Scoring still happens, but the bot doesn't send a group message for low-effort content.
+  // For file messages, check the combined document text + raw text length.
+  const effectiveText = input.message.documentText || input.message.rawText || "";
+  if (effectiveText.trim().length < 20 && input.message.messageType === "text") {
+    console.log(`[Praise] skipped: message too short (${effectiveText.trim().length} chars)`);
+    return false;
+  }
+
   let praiseText: string | null = null;
   const client = input.deps.semanticScoring?.llmClient;
   if (input.preferLlm && hasChatCapability(client)) {
@@ -661,6 +721,7 @@ async function sendProactivePraise(input: {
         displayName: input.displayName,
         totalScore: input.totalScore,
         rawText: input.message.rawText,
+        documentText: input.message.documentText || undefined,
         highlights: input.highlights,
       });
     } catch (err) {
@@ -672,7 +733,7 @@ async function sendProactivePraise(input: {
     praiseText = buildFallbackPraiseText(
       input.displayName,
       input.totalScore,
-      input.message.rawText,
+      input.message.documentText || input.message.rawText,
       input.highlights,
       input.message.messageId,
     );

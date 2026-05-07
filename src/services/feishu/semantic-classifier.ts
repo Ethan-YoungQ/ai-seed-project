@@ -54,7 +54,13 @@ const SYSTEM_PREFIX = `你是 AI 训练营评分助手。对学员的消息判�
 【必须严格输出如下 JSON 格式，不要输出任何其他内容】
 {"items":[{"code":"K3","score":3,"reason":"不错的总结"},{"code":"C1","score":4,"reason":"创意用法"}]}
 如果没有任何得分项，输出：{"items":[]}
-得分项 (score > 0) 才输出，不得分不输出。reason 用中文口语化。`;
+得分项 (score > 0) 才输出，不得分不输出。reason 用中文口语化。
+
+【重要 - 什么不该给分】
+- 非常简短的消息（少于20字）、单纯回复他人问题的简短答案（如"是gemini"、"收到了"、"好的"），不得分
+- 只包含问候、表情、无实质内容的闲聊，不得分
+- 仅转发链接或文件但没有自己的评价/说明，不得分
+- 如果一条消息不确定是否应得分，倾向于不给分`;
 
 const ITEM_STANDARDS: Record<string, string> = {
   K3: "K3 知识总结 (0-3分)：用自己的话总结 AI 知识点，≥30字",
@@ -122,7 +128,7 @@ export function filterScorableItems(
 // Pre-filter — determines if a message is worth sending to LLM
 // ============================================================================
 
-const MIN_TEXT_LENGTH = 10;
+const MIN_TEXT_LENGTH = 20;
 
 /**
  * Quick pre-filter to skip messages that don't need LLM scoring.
