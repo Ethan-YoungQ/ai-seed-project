@@ -127,7 +127,7 @@
 | 4 | 🧠 **AI 智慧顾问** | 200+ | 影响他人，成为团队智囊 |
 | 5 | ⚡ **AI 奇点玩家** | 300+ | 全维度卓越，突破认知边界 |
 
-升级时系统自动在群里发送庆祝卡片，营造仪式感和竞争氛围。
+升级时系统自动在群里发送段位晋升公告卡片，以游戏化语言庆祝前三位晋升者，营造仪式感和稀缺性。
 
 ### 6. 零代码管理：群聊关键词即指令
 
@@ -270,9 +270,9 @@ npm test
 ```
 ai-seed-project/
 ├── src/
-│   ├── domain/v2/          # 评分领域模型 (ingestor, settler, levels)
+│   ├── domain/v2/          # 评分领域模型 (ingestor, settler, levels, promotion-announcer)
 │   ├── routes/v2/          # API 路由 (board, ranking, member detail)
-│   ├── services/feishu/    # 飞书集成 (bot, cards, message handling)
+│   ├── services/feishu/    # 飞书集成 (bot, cards, message handling, promotion announcement)
 │   ├── storage/            # SQLite repository
 │   └── config/             # 配置与默认值
 ├── apps/dashboard/         # React Dashboard (Vite)
