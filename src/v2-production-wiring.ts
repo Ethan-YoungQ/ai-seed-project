@@ -314,8 +314,8 @@ function buildPeriodLifecycle(
               now: () => new Date().toISOString(),
             });
 
-            if (announcements.length > 0) {
-              const card = buildFirstThreeAnnouncementCard({ items: announcements });
+            for (const item of announcements) {
+              const card = buildFirstThreeAnnouncementCard({ items: [item] });
               await sendCard(groupChatId, card);
             }
           }
