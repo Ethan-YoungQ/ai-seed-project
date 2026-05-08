@@ -20,6 +20,8 @@ import type {
   WarningLevel,
   WarningRecord
 } from "../domain/types.js";
+import type { DimensionScoreRow } from "../domain/v2/rank-context.js";
+import type { ScoringDimension } from "../domain/v2/scoring-items-config.js";
 
 // ---------------------------------------------------------------------------
 // Inlined from domain/ranking.ts (deleted as part of v1 legacy cleanup)
@@ -405,6 +407,16 @@ CREATE TABLE IF NOT EXISTS v2_promotion_records (
   path_taken TEXT NOT NULL,
   reason TEXT NOT NULL,
   UNIQUE(window_id, member_id)
+);
+
+CREATE TABLE IF NOT EXISTS v2_level_announcement_ordinals (
+  level INTEGER NOT NULL,
+  ordinal INTEGER NOT NULL,
+  member_id TEXT NOT NULL,
+  member_name TEXT NOT NULL,
+  window_id TEXT NOT NULL,
+  announced_at TEXT NOT NULL,
+  PRIMARY KEY (level, ordinal)
 );
 
 CREATE TABLE IF NOT EXISTS v2_llm_scoring_tasks (
@@ -977,6 +989,13 @@ export class SqliteRepository {
     return row ? this.mapWindowRow(row) : undefined;
   }
 
+  findWindowById(windowId: string): WindowRecord | undefined {
+    const row = this.db
+      .prepare(`SELECT * FROM v2_windows WHERE id = ? LIMIT 1`)
+      .get(windowId) as Record<string, unknown> | undefined;
+    return row ? this.mapWindowRow(row) : undefined;
+  }
+
   private mapWindowRow(row: Record<string, unknown>): WindowRecord {
     return {
       id: String(row.id),
@@ -1502,6 +1521,161 @@ export class SqliteRepository {
       pathTaken: String(row.path_taken),
       reason: String(row.reason)
     };
+  }
+
+  // ==========================================================================
+  // Level announcement ordinals
+  // ==========================================================================
+
+  getAnnouncementOrdinals(): Array<{ level: number; ordinal: number }> {
+    const rows = this.db
+      .prepare(
+        `SELECT level, MAX(ordinal) AS ordinal
+         FROM v2_level_announcement_ordinals
+         GROUP BY level`
+      )
+      .all() as Array<{ level: number; ordinal: number }>;
+    return rows;
+  }
+
+  insertAnnouncementOrdinal(input: {
+    level: number;
+    ordinal: number;
+    memberId: string;
+    memberName: string;
+    windowId: string;
+    announcedAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO v2_level_announcement_ordinals
+          (level, ordinal, member_id, member_name, window_id, announced_at)
+         VALUES (@level, @ordinal, @memberId, @memberName, @windowId, @announcedAt)`
+      )
+      .run(input);
+  }
+
+  // ==========================================================================
+  // Eligible students
+  // ==========================================================================
+
+  listEligibleStudentIds(campId: string): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM members
+         WHERE camp_id = ? AND role_type = 'student'
+           AND is_participant = 1 AND is_excluded_from_board = 0
+           AND status = 'active'
+         ORDER BY id ASC`
+      )
+      .all(campId) as Array<{ id: string }>;
+    return rows.map((r) => r.id);
+  }
+
+  // ==========================================================================
+  // Member dimension scores (v2)
+  // ==========================================================================
+
+  fetchMemberDimensionScoresForPeriods(
+    memberId: string,
+    periodIds: readonly string[]
+  ): DimensionScoreRow[] {
+    if (periodIds.length === 0) return [];
+    const placeholders = periodIds.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT dimension, period_score AS cumulativeScore
+         FROM v2_member_dimension_scores
+         WHERE member_id = ? AND period_id IN (${placeholders})`
+      )
+      .all(memberId, ...periodIds) as Array<{ dimension: string; cumulativeScore: number }>;
+    return rows.map((r) => ({
+      dimension: r.dimension as ScoringDimension,
+      memberId,
+      cumulativeScore: r.cumulativeScore
+    }));
+  }
+
+  fetchAllEligibleDimensionScores(
+    campId: string,
+    periodIds: readonly string[]
+  ): DimensionScoreRow[] {
+    if (periodIds.length === 0) return [];
+    const placeholders = periodIds.map(() => "?").join(",");
+    const rows = this.db
+      .prepare(
+        `SELECT s.member_id, s.dimension, s.period_score
+         FROM v2_member_dimension_scores s
+         INNER JOIN members m ON m.id = s.member_id
+         WHERE m.camp_id = ? AND m.role_type = 'student'
+           AND m.is_participant = 1 AND m.is_excluded_from_board = 0
+           AND m.status = 'active'
+           AND s.period_id IN (${placeholders})`
+      )
+      .all(campId, ...periodIds) as Array<{ member_id: string; dimension: string; period_score: number }>;
+    return rows.map((r) => ({
+      dimension: r.dimension as ScoringDimension,
+      memberId: r.member_id,
+      cumulativeScore: r.period_score
+    }));
+  }
+
+  // ==========================================================================
+  // Period / attendance helpers
+  // ==========================================================================
+
+  countElapsedScoringPeriods(windowId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT
+          (CASE WHEN first_period_id IS NOT NULL THEN 1 ELSE 0 END)
+          + (CASE WHEN last_period_id IS NOT NULL THEN 1 ELSE 0 END) AS cnt
+         FROM v2_windows WHERE id = ?`
+      )
+      .get(windowId) as { cnt: number } | undefined;
+    return row?.cnt ?? 0;
+  }
+
+  computeAttendance(memberId: string, windowId: string): boolean {
+    const window = this.findWindowById(windowId);
+    if (!window) return false;
+
+    const periodIds: string[] = [];
+    if (window.firstPeriodId) periodIds.push(window.firstPeriodId);
+    if (window.lastPeriodId) periodIds.push(window.lastPeriodId);
+    if (periodIds.length === 0) return false;
+
+    const placeholders = periodIds.map(() => "?").join(",");
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT period_id) AS cnt
+         FROM v2_scoring_item_events
+         WHERE member_id = ? AND period_id IN (${placeholders})`
+      )
+      .get(memberId, ...periodIds) as { cnt: number } | undefined;
+    return (row?.cnt ?? 0) >= periodIds.length;
+  }
+
+  computeHomeworkAllSubmitted(memberId: string, windowId: string): boolean {
+    const window = this.findWindowById(windowId);
+    if (!window) return false;
+
+    const periodIds: string[] = [];
+    if (window.firstPeriodId) periodIds.push(window.firstPeriodId);
+    if (window.lastPeriodId) periodIds.push(window.lastPeriodId);
+    if (periodIds.length === 0) return false;
+
+    const placeholders = periodIds.map(() => "?").join(",");
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(DISTINCT period_id) AS cnt
+         FROM v2_scoring_item_events
+         WHERE member_id = ? AND item_code = 'H1'
+           AND status = 'approved'
+           AND period_id IN (${placeholders})`
+      )
+      .get(memberId, ...periodIds) as { cnt: number } | undefined;
+    return (row?.cnt ?? 0) >= periodIds.length;
   }
 
   insertLlmTask(input: {

@@ -19,6 +19,10 @@ import { OpenAiCompatibleLlmScoringClient } from "./services/v2/llm-scoring-clie
 import { LlmScoringWorker } from "./services/v2/llm-scoring-worker.js";
 import type { WorkerDeps, WorkerConfig } from "./services/v2/llm-scoring-worker.js";
 import type { AdminPanelLifecycleDeps } from "./services/feishu/cards/handlers/admin-panel-handler.js";
+import type { FeishuCardJson } from "./services/feishu/cards/types.js";
+import { settleWindow, type SettlerDependencies } from "./domain/v2/window-settler.js";
+import { detectAnnounceablePromotions } from "./domain/v2/promotion-announcer.js";
+import { buildFirstThreeAnnouncementCard } from "./services/feishu/cards/templates/first-three-announcement-v1.js";
 
 // ---------------------------------------------------------------------------
 // IngestorDeps adapter
@@ -216,7 +220,13 @@ function buildAggregatorDeps(repo: SqliteRepository): AggregatorDeps {
  * This is a thin orchestration layer — the actual DB mutations delegate
  * to SqliteRepository.
  */
-function buildPeriodLifecycle(repo: SqliteRepository, campId: string) {
+function buildPeriodLifecycle(
+  repo: SqliteRepository,
+  campId: string,
+  windowSettler?: { settle(id: string): Promise<{ windowId: string; settledAt: string }> },
+  sendCard?: (chatId: string, card: FeishuCardJson) => Promise<void>,
+  groupChatId?: string,
+) {
   return {
     async openNewPeriod(number: number) {
       const now = new Date().toISOString();
@@ -271,6 +281,50 @@ function buildPeriodLifecycle(repo: SqliteRepository, campId: string) {
         }
       }
 
+      // If settlement is triggered AND we have a real window settler, run it
+      if (shouldSettleWindowId && windowSettler) {
+        try {
+          await windowSettler.settle(shouldSettleWindowId);
+
+          // After settlement, detect and send promotion announcements
+          if (sendCard && groupChatId) {
+            const announcements = detectAnnounceablePromotions(shouldSettleWindowId, {
+              getPromotions: (wid) => {
+                // Query promotions from repo using direct DB access
+                const db = (repo as any).db;
+                const rows = db.prepare(
+                  `SELECT p.member_id, p.from_level, p.to_level, p.promoted
+                   FROM v2_promotion_records p
+                   WHERE p.window_id = ? AND p.promoted = 1
+                   ORDER BY p.evaluated_at ASC, p.id ASC`
+                ).all(wid) as Array<{ member_id: string; from_level: number; to_level: number; promoted: number }>;
+                return rows.map((r) => ({
+                  memberId: r.member_id,
+                  fromLevel: r.from_level,
+                  toLevel: r.to_level,
+                  promoted: r.promoted === 1,
+                }));
+              },
+              getOrdinals: () => repo.getAnnouncementOrdinals(),
+              insertOrdinal: (input) => repo.insertAnnouncementOrdinal(input),
+              getMemberName: (mid) => {
+                const m = repo.getMember(mid);
+                return m ? (m.displayName || m.name) : null;
+              },
+              now: () => new Date().toISOString(),
+            });
+
+            if (announcements.length > 0) {
+              const card = buildFirstThreeAnnouncementCard({ items: announcements });
+              await sendCard(groupChatId, card);
+            }
+          }
+        } catch (err) {
+          console.error("[PeriodLifecycle] Settlement failed:", err);
+          // Don't throw — the period was already opened successfully
+        }
+      }
+
       return { periodId, assignedWindowId, shouldSettleWindowId };
     },
 
@@ -317,18 +371,117 @@ function resolveWindowCode(periodNumber: number): string {
 }
 
 // ---------------------------------------------------------------------------
-// Window settler stub
+// Window settler — real domain engine adapter
 // ---------------------------------------------------------------------------
 
-function buildWindowSettler(repo: SqliteRepository, _campId: string) {
+function buildRealWindowSettler(repo: SqliteRepository, campId: string) {
   return {
     async settle(windowId: string) {
-      const now = new Date().toISOString();
-      repo.markWindowSettling(windowId);
-      // In a full implementation, this would compute promotions/demotions.
-      // For now, mark as settled so the endpoint returns successfully.
-      repo.markWindowSettled(windowId, now);
-      return { windowId, settledAt: now };
+      const deps: SettlerDependencies = {
+        fetchWindow: async (id) => {
+          const w = repo.findWindowById(id);
+          if (!w) throw new Error(`Window not found: ${id}`);
+          return {
+            id: w.id,
+            campId: w.campId,
+            code: w.code,
+            firstPeriodId: w.firstPeriodId,
+            lastPeriodId: w.lastPeriodId,
+            isFinal: w.isFinal,
+            settlementState: w.settlementState,
+            settledAt: w.settledAt,
+          };
+        },
+
+        updateWindowSettlementState: async (id, next) => {
+          if (next === "settling") repo.markWindowSettling(id);
+          else if (next === "settled") repo.markWindowSettled(id, new Date().toISOString());
+        },
+
+        listEligibleStudentIds: async () => repo.listEligibleStudentIds(campId),
+
+        fetchPeriodDimensionScores: async (memberId, periodIds) =>
+          repo.fetchMemberDimensionScoresForPeriods(memberId, periodIds),
+
+        fetchPreviousSnapshot: async (memberId, beforeWindowId) => {
+          const snap = repo.findLatestSnapshotBefore(memberId, beforeWindowId);
+          return snap ?? null;
+        },
+
+        fetchPreviousPromotionRecord: async (memberId, beforeWindowId) => {
+          const rec = repo.findPromotionForWindow(beforeWindowId, memberId);
+          if (!rec) return null;
+          return {
+            id: rec.id,
+            windowId: rec.windowId,
+            memberId: rec.memberId,
+            evaluatedAt: rec.evaluatedAt,
+            fromLevel: rec.fromLevel as 1 | 2 | 3 | 4 | 5,
+            toLevel: rec.toLevel as 1 | 2 | 3 | 4 | 5,
+            promoted: (rec.promoted ? 1 : 0) as 0 | 1,
+            pathTaken: rec.pathTaken as any,
+            reason: rec.reason,
+          };
+        },
+
+        fetchMemberLevel: async (memberId) => {
+          const lev = repo.getMemberLevel(memberId);
+          return {
+            memberId: lev.memberId,
+            currentLevel: lev.currentLevel as 1 | 2 | 3 | 4 | 5,
+            levelAttainedAt: lev.levelAttainedAt ?? new Date().toISOString(),
+            lastWindowId: lev.lastWindowId,
+            updatedAt: lev.updatedAt ?? new Date().toISOString(),
+          };
+        },
+
+        computeAttendance: async (memberId) => repo.computeAttendance(memberId, windowId),
+
+        computeHomeworkAllSubmitted: async (memberId) =>
+          repo.computeHomeworkAllSubmitted(memberId, windowId),
+
+        fetchAllEligibleDimensionScores: async () => {
+          const window = repo.findWindowById(windowId);
+          if (!window) return [];
+          const periodIds: string[] = [];
+          if (window.firstPeriodId) periodIds.push(window.firstPeriodId);
+          if (window.lastPeriodId) periodIds.push(window.lastPeriodId);
+          return repo.fetchAllEligibleDimensionScores(campId, periodIds);
+        },
+
+        fetchElapsedScoringPeriods: async () => repo.countElapsedScoringPeriods(windowId),
+
+        insertWindowSnapshot: async (snap) => repo.insertWindowSnapshot(snap),
+
+        insertPromotionRecord: async (rec) => {
+          repo.insertPromotionRecord({
+            id: rec.id,
+            windowId: rec.windowId,
+            memberId: rec.memberId,
+            evaluatedAt: rec.evaluatedAt,
+            fromLevel: rec.fromLevel,
+            toLevel: rec.toLevel,
+            promoted: rec.promoted === 1,
+            pathTaken: rec.pathTaken,
+            reason: rec.reason,
+          });
+        },
+
+        updateMemberLevel: async (rec) => {
+          repo.upsertMemberLevel({
+            memberId: rec.memberId,
+            currentLevel: rec.currentLevel,
+            levelAttainedAt: rec.levelAttainedAt,
+            lastWindowId: rec.lastWindowId,
+            updatedAt: rec.updatedAt,
+          });
+        },
+
+        now: () => new Date().toISOString(),
+      };
+
+      const result = await settleWindow(windowId, deps, {});
+      return { windowId, settledAt: new Date().toISOString(), promotionCount: result.settledMemberCount };
     },
   };
 }
@@ -524,16 +677,23 @@ function buildAdminPanelLifecycle(
 // Public factory
 // ---------------------------------------------------------------------------
 
+export interface SendCardFn {
+  sendCard: (chatId: string, card: FeishuCardJson) => Promise<void>;
+}
+
 export interface V2ProductionDeps {
   ingestor: EventIngestor;
   aggregator: ScoringAggregator;
   periodLifecycle: ReturnType<typeof buildPeriodLifecycle>;
-  windowSettler: ReturnType<typeof buildWindowSettler>;
+  windowSettler: ReturnType<typeof buildRealWindowSettler>;
   llmWorker: LlmScoringWorker | null;
   adminPanelLifecycle: AdminPanelLifecycleDeps;
 }
 
-export function wireV2Production(repo: SqliteRepository): V2ProductionDeps {
+export function wireV2Production(
+  repo: SqliteRepository,
+  options?: { groupChatId?: string; sendCard?: (chatId: string, card: FeishuCardJson) => Promise<void> }
+): V2ProductionDeps {
   const campId = repo.getDefaultCampId() ?? "default";
 
   const ingestorDeps = buildIngestorDeps(repo, campId);
@@ -542,8 +702,14 @@ export function wireV2Production(repo: SqliteRepository): V2ProductionDeps {
   const aggregatorDeps = buildAggregatorDeps(repo);
   const aggregator = new ScoringAggregator(aggregatorDeps);
 
-  const periodLifecycle = buildPeriodLifecycle(repo, campId);
-  const windowSettler = buildWindowSettler(repo, campId);
+  const windowSettler = buildRealWindowSettler(repo, campId);
+  const periodLifecycle = buildPeriodLifecycle(
+    repo,
+    campId,
+    windowSettler,
+    options?.sendCard,
+    options?.groupChatId,
+  );
   const llmWorker = buildLlmWorker(repo, aggregator);
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
 
