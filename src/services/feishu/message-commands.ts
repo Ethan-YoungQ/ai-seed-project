@@ -614,8 +614,13 @@ function buildPraiseHighlights(
 function inferMessageFocus(rawText: string, highlights: string[]): string {
   if (/肺癌|高危|患者|医疗|药师|慢病/.test(rawText)) return "医疗业务场景";
   if (/prompt|提示词/i.test(rawText)) return "prompt 思路";
-  if (/AI|智能体|RAG|工作流/i.test(rawText)) return "AI 实战";
-  if (/复盘|分享|经验/.test(rawText)) return "经验复盘";
+  // For messages < 40 chars, keyword-based focus detection is unreliable:
+  // casual chat mentioning "AI" (e.g. "AI终于搭理你了") should not be
+  // labeled as "AI 实战".
+  if (rawText.length >= 40) {
+    if (/AI|智能体|RAG|工作流/i.test(rawText)) return "AI 实战";
+    if (/复盘|分享|经验/.test(rawText)) return "经验复盘";
+  }
   return highlights[0]?.split(":")[0] ?? "这次分享";
 }
 
@@ -730,6 +735,17 @@ async function sendProactivePraise(input: {
   }
 
   if (!praiseText) {
+    // For short text messages (< 40 chars), skip fallback templates:
+    // they tend to mislabel casual chat or non-original content as
+    // substantive work (e.g. "AI 实战" for any message mentioning AI).
+    // Only LLM-generated praise (which understands context) should fire.
+    if (input.message.messageType === "text" && effectiveText.trim().length < 40) {
+      console.log(
+        `[Praise] skipped: LLM praise failed and text too short (${effectiveText.trim().length} chars) for template fallback`,
+      );
+      return false;
+    }
+
     praiseText = buildFallbackPraiseText(
       input.displayName,
       input.totalScore,
