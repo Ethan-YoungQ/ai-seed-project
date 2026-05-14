@@ -63,6 +63,10 @@ function buildIngestorDeps(repo: SqliteRepository, campId: string): IngestorDeps
       return repo.sumPendingScoreDelta(memberId, periodId, itemCode);
     },
 
+    sumReviewRequiredScoreDelta(memberId: string, periodId: string, itemCode: ScoringItemCode) {
+      return repo.sumReviewRequiredScoreDelta(memberId, periodId, itemCode);
+    },
+
     findEventBySourceRef(memberId: string, periodId: string, itemCode: ScoringItemCode, sourceRef: string) {
       const ev = repo.findEventBySourceRef(memberId, periodId, itemCode, sourceRef);
       return ev ? { id: ev.id } : null;

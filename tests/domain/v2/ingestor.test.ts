@@ -109,6 +109,18 @@ function makeDeps(state: TestState): IngestorDeps {
           )
           .reduce((acc, e) => acc + e.scoreDelta, 0)
     ),
+    sumReviewRequiredScoreDelta: vi.fn(
+      (memberId: string, periodId: string, itemCode: string) =>
+        state.events
+          .filter(
+            (e) =>
+              e.memberId === memberId &&
+              e.periodId === periodId &&
+              e.itemCode === itemCode &&
+              e.status === "review_required"
+          )
+          .reduce((acc, e) => acc + e.scoreDelta, 0)
+    ),
     findEventBySourceRef: vi.fn(
       (memberId: string, periodId: string, itemCode: string, sourceRef: string) =>
         state.events.find(

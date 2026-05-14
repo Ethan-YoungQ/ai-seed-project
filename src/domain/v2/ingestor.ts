@@ -87,6 +87,11 @@ export interface IngestorDeps {
     periodId: string,
     itemCode: ScoringItemCode
   ): number;
+  sumReviewRequiredScoreDelta(
+    memberId: string,
+    periodId: string,
+    itemCode: ScoringItemCode
+  ): number;
   findEventBySourceRef(
     memberId: string,
     periodId: string,
@@ -146,7 +151,7 @@ export class EventIngestor {
       return { accepted: false, reason: "ice_breaker_no_scoring" };
     }
 
-    // Step 4: Cap lookup (approved + pending)
+    // Step 4: Cap lookup (approved + pending + review_required)
     const approvedSum = this.deps.sumApprovedScoreDelta(
       input.memberId,
       period.id,
@@ -157,7 +162,12 @@ export class EventIngestor {
       period.id,
       input.itemCode
     );
-    const remaining = config.perPeriodCap - approvedSum - pendingSum;
+    const reviewRequiredSum = this.deps.sumReviewRequiredScoreDelta(
+      input.memberId,
+      period.id,
+      input.itemCode
+    );
+    const remaining = config.perPeriodCap - approvedSum - pendingSum - reviewRequiredSum;
 
     // 运营手动调分 (operator_manual) 绕过每期上限限制
     const isManualAdjust = input.sourceType === "operator_manual";

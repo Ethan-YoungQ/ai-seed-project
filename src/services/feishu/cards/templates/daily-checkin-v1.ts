@@ -111,14 +111,11 @@ function buildH2FormBlock(
   ];
 }
 
-function buildItemBlock(
+function buildLlmFormBlock(
   def: ItemDefinition,
   item: DailyCheckinItemState,
   names: Record<string, string>
 ): Array<Record<string, unknown>> {
-  if (def.code === "H2") {
-    return buildH2FormBlock(def, item, names);
-  }
   const approvedLine = renderMemberList(item.approved, "✓", names);
   const pendingLine = renderMemberList(item.pending, "审核中", names);
   return [
@@ -127,17 +124,45 @@ function buildItemBlock(
       content: `**${def.label}**\n${approvedLine}\n${pendingLine}`
     },
     {
-      tag: "action",
-      actions: [
+      tag: "form",
+      name: `${def.code.toLowerCase()}_form`,
+      elements: [
+        {
+          tag: "input",
+          name: `${def.code.toLowerCase()}_text`,
+          placeholder: { tag: "plain_text", content: "描述你的内容（至少20字）" },
+          max_length: 500
+        },
         {
           tag: "button",
+          name: `${def.code.toLowerCase()}_submit`,
           text: { tag: "plain_text", content: `提交 ${def.code}` },
           type: "primary",
-          value: { action: def.actionName, itemCode: def.code }
+          behaviors: [
+            {
+              type: "callback",
+              value: {
+                action: def.actionName,
+                text: "${" + `${def.code.toLowerCase()}_text.value` + "}"
+              }
+            }
+          ]
         }
       ]
     }
   ];
+}
+
+function buildItemBlock(
+  def: ItemDefinition,
+  item: DailyCheckinItemState,
+  names: Record<string, string>
+): Array<Record<string, unknown>> {
+  if (def.code === "H2") {
+    return buildH2FormBlock(def, item, names);
+  }
+  // K3, K4, C1, C3, G2 need text input forms so the LLM has content to evaluate
+  return buildLlmFormBlock(def, item, names);
 }
 
 export function buildDailyCheckinCard(state: DailyCheckinState): FeishuCardJson {

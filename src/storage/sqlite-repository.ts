@@ -1136,6 +1136,21 @@ export class SqliteRepository {
     return Number(row.total);
   }
 
+  sumReviewRequiredScoreDelta(
+    memberId: string,
+    periodId: string,
+    itemCode: string
+  ): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(score_delta), 0) AS total
+         FROM v2_scoring_item_events
+         WHERE member_id = ? AND period_id = ? AND item_code = ? AND status = 'review_required'`
+      )
+      .get(memberId, periodId, itemCode) as { total: number };
+    return Number(row.total);
+  }
+
   updateEventStatus(input: {
     id: string;
     status: ScoringEventStatus;

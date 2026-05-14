@@ -521,6 +521,11 @@ async function fallbackToLegacyClassifier(
   // Extract document text for file messages
   const scoreText = await ensureDocumentText(message, deps);
 
+  // Skip LLM-scored items when there's no substantive text:
+  // ingesting empty text would create review_required noise that needs
+  // manual review. Non-LLM items (e.g. H1/H3/G1) still go through.
+  const hasSubstantiveText = scoreText.replace(/\p{Extended_Pictographic}/gu, "").replace(/\s+/g, "").length >= 20;
+
   // Track total score from classified item defaultScoreDelta values
   let totalScore = 0;
   const scoredResults: ClassificationResult[] = [];
@@ -528,6 +533,13 @@ async function fallbackToLegacyClassifier(
   for (const result of results) {
     if (result.itemCode === "K1") continue; // K1 already ingested
     const cfg = SCORING_ITEMS[result.itemCode];
+    // Skip LLM-dependent items when text is too short to evaluate
+    if (cfg?.needsLlm && !hasSubstantiveText) {
+      console.log(
+        `[Fallback] skipped ${result.itemCode} for ${displayName}: no substantive text to score`,
+      );
+      continue;
+    }
     totalScore += cfg?.defaultScoreDelta ?? 0;
     scoredResults.push(result);
     try {
