@@ -170,9 +170,13 @@ function buildHash(input: {
 function canonicalizeAttachmentsForHash(
   attachments: EvidenceBundle["attachments"],
 ): EvidenceBundle["attachments"] {
-  return [...attachments].sort((left, right) =>
-    JSON.stringify(left).localeCompare(JSON.stringify(right))
-  );
+  return [...attachments].sort((left, right) => {
+    const serializedLeft = JSON.stringify(left);
+    const serializedRight = JSON.stringify(right);
+    if (serializedLeft < serializedRight) return -1;
+    if (serializedLeft > serializedRight) return 1;
+    return 0;
+  });
 }
 
 async function extractDocumentEvidence(
