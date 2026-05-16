@@ -81,7 +81,7 @@ describe("notification orchestrator", () => {
     });
     expect(state.lastGlobalPraiseAt).toBe(NOW);
     expect([...state.praiseByStudentToday.values()]).toEqual([1]);
-    expect([...state.praiseByChatHour.values()]).toEqual([1]);
+    expect([...state.praiseByChatHour.values()]).toEqual([NOW]);
     expect(state.recentTopicHashes.get("topic-1")).toBe(NOW);
   });
 
@@ -138,7 +138,64 @@ describe("notification orchestrator", () => {
       policy: "silent",
       reason: "chat_hourly_cap",
     });
-    expect([...state.praiseByChatHour.values()]).toEqual([5]);
+    expect(state.praiseByChatHour.size).toBe(5);
+  });
+
+  it("blocks the sixth chat praise within a rolling hour across a UTC hour boundary", () => {
+    const state = createNotificationState();
+    const beforeUtcHourBoundary = Date.UTC(2026, 4, 17, 9, 50, 0);
+
+    for (let index = 0; index < 5; index += 1) {
+      expect(
+        notify({
+          state,
+          memberId: `boundary-member-${index}`,
+          topicHash: `boundary-topic-${index}`,
+          now: beforeUtcHourBoundary + index * 180_000,
+        }).shouldSend
+      ).toBe(true);
+    }
+
+    const blocked = notify({
+      state,
+      memberId: "boundary-member-six",
+      topicHash: "boundary-topic-six",
+      now: beforeUtcHourBoundary + 5 * 180_000,
+    });
+
+    expect(blocked).toEqual({
+      shouldSend: false,
+      policy: "silent",
+      reason: "chat_hourly_cap",
+    });
+  });
+
+  it("resets student daily cap at Asia Shanghai midnight instead of UTC midnight", () => {
+    const state = createNotificationState();
+    const beforeShanghaiMidnight = Date.UTC(2026, 4, 17, 15, 50, 0);
+
+    for (let index = 0; index < 3; index += 1) {
+      expect(
+        notify({
+          state,
+          topicHash: `shanghai-topic-${index}`,
+          now: beforeShanghaiMidnight + index * 180_000,
+        }).shouldSend
+      ).toBe(true);
+    }
+
+    const afterShanghaiMidnight = notify({
+      state,
+      topicHash: "shanghai-topic-next-day",
+      now: Date.UTC(2026, 4, 17, 16, 1, 0),
+    });
+
+    expect(afterShanghaiMidnight).toEqual({
+      shouldSend: true,
+      policy: "group_praise",
+      reason: "allowed",
+    });
+    expect([...state.praiseByStudentToday.values()]).toEqual([3, 1]);
   });
 
   it("reserves cooldown before send to avoid concurrent double-send", () => {

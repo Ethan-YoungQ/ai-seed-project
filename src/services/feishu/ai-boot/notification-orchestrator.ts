@@ -2,6 +2,8 @@ import type { AiBootNotifyPolicy } from "../../../domain/v3/ai-boot-types.js";
 import type { ScoringDecision } from "../../../domain/v3/scoring-decision.js";
 
 const GLOBAL_COOLDOWN_MS = 120_000;
+const ROLLING_CHAT_WINDOW_MS = 60 * 60 * 1_000;
+const SHANGHAI_OFFSET_MS = 8 * 60 * 60 * 1_000;
 const TOPIC_TTL_MS = 24 * 60 * 60 * 1_000;
 const MAX_STUDENT_DAILY_PRAISE = 3;
 const MAX_CHAT_HOURLY_PRAISE = 5;
@@ -79,21 +81,29 @@ export function decideNotification(input: {
     return silent("global_cooldown");
   }
 
-  const studentKey = `${input.memberId}:${utcDayKey(now)}`;
+  const studentKey = `${input.memberId}:${shanghaiDayKey(now)}`;
   const studentCount = state.praiseByStudentToday.get(studentKey) ?? 0;
   if (studentCount >= MAX_STUDENT_DAILY_PRAISE) {
     return silent("student_daily_cap");
   }
 
-  const chatKey = `${input.chatId}:${utcHourKey(now)}`;
-  const chatCount = state.praiseByChatHour.get(chatKey) ?? 0;
+  pruneRollingChatPraises(state.praiseByChatHour, now);
+
+  const chatCount = countRollingChatPraises(
+    state.praiseByChatHour,
+    input.chatId,
+    now
+  );
   if (chatCount >= MAX_CHAT_HOURLY_PRAISE) {
     return silent("chat_hourly_cap");
   }
 
   state.lastGlobalPraiseAt = now;
   state.praiseByStudentToday.set(studentKey, studentCount + 1);
-  state.praiseByChatHour.set(chatKey, chatCount + 1);
+  state.praiseByChatHour.set(
+    rollingChatPraiseKey(input.chatId, now, state.praiseByChatHour.size),
+    now
+  );
   state.recentTopicHashes.set(input.topicHash, now);
 
   return {
@@ -134,12 +144,48 @@ function pruneRecentTopics(topicHashes: Map<string, number>, now: number): void 
   }
 }
 
-function utcDayKey(now: number): string {
-  return new Date(now).toISOString().slice(0, 10);
+function shanghaiDayKey(now: number): string {
+  return new Date(now + SHANGHAI_OFFSET_MS).toISOString().slice(0, 10);
 }
 
-function utcHourKey(now: number): string {
-  return new Date(now).toISOString().slice(0, 13);
+function pruneRollingChatPraises(
+  chatPraises: Map<string, number>,
+  now: number
+): void {
+  for (const [key, praisedAt] of chatPraises) {
+    if (now - praisedAt >= ROLLING_CHAT_WINDOW_MS) {
+      chatPraises.delete(key);
+    }
+  }
+}
+
+function countRollingChatPraises(
+  chatPraises: Map<string, number>,
+  chatId: string,
+  now: number
+): number {
+  const prefix = rollingChatPraisePrefix(chatId);
+  let count = 0;
+
+  for (const [key, praisedAt] of chatPraises) {
+    if (key.startsWith(prefix) && now - praisedAt < ROLLING_CHAT_WINDOW_MS) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function rollingChatPraiseKey(
+  chatId: string,
+  praisedAt: number,
+  nonce: number
+): string {
+  return `${rollingChatPraisePrefix(chatId)}${praisedAt}:${nonce}`;
+}
+
+function rollingChatPraisePrefix(chatId: string): string {
+  return `${encodeURIComponent(chatId)}:`;
 }
 
 function categoryLabel(category: ScoringDecision["category"]): string {
