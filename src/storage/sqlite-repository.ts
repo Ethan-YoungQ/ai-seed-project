@@ -1519,6 +1519,87 @@ export class SqliteRepository {
     return result;
   }
 
+  fetchAiBootLegacyDimensionScoreTotals(memberId: string): {
+    totalScore: number;
+    dimensions: { K: number; H: number; C: number; S: number; G: number };
+  } {
+    const totalRow = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(period_score), 0) AS total
+         FROM v2_member_dimension_scores
+         WHERE member_id = ?`
+      )
+      .get(memberId) as { total: number } | undefined;
+
+    const rows = this.db
+      .prepare(
+        `SELECT dimension, COALESCE(SUM(period_score), 0) AS total
+         FROM v2_member_dimension_scores
+         WHERE member_id = ?
+         GROUP BY dimension`
+      )
+      .all(memberId) as Array<{ dimension: string; total: number }>;
+
+    const dimensions = { K: 0, H: 0, C: 0, S: 0, G: 0 };
+    for (const row of rows) {
+      if (row.dimension in dimensions) {
+        dimensions[row.dimension as keyof typeof dimensions] = Number(row.total);
+      }
+    }
+
+    return {
+      totalScore: Number(totalRow?.total ?? 0),
+      dimensions
+    };
+  }
+
+  upsertAiBootLegacyScoreSnapshot(input: {
+    id: string;
+    campId: string;
+    memberId: string;
+    totalScore: number;
+    dimensionJson: string;
+    sourceNote: string;
+    snapshotAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO ai_boot_legacy_score_snapshots
+          (id, camp_id, member_id, total_score, dimension_json, source_note, snapshot_at)
+         VALUES (@id, @campId, @memberId, @totalScore, @dimensionJson, @sourceNote, @snapshotAt)
+         ON CONFLICT(camp_id, member_id) DO UPDATE SET
+           id = excluded.id,
+           total_score = excluded.total_score,
+           dimension_json = excluded.dimension_json,
+           source_note = excluded.source_note,
+           snapshot_at = excluded.snapshot_at`
+      )
+      .run(input);
+  }
+
+  getAiBootLegacyScoreSnapshot(
+    campId: string,
+    memberId: string
+  ): { totalScore: number; dimensionJson: string; snapshotAt: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT total_score, dimension_json, snapshot_at
+         FROM ai_boot_legacy_score_snapshots
+         WHERE camp_id = ? AND member_id = ?`
+      )
+      .get(campId, memberId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      totalScore: Number(row.total_score),
+      dimensionJson: String(row.dimension_json),
+      snapshotAt: String(row.snapshot_at)
+    };
+  }
+
   fetchDimensionCumulativeForRanking(
     campId: string,
     dimension: string,

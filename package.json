@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push",
     "seed:demo": "tsx src/scripts/seed-demo.ts",
     "seed:ensure": "tsx src/scripts/ensure-bootstrap-data.ts",
+    "ai-boot:freeze-legacy": "tsx src/scripts/ai-boot-freeze-legacy-scores.ts",
     "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts",
     "reset:launch": "tsx src/scripts/reset-for-launch.ts",
     "sync:members": "tsx src/scripts/sync-feishu-group-members.ts",
