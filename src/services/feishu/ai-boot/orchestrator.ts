@@ -32,12 +32,17 @@ export interface AiBootOrchestratorDeps {
     | "insertAiBootEvent"
     | "findAiBootEventByMessageId"
     | "insertAiBootScoreEvent"
+    | "findAiBootScoreEventByEventId"
+    | "findAiBootEventByContentHash"
+    | "findApprovedAiBootScoreEventByContentHash"
+    | "countApprovedAiBootScoreEvents"
     | "sumApprovedAiBootScore"
   >;
   memberResolver: {
     findMemberByOpenId(openId: string): MemberLite | null;
   };
   llmClient?: AiBootLlmClient;
+  botOpenId?: string;
   feishuClient: Pick<FeishuApiClient, "getMessageFile" | "sendTextMessage">;
   config: AiBootConfig;
   now: () => string;
@@ -59,11 +64,12 @@ export function createAiBootOrchestrator(
         return;
       }
 
-      const existingEvent = deps.repo.findAiBootEventByMessageId(
+      let event = deps.repo.findAiBootEventByMessageId(
         DEFAULT_CAMP_ID,
         message.messageId,
       );
-      if (existingEvent) {
+
+      if (event && deps.repo.findAiBootScoreEventByEventId(event.id)) {
         return;
       }
 
@@ -72,24 +78,66 @@ export function createAiBootOrchestrator(
         return;
       }
 
-      const evidence = await extractEvidence(message, { feishuClient: deps.feishuClient });
-      const event = buildEvent({
-        id: deps.uuid(),
-        message,
-        member,
-        evidence,
-        now: deps.now(),
-      });
-      deps.repo.insertAiBootEvent(event);
+      let evidence = event
+        ? parseEvidenceBundle(event.evidenceJson)
+        : undefined;
+      if (!evidence) {
+        evidence = await extractEvidence(message, { feishuClient: deps.feishuClient });
+      }
 
+      if (!event) {
+        const proposedEvent = buildEvent({
+          id: deps.uuid(),
+          message,
+          member,
+          evidence,
+          now: deps.now(),
+        });
+        const inserted = deps.repo.insertAiBootEvent(proposedEvent);
+        event = inserted
+          ? proposedEvent
+          : deps.repo.findAiBootEventByMessageId(DEFAULT_CAMP_ID, message.messageId);
+
+        if (!event) {
+          return;
+        }
+
+        if (!inserted && deps.repo.findAiBootScoreEventByEventId(event.id)) {
+          return;
+        }
+
+        if (!inserted) {
+          evidence = parseEvidenceBundle(event.evidenceJson) ?? evidence;
+        }
+      }
+
+      const duplicateApprovedScore = deps.repo.findApprovedAiBootScoreEventByContentHash(
+        DEFAULT_CAMP_ID,
+        evidence.contentHash,
+        event.id,
+      );
+      const duplicateEvent = deps.repo.findAiBootEventByContentHash(
+        DEFAULT_CAMP_ID,
+        evidence.contentHash,
+        event.id,
+      );
+      const dailyWindow = shanghaiBusinessDayBounds(deps.now());
       const guardOutcome = runDeterministicGuards(evidence, {
         roleType: member.roleType,
         isParticipant: member.isParticipant,
         isExcludedFromBoard: member.isExcludedFromBoard,
-        mentionedBot: message.mentionedBotIds.length > 0,
-        dailyParticipationAlreadyScored: false,
+        mentionedBot: Boolean(deps.botOpenId && message.mentionedBotIds.includes(deps.botOpenId)),
+        dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
+          campId: DEFAULT_CAMP_ID,
+          memberId: member.id,
+          category: "daily_participation",
+          decidedAtFrom: dailyWindow.start,
+          decidedAtTo: dailyWindow.end,
+        }) > 0,
+        // No v3 category-cap policy exists yet; keep this unset deliberately.
         categoryCapRemaining: null,
-        duplicateApprovedContent: false,
+        duplicateApprovedContent: Boolean(duplicateApprovedScore),
+        duplicateContent: Boolean(duplicateEvent && !duplicateApprovedScore),
       });
 
       if (guardOutcome.kind === "ignore") {
@@ -109,7 +157,10 @@ export function createAiBootOrchestrator(
         now: deps.now(),
         llmClient: guardOutcome.kind === "continue" ? deps.llmClient : undefined,
       });
-      deps.repo.insertAiBootScoreEvent(scoreEvent);
+      const insertedScore = deps.repo.insertAiBootScoreEvent(scoreEvent);
+      if (!insertedScore) {
+        return;
+      }
 
       if (deps.config.engineMode !== "v3_live") {
         return;
@@ -141,6 +192,44 @@ export function createAiBootOrchestrator(
         }),
       });
     },
+  };
+}
+
+function parseEvidenceBundle(value: string): EvidenceBundle | undefined {
+  try {
+    const parsed = JSON.parse(value) as Partial<EvidenceBundle>;
+    if (
+      typeof parsed.sanitizedText === "string" &&
+      Array.isArray(parsed.urls) &&
+      Array.isArray(parsed.attachments) &&
+      typeof parsed.documentText === "string" &&
+      typeof parsed.extractionStatus === "string" &&
+      typeof parsed.extractionReason === "string" &&
+      typeof parsed.contentHash === "string"
+    ) {
+      return parsed as EvidenceBundle;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function shanghaiBusinessDayBounds(nowIso: string): { start: string; end: string } {
+  const offsetMs = 8 * 60 * 60 * 1000;
+  const nowMs = new Date(nowIso).getTime();
+  const shanghai = new Date(nowMs + offsetMs);
+  const dayStartShanghaiMs = Date.UTC(
+    shanghai.getUTCFullYear(),
+    shanghai.getUTCMonth(),
+    shanghai.getUTCDate(),
+  );
+  const startUtcMs = dayStartShanghaiMs - offsetMs;
+
+  return {
+    start: new Date(startUtcMs).toISOString(),
+    end: new Date(startUtcMs + 24 * 60 * 60 * 1000).toISOString(),
   };
 }
 

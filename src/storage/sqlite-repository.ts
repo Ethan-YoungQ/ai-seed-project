@@ -26,6 +26,7 @@ import type {
   AiBootDecisionStatus,
   AiBootEventRecord,
   AiBootEventStatus,
+  AiBootScoreCategory,
   AiBootScoreEventRecord
 } from "../domain/v3/ai-boot-types.js";
 
@@ -410,6 +411,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_camp_member_status
   ON ai_boot_score_events (camp_id, member_id, status);
 CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_status_decided
   ON ai_boot_score_events (status, decided_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_boot_scores_event_id_unique
+  ON ai_boot_score_events (event_id);
 
 CREATE TABLE IF NOT EXISTS ai_boot_legacy_score_snapshots (
   id TEXT PRIMARY KEY,
@@ -1342,8 +1345,8 @@ export class SqliteRepository {
     };
   }
 
-  insertAiBootEvent(input: AiBootEventRecord): void {
-    this.db
+  insertAiBootEvent(input: AiBootEventRecord): boolean {
+    const result = this.db
       .prepare(
         `INSERT INTO ai_boot_events
           (id, camp_id, chat_id, member_id, source_message_id, event_type,
@@ -1356,6 +1359,7 @@ export class SqliteRepository {
          ON CONFLICT(camp_id, source_message_id) DO NOTHING`
       )
       .run(input);
+    return result.changes > 0;
   }
 
   findAiBootEventByMessageId(
@@ -1375,8 +1379,30 @@ export class SqliteRepository {
     return row ? this.mapAiBootEventRow(row) : undefined;
   }
 
-  insertAiBootScoreEvent(input: AiBootScoreEventRecord): void {
-    this.db
+  findAiBootEventByContentHash(
+    campId: string,
+    contentHash: string,
+    excludeEventId?: string
+  ): AiBootEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = ? AND content_hash = ?
+           AND (? IS NULL OR id != ?)
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`
+      )
+      .get(campId, contentHash, excludeEventId ?? null, excludeEventId ?? null) as
+        | Record<string, unknown>
+        | undefined;
+    return row ? this.mapAiBootEventRow(row) : undefined;
+  }
+
+  insertAiBootScoreEvent(input: AiBootScoreEventRecord): boolean {
+    const result = this.db
       .prepare(
         `INSERT INTO ai_boot_score_events
           (id, event_id, camp_id, member_id, category, score_delta, confidence,
@@ -1385,9 +1411,11 @@ export class SqliteRepository {
          VALUES
           (@id, @eventId, @campId, @memberId, @category, @scoreDelta, @confidence,
            @status, @notifyPolicy, @reason, @evidence, @badgesJson, @modelProvider,
-           @modelName, @promptVersion, @reviewedByOpId, @reviewNote, @decidedAt)`
+           @modelName, @promptVersion, @reviewedByOpId, @reviewNote, @decidedAt)
+         ON CONFLICT(event_id) DO NOTHING`
       )
       .run(input);
+    return result.changes > 0;
   }
 
   findAiBootScoreEventById(id: string): AiBootScoreEventRecord | undefined {
@@ -1400,6 +1428,70 @@ export class SqliteRepository {
       )
       .get(id) as Record<string, unknown> | undefined;
     return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  findAiBootScoreEventByEventId(eventId: string): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
+                status, notify_policy, reason, evidence, badges_json, model_provider,
+                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
+         FROM ai_boot_score_events WHERE event_id = ? LIMIT 1`
+      )
+      .get(eventId) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  findApprovedAiBootScoreEventByContentHash(
+    campId: string,
+    contentHash: string,
+    excludeEventId?: string
+  ): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.event_id, s.camp_id, s.member_id, s.category, s.score_delta,
+                s.confidence, s.status, s.notify_policy, s.reason, s.evidence,
+                s.badges_json, s.model_provider, s.model_name, s.prompt_version,
+                s.reviewed_by_op_id, s.review_note, s.decided_at
+         FROM ai_boot_score_events s
+         INNER JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE e.camp_id = ? AND e.content_hash = ? AND s.status = 'approved'
+           AND (? IS NULL OR e.id != ?)
+         ORDER BY s.decided_at DESC, s.id DESC
+         LIMIT 1`
+      )
+      .get(campId, contentHash, excludeEventId ?? null, excludeEventId ?? null) as
+        | Record<string, unknown>
+        | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  countApprovedAiBootScoreEvents(input: {
+    campId: string;
+    memberId: string;
+    category: AiBootScoreCategory;
+    decidedAtFrom: string;
+    decidedAtTo: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE camp_id = ?
+           AND member_id = ?
+           AND category = ?
+           AND status = 'approved'
+           AND decided_at >= ?
+           AND decided_at < ?`
+      )
+      .get(
+        input.campId,
+        input.memberId,
+        input.category,
+        input.decidedAtFrom,
+        input.decidedAtTo
+      ) as { count: number };
+    return Number(row.count ?? 0);
   }
 
   sumApprovedAiBootScore(campId: string, memberId: string): number {

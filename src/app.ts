@@ -218,6 +218,7 @@ export async function createApp(options?: {
           llmClient: llmConfigForAiBoot.enabled
             ? new OpenAiCompatibleLlmScoringClient(llmConfigForAiBoot)
             : undefined,
+          botOpenId: botOpenId || undefined,
           feishuClient: feishuApiClient,
           config: aiBootConfig,
           now: () => new Date().toISOString(),
