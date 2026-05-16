@@ -1,6 +1,71 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, it, expect, afterAll } from "vitest";
 import { createApp } from "../../../src/app.js";
+import type {
+  AiBootEventRecord,
+  AiBootScoreEventRecord,
+} from "../../../src/domain/v3/ai-boot-types.js";
 import { SqliteRepository } from "../../../src/storage/sqlite-repository.js";
+
+function databasePath() {
+  return join(mkdtempSync(join(tmpdir(), "board-detail-")), "test.db");
+}
+
+function aiBootEvent(
+  memberId: string,
+  overrides: Partial<AiBootEventRecord> = {}
+): AiBootEventRecord {
+  const id = overrides.id ?? `evt-${memberId}`;
+  return {
+    id,
+    campId: "demo-camp",
+    chatId: "chat-1",
+    memberId,
+    sourceMessageId: `om-${id}`,
+    eventType: "text",
+    rawText: "hello",
+    sanitizedText: "hello",
+    attachmentJson: "[]",
+    evidenceJson: "{}",
+    contentHash: `hash-${id}`,
+    status: "received",
+    engineVersion: "v3.0.0",
+    rulesetVersion: "2026-05-16",
+    createdAt: "2026-05-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function aiBootScoreEvent(
+  memberId: string,
+  overrides: Partial<AiBootScoreEventRecord> = {}
+): AiBootScoreEventRecord {
+  const eventId = overrides.eventId ?? `evt-${memberId}`;
+  return {
+    id: `score-${eventId}`,
+    eventId,
+    campId: "demo-camp",
+    memberId,
+    category: "ai_artifact",
+    scoreDelta: 1,
+    confidence: "high",
+    status: "approved",
+    notifyPolicy: "group_praise",
+    reason: "approved score",
+    evidence: "message",
+    badgesJson: "[]",
+    modelProvider: "fake",
+    modelName: "fake",
+    promptVersion: "none",
+    reviewedByOpId: null,
+    reviewNote: null,
+    decidedAt: "2026-05-16T00:01:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("GET /api/v2/board/member/:id", () => {
   const apps: Array<Awaited<ReturnType<typeof createApp>>> = [];
@@ -75,6 +140,53 @@ describe("GET /api/v2/board/member/:id", () => {
     const body = res.json();
     expect(body.ok).toBe(true);
     expect(body.detail.memberId).toBe("user-alice");
+  });
+
+  it("adds legacy and v3 score fields and uses combined total as cumulative AQ", async () => {
+    const dbPath = databasePath();
+    const repo = new SqliteRepository(dbPath);
+    repo.seedDemo();
+    repo.upsertAiBootLegacyScoreSnapshot({
+      id: "legacy-alice",
+      campId: "camp-demo",
+      memberId: "user-alice",
+      totalScore: 12,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+    repo.insertAiBootEvent(
+      aiBootEvent("user-alice", { id: "evt-alice-a", campId: "camp-demo" })
+    );
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("user-alice", {
+        id: "score-alice-a",
+        eventId: "evt-alice-a",
+        campId: "camp-demo",
+        scoreDelta: 8,
+      })
+    );
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v2/board/member/user-alice",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.detail).toMatchObject({
+      memberId: "user-alice",
+      cumulativeAq: 20,
+      legacyScore: 12,
+      v3Score: 8,
+      totalScore: 20,
+    });
+    expect(body.detail.windowSnapshots).toEqual([]);
+    expect(body.detail.dimensions).toEqual({ K: 0, H: 0, C: 0, S: 0, G: 0 });
   });
 });
 

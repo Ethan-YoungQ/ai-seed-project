@@ -1,6 +1,71 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, it, expect, afterAll } from "vitest";
 import { createApp } from "../../../src/app.js";
+import type {
+  AiBootEventRecord,
+  AiBootScoreEventRecord,
+} from "../../../src/domain/v3/ai-boot-types.js";
 import { SqliteRepository } from "../../../src/storage/sqlite-repository.js";
+
+function databasePath() {
+  return join(mkdtempSync(join(tmpdir(), "board-ranking-")), "test.db");
+}
+
+function aiBootEvent(
+  memberId: string,
+  overrides: Partial<AiBootEventRecord> = {}
+): AiBootEventRecord {
+  const id = overrides.id ?? `evt-${memberId}`;
+  return {
+    id,
+    campId: "demo-camp",
+    chatId: "chat-1",
+    memberId,
+    sourceMessageId: `om-${id}`,
+    eventType: "text",
+    rawText: "hello",
+    sanitizedText: "hello",
+    attachmentJson: "[]",
+    evidenceJson: "{}",
+    contentHash: `hash-${id}`,
+    status: "received",
+    engineVersion: "v3.0.0",
+    rulesetVersion: "2026-05-16",
+    createdAt: "2026-05-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function aiBootScoreEvent(
+  memberId: string,
+  overrides: Partial<AiBootScoreEventRecord> = {}
+): AiBootScoreEventRecord {
+  const eventId = overrides.eventId ?? `evt-${memberId}`;
+  return {
+    id: `score-${eventId}`,
+    eventId,
+    campId: "demo-camp",
+    memberId,
+    category: "ai_artifact",
+    scoreDelta: 1,
+    confidence: "high",
+    status: "approved",
+    notifyPolicy: "group_praise",
+    reason: "approved score",
+    evidence: "message",
+    badgesJson: "[]",
+    modelProvider: "fake",
+    modelName: "fake",
+    promptVersion: "none",
+    reviewedByOpId: null,
+    reviewNote: null,
+    decidedAt: "2026-05-16T00:01:00.000Z",
+    ...overrides,
+  };
+}
 
 describe("GET /api/v2/board/ranking", () => {
   const apps: Array<Awaited<ReturnType<typeof createApp>>> = [];
@@ -49,6 +114,147 @@ describe("GET /api/v2/board/ranking", () => {
       (r: { memberName: string }) => r.memberName === "Operator"
     );
     expect(hasOperator).toBe(false);
+  });
+
+  it("adds legacy and v3 score fields and ranks by effective total score", async () => {
+    const dbPath = databasePath();
+    const repo = new SqliteRepository(dbPath);
+    repo.seedDemo();
+
+    const members = [
+      { id: "s1", name: "Alpha", v2Aq: 100 },
+      { id: "s2", name: "Bravo", v2Aq: 90 },
+      { id: "s3", name: "Charlie", v2Aq: 80 },
+      { id: "s4", name: "Delta", v2Aq: 70 },
+    ];
+
+    for (const member of members) {
+      repo.ensureMember(member.id, "demo-camp");
+      repo.updateMember(member.id, {
+        roleType: "student",
+        isParticipant: true,
+        isExcludedFromBoard: false,
+        displayName: member.name,
+      });
+    }
+
+    const db = (repo as unknown as {
+      db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    }).db;
+    for (const member of members) {
+      db.prepare(
+        `INSERT INTO v2_window_snapshots (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score, c_score, s_score, g_score, growth_bonus, snapshot_at)
+         VALUES (?, 'w-W1', ?, ?, ?, 10, 10, 10, 10, 10, 0, '2026-04-01T00:00:00Z')`
+      ).run(`snap-${member.id}`, member.id, member.v2Aq, member.v2Aq);
+    }
+
+    repo.upsertAiBootLegacyScoreSnapshot({
+      id: "legacy-s1",
+      campId: "demo-camp",
+      memberId: "s1",
+      totalScore: 40,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+    repo.insertAiBootEvent(aiBootEvent("s1", { id: "evt-s1-a" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s1", {
+        id: "score-s1-a",
+        eventId: "evt-s1-a",
+        scoreDelta: 10,
+      })
+    );
+
+    repo.insertAiBootEvent(aiBootEvent("s2", { id: "evt-s2-a" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s2", {
+        id: "score-s2-a",
+        eventId: "evt-s2-a",
+        category: "operator_adjustment",
+        scoreDelta: 60,
+      })
+    );
+
+    repo.insertAiBootEvent(aiBootEvent("s3", { id: "evt-s3-a" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s3", {
+        id: "score-s3-a",
+        eventId: "evt-s3-a",
+        status: "review_required",
+        scoreDelta: 500,
+      })
+    );
+    repo.insertAiBootEvent(aiBootEvent("s3", { id: "evt-s3-b" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s3", {
+        id: "score-s3-b",
+        eventId: "evt-s3-b",
+        status: "no_score",
+        scoreDelta: 500,
+      })
+    );
+    repo.insertAiBootEvent(aiBootEvent("s3", { id: "evt-s3-c" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s3", {
+        id: "score-s3-c",
+        eventId: "evt-s3-c",
+        status: "rejected",
+        scoreDelta: 500,
+      })
+    );
+    repo.insertAiBootEvent(aiBootEvent("s3", { id: "evt-s3-d" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s3", {
+        id: "score-s3-d",
+        eventId: "evt-s3-d",
+        status: "shadow",
+        scoreDelta: 500,
+      })
+    );
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v2/board/ranking?campId=demo-camp",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const rows = body.rows.filter((row: { memberId: string }) =>
+      members.some((member) => member.id === row.memberId)
+    );
+
+    expect(rows.map((row: { memberName: string }) => row.memberName)).toEqual([
+      "Charlie",
+      "Delta",
+      "Bravo",
+      "Alpha",
+    ]);
+    expect(rows.map((row: { rank: number }) => row.rank)).toEqual([1, 2, 3, 4]);
+
+    expect(rows[0]).not.toHaveProperty("legacyScore");
+    expect(rows[0]).toMatchObject({
+      memberId: "s3",
+      cumulativeAq: 80,
+    });
+    expect(rows[2]).toMatchObject({
+      memberId: "s2",
+      cumulativeAq: 60,
+      legacyScore: 0,
+      v3Score: 60,
+      totalScore: 60,
+    });
+    expect(rows[3]).toMatchObject({
+      memberId: "s1",
+      cumulativeAq: 50,
+      legacyScore: 40,
+      v3Score: 10,
+      totalScore: 50,
+    });
   });
 });
 
