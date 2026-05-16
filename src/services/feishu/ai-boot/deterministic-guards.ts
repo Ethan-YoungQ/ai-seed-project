@@ -97,7 +97,8 @@ function isPureLinkWithoutReason(evidence: EvidenceBundle): boolean {
   }
 
   let remainder = evidence.sanitizedText.trim();
-  for (const url of evidence.urls) {
+  const urlsByDescendingLength = [...evidence.urls].sort((left, right) => right.length - left.length);
+  for (const url of urlsByDescendingLength) {
     remainder = remainder.split(url).join("");
   }
 

@@ -138,6 +138,19 @@ describe("runDeterministicGuards", () => {
     });
   });
 
+  it("returns no-score for prefix-overlapping pure links", () => {
+    expect(runDeterministicGuards(
+      evidence({
+        sanitizedText: "https://example.com https://example.com/a",
+        urls: ["https://example.com", "https://example.com/a"],
+      }),
+      context(),
+    )).toEqual({
+      kind: "no_score",
+      reason: "pure_link_without_reason",
+    });
+  });
+
   it("continues for a link with explanatory text", () => {
     expect(runDeterministicGuards(
       evidence({
