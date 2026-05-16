@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import {
   createLocalDocumentTextExtractor,
   type DocumentTextExtractor,
-} from "../chat-bot/recent-context.js";
+} from "../document-text-extractor.js";
 import type { NormalizedFeishuMessage } from "../normalize-message.js";
 
 export interface EvidenceBundle {
@@ -39,7 +39,8 @@ export interface ExtractEvidenceOptions {
 
 type ExtractionState = Pick<EvidenceBundle, "documentText" | "extractionStatus" | "extractionReason">;
 
-const URL_RE = /https?:\/\/[^\s<>"']+/g;
+const URL_RE = /https?:\/\/[^\s<>"'，。！？；、]+/g;
+const TRAILING_URL_PUNCTUATION_RE = /[)\].,;:!?，。！？；、]+$/;
 const FEISHU_AT_RE = /<at\b[^>]*>.*?<\/at>/g;
 const RAW_MENTION_RE = /@_user_\d+/g;
 const ATTACHMENT_MESSAGE_TYPES = new Set(["image", "file", "media"]);
@@ -57,7 +58,7 @@ function sanitizeText(message: NormalizedFeishuMessage): string {
 function extractUrls(text: string): string[] {
   const urls: string[] = [];
   for (const match of text.matchAll(URL_RE)) {
-    const url = match[0];
+    const url = match[0].replace(TRAILING_URL_PUNCTUATION_RE, "");
     if (!urls.includes(url)) {
       urls.push(url);
     }
@@ -84,10 +85,8 @@ function buildAttachments(message: NormalizedFeishuMessage): EvidenceBundle["att
   return (types.length > 0 ? types : ["attachment"]).map((type) => {
     const attachment: EvidenceBundle["attachments"][number] = { type };
     if (message.fileKey) attachment.fileKey = message.fileKey;
-    if (type === "file") {
-      if (message.fileName) attachment.fileName = message.fileName;
-      if (message.fileExt) attachment.fileExt = message.fileExt;
-    }
+    if (message.fileName) attachment.fileName = message.fileName;
+    if (message.fileExt) attachment.fileExt = message.fileExt;
     return attachment;
   });
 }
@@ -132,7 +131,7 @@ async function extractDocumentEvidence(
   if (!message.fileKey) {
     return {
       documentText: "",
-      extractionStatus: "unsupported",
+      extractionStatus: "failed",
       extractionReason: "missing_file_key",
     };
   }

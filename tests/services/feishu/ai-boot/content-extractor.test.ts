@@ -50,6 +50,24 @@ describe("extractEvidence", () => {
     expect(evidence).not.toHaveProperty("score");
   });
 
+  it("trims common trailing punctuation from extracted URLs", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "参考 https://example.com/a).",
+      cleanedText: "参考 https://example.com/a).",
+    }));
+
+    expect(evidence.urls).toEqual(["https://example.com/a"]);
+  });
+
+  it("keeps unique URLs in first-seen order after punctuation trimming", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "先看 https://example.com/b，再看 https://example.com/a).，再看 https://example.com/b.",
+      cleanedText: "先看 https://example.com/b，再看 https://example.com/a).，再看 https://example.com/b.",
+    }));
+
+    expect(evidence.urls).toEqual(["https://example.com/b", "https://example.com/a"]);
+  });
+
   it("records image file key, message type, and raw text context", async () => {
     const evidence = await extractEvidence(makeMsg({
       messageType: "image",
@@ -61,6 +79,35 @@ describe("extractEvidence", () => {
     expect(evidence.sanitizedText).toBe("这是截图证据");
     expect(evidence.attachments).toEqual([{ type: "image", fileKey: "img-key-1" }]);
     expect(evidence.extractionStatus).toBe("not_applicable");
+  });
+
+  it("records available file metadata for non-file attachments", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      messageType: "media",
+      rawText: "视频 evidence",
+      fileKey: "media-key-1",
+      fileName: "demo.mp4",
+      fileExt: "mp4",
+    }));
+
+    expect(evidence.attachments).toEqual([{
+      type: "media",
+      fileKey: "media-key-1",
+      fileName: "demo.mp4",
+      fileExt: "mp4",
+    }]);
+  });
+
+  it("returns not_applicable extraction status for non-file text", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      messageType: "text",
+      rawText: "普通文本",
+      cleanedText: "普通文本",
+    }));
+
+    expect(evidence.documentText).toBe("");
+    expect(evidence.extractionStatus).toBe("not_applicable");
+    expect(evidence.extractionReason).toBe("non_file_message");
   });
 
   it("uses existing parsed PDF or DOCX text without downloading the file again", async () => {
@@ -142,6 +189,47 @@ describe("extractEvidence", () => {
     expect(evidence.extractionReason).toBe("ok");
   });
 
+  it("returns failed evidence when a supported file has no Feishu client", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-missing-client",
+      fileName: "作业.pdf",
+      fileExt: "pdf",
+      documentParseStatus: "pending",
+    }));
+
+    expect(evidence.documentText).toBe("");
+    expect(evidence.extractionStatus).toBe("failed");
+    expect(evidence.extractionReason).toBe("missing_feishu_client");
+  });
+
+  it("returns unsupported evidence for unsupported file extensions", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-unsupported",
+      fileName: "archive.zip",
+      fileExt: "zip",
+      documentParseStatus: "unsupported",
+    }));
+
+    expect(evidence.documentText).toBe("");
+    expect(evidence.extractionStatus).toBe("unsupported");
+    expect(evidence.extractionReason).toBe("unsupported_file_ext:zip");
+  });
+
+  it("returns failed evidence when a file message is missing fileKey", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileName: "作业.pdf",
+      fileExt: "pdf",
+      documentParseStatus: "pending",
+    }));
+
+    expect(evidence.documentText).toBe("");
+    expect(evidence.extractionStatus).toBe("failed");
+    expect(evidence.extractionReason).toBe("missing_file_key");
+  });
+
   it("returns failed evidence with a reason when extraction throws", async () => {
     const evidence = await extractEvidence(makeMsg({
       messageId: "m-file",
@@ -193,5 +281,47 @@ describe("extractEvidence", () => {
     expect(first.contentHash).toBe(same.contentHash);
     expect(first.contentHash).not.toBe(differentText.contentHash);
     expect(first.contentHash).not.toBe(differentAttachment.contentHash);
+  });
+
+  it("keeps the same hash for the same document text", async () => {
+    const first = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-doc",
+      fileName: "作业.pdf",
+      fileExt: "pdf",
+      documentText: "同一份文件内容",
+      documentParseStatus: "parsed",
+    }));
+    const same = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-doc",
+      fileName: "作业.pdf",
+      fileExt: "pdf",
+      documentText: "同一份文件内容",
+      documentParseStatus: "parsed",
+    }));
+
+    expect(first.contentHash).toBe(same.contentHash);
+  });
+
+  it("changes the hash when document text changes", async () => {
+    const first = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-doc",
+      fileName: "作业.pdf",
+      fileExt: "pdf",
+      documentText: "第一版文件内容",
+      documentParseStatus: "parsed",
+    }));
+    const differentDocumentText = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-doc",
+      fileName: "作业.pdf",
+      fileExt: "pdf",
+      documentText: "第二版文件内容",
+      documentParseStatus: "parsed",
+    }));
+
+    expect(first.contentHash).not.toBe(differentDocumentText.contentHash);
   });
 });

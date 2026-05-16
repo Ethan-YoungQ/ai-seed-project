@@ -1,27 +1,20 @@
-import mammoth from "mammoth";
-import pdfParse from "pdf-parse";
-
 import type { FeishuApiClient } from "../client.js";
+import {
+  createLocalDocumentTextExtractor,
+  type DocumentExtractionResult,
+  type DocumentTextExtractor,
+} from "../document-text-extractor.js";
 import type { NormalizedFeishuMessage } from "../normalize-message.js";
+
+export {
+  createLocalDocumentTextExtractor,
+  type DocumentExtractionResult,
+  type DocumentTextExtractor,
+} from "../document-text-extractor.js";
 
 export interface ChatContextBlock {
   title: string;
   content: string;
-}
-
-export interface DocumentExtractionResult {
-  status: "parsed" | "unsupported" | "failed";
-  text: string;
-  reason?: string;
-}
-
-export interface DocumentTextExtractor {
-  extract(input: {
-    bytes: Buffer;
-    fileExt?: string;
-    fileName?: string;
-    mimeType?: string;
-  }): Promise<DocumentExtractionResult>;
 }
 
 export interface RecentChatContextProvider {
@@ -84,43 +77,6 @@ function isTextLike(message: NormalizedFeishuMessage): boolean {
 function isSupportedDocument(message: NormalizedFeishuMessage): boolean {
   return message.messageType === "file" && Boolean(message.fileKey) &&
     (message.fileExt === "pdf" || message.fileExt === "docx");
-}
-
-export function createLocalDocumentTextExtractor(): DocumentTextExtractor {
-  return {
-    async extract(input): Promise<DocumentExtractionResult> {
-      const fileExt = input.fileExt?.toLowerCase() || input.fileName?.split(".").at(-1)?.toLowerCase();
-      try {
-        if (fileExt === "pdf") {
-          const parsed = await pdfParse(input.bytes);
-          return {
-            status: "parsed",
-            text: normalizeText(parsed.text ?? ""),
-          };
-        }
-
-        if (fileExt === "docx") {
-          const parsed = await mammoth.extractRawText({ buffer: input.bytes });
-          return {
-            status: "parsed",
-            text: normalizeText(parsed.value ?? ""),
-          };
-        }
-
-        return {
-          status: "unsupported",
-          text: "",
-          reason: `unsupported_file_ext:${fileExt ?? "unknown"}`,
-        };
-      } catch (err) {
-        return {
-          status: "failed",
-          text: "",
-          reason: err instanceof Error ? err.message : "document_extract_failed",
-        };
-      }
-    },
-  };
 }
 
 export function createRecentChatContextProvider(
