@@ -4,6 +4,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import type { AiBootEventRecord } from "../../../src/domain/v3/ai-boot-types.js";
 import { SqliteRepository } from "../../../src/storage/sqlite-repository.js";
 
 function repo() {
@@ -11,27 +12,80 @@ function repo() {
   return new SqliteRepository(join(dir, "test.db"));
 }
 
+function event(overrides: Partial<AiBootEventRecord> = {}): AiBootEventRecord {
+  return {
+    id: "evt-1",
+    campId: "default",
+    chatId: "chat-1",
+    memberId: "m-1",
+    sourceMessageId: "om-1",
+    eventType: "text",
+    rawText: "hello",
+    sanitizedText: "hello",
+    attachmentJson: "[]",
+    evidenceJson: "{}",
+    contentHash: "hash-1",
+    status: "received",
+    engineVersion: "v3.0.0",
+    rulesetVersion: "2026-05-16",
+    createdAt: "2026-05-16T00:00:00.000Z",
+    ...overrides
+  };
+}
+
 describe("SqliteRepository ai boot v3", () => {
   it("inserts and finds an event by source message id", () => {
     const r = repo();
-    r.insertAiBootEvent({
-      id: "evt-1",
-      campId: "default",
-      chatId: "chat-1",
-      memberId: "m-1",
-      sourceMessageId: "om-1",
-      eventType: "text",
-      rawText: "hello",
-      sanitizedText: "hello",
-      attachmentJson: "[]",
-      evidenceJson: "{}",
-      contentHash: "hash-1",
-      status: "received",
-      engineVersion: "v3.0.0",
-      rulesetVersion: "2026-05-16",
-      createdAt: "2026-05-16T00:00:00.000Z"
-    });
-    expect(r.findAiBootEventByMessageId("om-1")?.id).toBe("evt-1");
+    r.insertAiBootEvent(event());
+    expect(r.findAiBootEventByMessageId("default", "om-1")?.id).toBe("evt-1");
+    r.close();
+  });
+
+  it("ignores duplicate source messages in the same camp and preserves the original event", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({ id: "evt-1", rawText: "original" }));
+    r.insertAiBootEvent(
+      event({
+        id: "evt-2",
+        rawText: "replacement",
+        contentHash: "hash-2"
+      })
+    );
+    expect(r.findAiBootEventByMessageId("default", "om-1")?.id).toBe("evt-1");
+    expect(r.findAiBootEventByMessageId("default", "om-1")?.rawText).toBe("original");
+    r.close();
+  });
+
+  it("finds the same source message id separately per camp", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({ id: "evt-1", campId: "camp-a" }));
+    r.insertAiBootEvent(
+      event({
+        id: "evt-2",
+        campId: "camp-b",
+        chatId: "chat-2",
+        memberId: "m-2",
+        contentHash: "hash-2"
+      })
+    );
+    expect(r.findAiBootEventByMessageId("camp-a", "om-1")?.id).toBe("evt-1");
+    expect(r.findAiBootEventByMessageId("camp-b", "om-1")?.id).toBe("evt-2");
+    r.close();
+  });
+
+  it("throws on primary key conflict with a different source message", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({ id: "evt-1", sourceMessageId: "om-1" }));
+    expect(() =>
+      r.insertAiBootEvent(
+        event({
+          id: "evt-1",
+          campId: "camp-2",
+          sourceMessageId: "om-2",
+          contentHash: "hash-2"
+        })
+      )
+    ).toThrow();
     r.close();
   });
 

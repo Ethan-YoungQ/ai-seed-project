@@ -406,8 +406,8 @@ CREATE TABLE IF NOT EXISTS ai_boot_score_events (
   review_note TEXT,
   decided_at TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_member_status
-  ON ai_boot_score_events (member_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_camp_member_status
+  ON ai_boot_score_events (camp_id, member_id, status);
 CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_status_decided
   ON ai_boot_score_events (status, decided_at DESC);
 
@@ -1345,27 +1345,33 @@ export class SqliteRepository {
   insertAiBootEvent(input: AiBootEventRecord): void {
     this.db
       .prepare(
-        `INSERT OR IGNORE INTO ai_boot_events
+        `INSERT INTO ai_boot_events
           (id, camp_id, chat_id, member_id, source_message_id, event_type,
            raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
            status, engine_version, ruleset_version, created_at)
          VALUES
           (@id, @campId, @chatId, @memberId, @sourceMessageId, @eventType,
            @rawText, @sanitizedText, @attachmentJson, @evidenceJson, @contentHash,
-           @status, @engineVersion, @rulesetVersion, @createdAt)`
+           @status, @engineVersion, @rulesetVersion, @createdAt)
+         ON CONFLICT(camp_id, source_message_id) DO NOTHING`
       )
       .run(input);
   }
 
-  findAiBootEventByMessageId(sourceMessageId: string): AiBootEventRecord | undefined {
+  findAiBootEventByMessageId(
+    campId: string,
+    sourceMessageId: string
+  ): AiBootEventRecord | undefined {
     const row = this.db
       .prepare(
         `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
                 raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
                 status, engine_version, ruleset_version, created_at
-         FROM ai_boot_events WHERE source_message_id = ? LIMIT 1`
+         FROM ai_boot_events
+         WHERE camp_id = ? AND source_message_id = ?
+         LIMIT 1`
       )
-      .get(sourceMessageId) as Record<string, unknown> | undefined;
+      .get(campId, sourceMessageId) as Record<string, unknown> | undefined;
     return row ? this.mapAiBootEventRow(row) : undefined;
   }
 
