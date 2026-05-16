@@ -1,6 +1,7 @@
 import { mkdirSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadLocalEnv } from "../config/load-env.js";
 import { SqliteRepository } from "../storage/sqlite-repository.js";
@@ -17,6 +18,14 @@ export interface FreezeLegacyScoresResult {
   campId: string;
   snapshotsWritten: number;
   snapshotsSkipped: number;
+}
+
+export function isDirectScriptRun(metaUrl: string, argvPath: string | undefined) {
+  if (!argvPath) {
+    return false;
+  }
+
+  return resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
 }
 
 export async function runFreezeLegacyScores(
@@ -56,7 +65,10 @@ export async function runFreezeLegacyScores(
           continue;
         }
 
-        const scores = repository.fetchAiBootLegacyDimensionScoreTotals(member.id);
+        const scores = repository.fetchAiBootLegacyDimensionScoreTotals(
+          campId,
+          member.id
+        );
         repository.upsertAiBootLegacyScoreSnapshot({
           id: uuid(),
           campId,
@@ -86,8 +98,7 @@ export async function runFreezeLegacyScores(
 
 const isDirectRun =
   typeof process !== "undefined" &&
-  process.argv[1] &&
-  import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/"));
+  isDirectScriptRun(import.meta.url, process.argv[1]);
 
 if (isDirectRun) {
   loadLocalEnv();

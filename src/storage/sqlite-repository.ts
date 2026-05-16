@@ -1519,26 +1519,28 @@ export class SqliteRepository {
     return result;
   }
 
-  fetchAiBootLegacyDimensionScoreTotals(memberId: string): {
+  fetchAiBootLegacyDimensionScoreTotals(campId: string, memberId: string): {
     totalScore: number;
     dimensions: { K: number; H: number; C: number; S: number; G: number };
   } {
     const totalRow = this.db
       .prepare(
-        `SELECT COALESCE(SUM(period_score), 0) AS total
-         FROM v2_member_dimension_scores
-         WHERE member_id = ?`
+        `SELECT COALESCE(SUM(ds.period_score), 0) AS total
+         FROM v2_member_dimension_scores ds
+         INNER JOIN v2_periods p ON p.id = ds.period_id
+         WHERE p.camp_id = ? AND ds.member_id = ?`
       )
-      .get(memberId) as { total: number } | undefined;
+      .get(campId, memberId) as { total: number } | undefined;
 
     const rows = this.db
       .prepare(
-        `SELECT dimension, COALESCE(SUM(period_score), 0) AS total
-         FROM v2_member_dimension_scores
-         WHERE member_id = ?
-         GROUP BY dimension`
+        `SELECT ds.dimension, COALESCE(SUM(ds.period_score), 0) AS total
+         FROM v2_member_dimension_scores ds
+         INNER JOIN v2_periods p ON p.id = ds.period_id
+         WHERE p.camp_id = ? AND ds.member_id = ?
+         GROUP BY ds.dimension`
       )
-      .all(memberId) as Array<{ dimension: string; total: number }>;
+      .all(campId, memberId) as Array<{ dimension: string; total: number }>;
 
     const dimensions = { K: 0, H: 0, C: 0, S: 0, G: 0 };
     for (const row of rows) {
@@ -1600,6 +1602,21 @@ export class SqliteRepository {
     };
   }
 
+  getAiBootLegacyScoreSnapshotSourceNote(
+    campId: string,
+    memberId: string
+  ): string | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT source_note
+         FROM ai_boot_legacy_score_snapshots
+         WHERE camp_id = ? AND member_id = ?`
+      )
+      .get(campId, memberId) as { source_note: string } | undefined;
+
+    return row?.source_note;
+  }
+
   listAiBootLegacyFreezeCandidates(campId: string): Array<{
     id: string;
     campId: string;
@@ -1614,9 +1631,7 @@ export class SqliteRepository {
         `SELECT id, camp_id, role_type, is_participant, is_excluded_from_board
          FROM members
          WHERE camp_id = ?
-           AND role_type = 'student'
-           AND is_participant = 1
-           AND is_excluded_from_board = 0
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
          ORDER BY id ASC`
       )
       .all(campId) as Array<Record<string, unknown>>;

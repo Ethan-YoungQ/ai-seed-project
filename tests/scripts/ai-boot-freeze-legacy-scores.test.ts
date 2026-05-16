@@ -1,6 +1,10 @@
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { runFreezeLegacyScores } from "../../src/scripts/ai-boot-freeze-legacy-scores.js";
+import {
+  isDirectScriptRun,
+  runFreezeLegacyScores,
+} from "../../src/scripts/ai-boot-freeze-legacy-scores.js";
 import { SqliteRepository } from "../../src/storage/sqlite-repository.js";
 
 const repositories: SqliteRepository[] = [];
@@ -13,7 +17,7 @@ function makeRepo(): SqliteRepository {
 }
 
 function insertPeriod(repository: SqliteRepository, campId: string): string {
-  const periodId = "period-freeze";
+  const periodId = `period-freeze-${campId}`;
   repository.insertPeriod({
     id: periodId,
     campId,
@@ -89,7 +93,19 @@ describe("runFreezeLegacyScores", () => {
     expect(console.log).toHaveBeenCalledWith(
       `snapshots_written=1 camp=${campId} snapshots_skipped=0`
     );
+    expect(
+      repository.getAiBootLegacyScoreSnapshotSourceNote(campId, "user-alice")
+    ).toBe("freeze:v2_member_dimension_scores");
 
+  });
+
+  it("detects direct script execution when workspace path contains spaces", () => {
+    const scriptPath =
+      "C:\\Vibe Coding Project\\AI Seed Project\\.worktrees\\scoring-audit-20260516\\src\\scripts\\ai-boot-freeze-legacy-scores.ts";
+
+    expect(isDirectScriptRun(pathToFileURL(scriptPath).href, scriptPath)).toBe(
+      true
+    );
   });
 
   it("skips existing snapshots unless force freeze is enabled", async () => {
@@ -314,6 +330,44 @@ describe("runFreezeLegacyScores", () => {
     expect(repository.getAiBootLegacyScoreSnapshot(campId, "user-alice")).toEqual({
       totalScore: -3,
       dimensionJson: JSON.stringify({ K: -3, H: 0, C: 0, S: 0, G: 0 }),
+      snapshotAt: "2026-05-17T00:00:00.000Z",
+    });
+  });
+
+  it("excludes same-member dimension rows from periods in another camp", async () => {
+    const repository = makeRepo();
+    const campId = repository.getDefaultCampId()!;
+    const defaultPeriodId = insertPeriod(repository, campId);
+    const otherCampId = "camp-other";
+    const db = (repository as unknown as {
+      db: import("better-sqlite3").Database;
+    }).db;
+    db.prepare(
+      `INSERT INTO camps (id, name, group_id, start_date, end_date, status)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      otherCampId,
+      "Other Camp",
+      "chat-other",
+      "2026-05-01T00:00:00.000Z",
+      "2026-06-01T00:00:00.000Z",
+      "active"
+    );
+    const otherPeriodId = insertPeriod(repository, otherCampId);
+    addDimensionScores(repository, "user-alice", defaultPeriodId, { K: 3 });
+    addDimensionScores(repository, "user-alice", otherPeriodId, { H: 99 });
+
+    const result = await runFreezeLegacyScores({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "snapshot-camp-scope",
+    });
+
+    expect(result.snapshotsWritten).toBe(1);
+    expect(repository.getAiBootLegacyScoreSnapshot(campId, "user-alice")).toEqual({
+      totalScore: 3,
+      dimensionJson: JSON.stringify({ K: 3, H: 0, C: 0, S: 0, G: 0 }),
       snapshotAt: "2026-05-17T00:00:00.000Z",
     });
   });
