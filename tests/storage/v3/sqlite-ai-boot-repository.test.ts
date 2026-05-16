@@ -319,4 +319,75 @@ describe("SqliteRepository ai boot v3", () => {
     })).toBe(2);
     r.close();
   });
+
+  it("lists replay events by since and stable created/id order", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({
+      id: "evt-c",
+      sourceMessageId: "om-c",
+      createdAt: "2026-05-16T00:00:01.000Z",
+      contentHash: "hash-c",
+    }));
+    r.insertAiBootEvent(event({
+      id: "evt-b",
+      sourceMessageId: "om-b",
+      createdAt: "2026-05-16T00:00:00.000Z",
+      contentHash: "hash-b",
+    }));
+    r.insertAiBootEvent(event({
+      id: "evt-a",
+      sourceMessageId: "om-a",
+      createdAt: "2026-05-15T23:59:59.999Z",
+      contentHash: "hash-a",
+    }));
+
+    expect(r.listAiBootEventsForReplay({
+      campId: "default",
+      since: "2026-05-16T00:00:00.000Z",
+      limit: 2,
+    }).map((row) => row.id)).toEqual(["evt-b", "evt-c"]);
+    r.close();
+  });
+
+  it("counts cutover audit gates with optional camp scope", () => {
+    const r = repo();
+    r.upsertAiBootLegacyScoreSnapshot({
+      id: "snapshot-1",
+      campId: "default",
+      memberId: "m-1",
+      totalScore: 0,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-stale",
+      eventId: "evt-stale",
+      status: "review_required",
+      confidence: "low",
+      decidedAt: "2026-05-15T23:59:59.999Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-praise",
+      eventId: "evt-praise",
+      notifyPolicy: "group_praise",
+      decidedAt: "2026-05-17T01:00:00.000Z",
+    }));
+    const db = (r as unknown as { db: import("better-sqlite3").Database }).db;
+    db.prepare("UPDATE ai_boot_score_events SET evidence = '' WHERE id = ?").run("score-praise");
+
+    expect(r.countAiBootLegacyScoreSnapshots("default")).toBe(1);
+    expect(r.countStaleAiBootReviewRequired({
+      campId: "default",
+      nowIso: "2026-05-17T00:00:00.000Z",
+      olderThanHours: 24,
+    })).toBe(1);
+    expect(r.countAiBootScoreEventsMissingAuditText("default")).toBe(1);
+    expect(r.countAiBootGroupPraiseNotificationsForDay({
+      campId: "default",
+      dayStartIso: "2026-05-17T00:00:00.000Z",
+      dayEndIso: "2026-05-18T00:00:00.000Z",
+    })).toBe(1);
+    r.close();
+  });
 });

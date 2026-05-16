@@ -1401,6 +1401,26 @@ export class SqliteRepository {
     return row ? this.mapAiBootEventRow(row) : undefined;
   }
 
+  listAiBootEventsForReplay(input: {
+    campId: string;
+    since: string;
+    limit: number;
+  }): AiBootEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = @campId
+           AND created_at >= @since
+         ORDER BY created_at ASC, id ASC
+         LIMIT @limit`
+      )
+      .all(input) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapAiBootEventRow(row));
+  }
+
   insertAiBootScoreEvent(input: AiBootScoreEventRecord): boolean {
     const result = this.db
       .prepare(
@@ -1579,6 +1599,71 @@ export class SqliteRepository {
       )
       .get(campId, memberId) as { total: number };
     return Number(row.total ?? 0);
+  }
+
+  countAiBootLegacyScoreSnapshots(campId?: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_legacy_score_snapshots
+         WHERE (? IS NULL OR camp_id = ?)`
+      )
+      .get(campId ?? null, campId ?? null) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countStaleAiBootReviewRequired(input: {
+    campId?: string;
+    nowIso: string;
+    olderThanHours: number;
+  }): number {
+    const cutoff = new Date(
+      new Date(input.nowIso).getTime() - input.olderThanHours * 60 * 60 * 1000
+    ).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE status = 'review_required'
+           AND decided_at < @cutoff
+           AND (@campId IS NULL OR camp_id = @campId)`
+      )
+      .get({ campId: input.campId ?? null, cutoff }) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countAiBootScoreEventsMissingAuditText(campId?: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE (TRIM(reason) = '' OR TRIM(evidence) = '')
+           AND (? IS NULL OR camp_id = ?)`
+      )
+      .get(campId ?? null, campId ?? null) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countAiBootGroupPraiseNotificationsForDay(input: {
+    campId?: string;
+    dayStartIso: string;
+    dayEndIso: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE notify_policy = 'group_praise'
+           AND decided_at >= @dayStartIso
+           AND decided_at < @dayEndIso
+           AND (@campId IS NULL OR camp_id = @campId)`
+      )
+      .get({
+        campId: input.campId ?? null,
+        dayStartIso: input.dayStartIso,
+        dayEndIso: input.dayEndIso,
+      }) as { count: number };
+    return Number(row.count ?? 0);
   }
 
   private mapAiBootEventRow(row: Record<string, unknown>): AiBootEventRecord {
