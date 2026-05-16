@@ -12,6 +12,7 @@ import { LarkFeishuApiClient } from "./services/feishu/client.js";
 import type { FeishuConfig } from "./services/feishu/config.js";
 import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config.js";
 import { readAiBootConfig } from "./services/feishu/ai-boot/config.js";
+import { createAiBootOrchestrator } from "./services/feishu/ai-boot/orchestrator.js";
 import type { FeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
@@ -208,6 +209,22 @@ export async function createApp(options?: {
         }
       : undefined;
 
+  const llmConfigForAiBoot = readLlmProviderConfig(process.env);
+  const aiBootOrchestrator =
+    feishuApiClient && aiBootConfig.engineMode !== "legacy"
+      ? createAiBootOrchestrator({
+          repo: repository,
+          memberResolver: cardRepoDeps,
+          llmClient: llmConfigForAiBoot.enabled
+            ? new OpenAiCompatibleLlmScoringClient(llmConfigForAiBoot)
+            : undefined,
+          feishuClient: feishuApiClient,
+          config: aiBootConfig,
+          now: () => new Date().toISOString(),
+          uuid: () => crypto.randomUUID(),
+        })
+      : undefined;
+
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
     ? new LarkFeishuWsRuntime(feishuConfig, async (message) => {
         try {
@@ -271,6 +288,8 @@ export async function createApp(options?: {
               },
               chatBot,
               semanticScoring: readSemanticScoringConfig(process.env),
+              aiBootConfig,
+              aiBootOrchestrator,
             });
             await handler(message);
           } else {

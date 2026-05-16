@@ -46,6 +46,8 @@ import type { AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 import { buildPraisePrompt } from "./chat-bot/persona.js";
+import type { AiBootConfig } from "./ai-boot/config.js";
+import type { AiBootOrchestrator } from "./ai-boot/orchestrator.js";
 
 // ============================================================================
 // Keyword definitions
@@ -135,6 +137,10 @@ export interface MessageCommandDeps {
   };
   /** 文档文本提取器（可选，默认使用本地 pdf-parse + mammoth） */
   documentExtractor?: DocumentTextExtractor;
+  /** AI Boot v3 scoring config. Legacy mode keeps the v2 auto-capture path. */
+  aiBootConfig?: AiBootConfig;
+  /** AI Boot v3 orchestrator for shadow/live scoring modes. */
+  aiBootOrchestrator?: Pick<AiBootOrchestrator, "handleMessage">;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -231,6 +237,11 @@ async function handleAutoCapture(
     return;
   }
   if (member.roleType === "operator" || member.roleType === "trainer") {
+    return;
+  }
+
+  if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode !== "legacy") {
+    await deps.aiBootOrchestrator.handleMessage(message);
     return;
   }
 
