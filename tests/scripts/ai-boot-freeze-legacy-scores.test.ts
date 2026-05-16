@@ -372,6 +372,39 @@ describe("runFreezeLegacyScores", () => {
     });
   });
 
+  it("fails before writing snapshots when a freeze-eligible member has orphan dimension score rows", async () => {
+    const repository = makeRepo();
+    const campId = repository.getDefaultCampId()!;
+    const periodId = insertPeriod(repository, campId);
+    const db = (repository as unknown as {
+      db: import("better-sqlite3").Database;
+    }).db;
+    addDimensionScores(repository, "user-alice", periodId, { K: 3 });
+    db.prepare(
+      `INSERT INTO v2_member_dimension_scores
+        (member_id, period_id, dimension, period_score, event_count, last_event_at)
+       VALUES (?, ?, ?, ?, ?, ?)`
+    ).run(
+      "user-alice",
+      "missing-period",
+      "H",
+      9,
+      1,
+      "2026-05-16T03:00:00.000Z"
+    );
+
+    await expect(
+      runFreezeLegacyScores({
+        repository,
+        env: {} as NodeJS.ProcessEnv,
+        now: () => "2026-05-17T00:00:00.000Z",
+        uuid: () => "snapshot-orphan",
+      })
+    ).rejects.toThrow(/orphan.*dimension.*missing period/i);
+
+    expect(repository.getAiBootLegacyScoreSnapshot(campId, "user-alice")).toBeUndefined();
+  });
+
   it("rolls back all freeze writes when one snapshot write fails", async () => {
     const repository = makeRepo();
     const campId = repository.getDefaultCampId()!;

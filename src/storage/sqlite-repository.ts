@@ -1645,6 +1645,33 @@ export class SqliteRepository {
     }));
   }
 
+  listAiBootLegacyOrphanDimensionScoreRows(campId: string): Array<{
+    memberId: string;
+    periodId: string;
+    dimension: string;
+    periodScore: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT ds.member_id, ds.period_id, ds.dimension, ds.period_score
+         FROM v2_member_dimension_scores ds
+         INNER JOIN members m ON m.id = ds.member_id
+         LEFT JOIN v2_periods p ON p.id = ds.period_id
+         WHERE m.camp_id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+           AND p.id IS NULL
+         ORDER BY ds.member_id ASC, ds.period_id ASC, ds.dimension ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      memberId: String(row.member_id),
+      periodId: String(row.period_id),
+      dimension: String(row.dimension),
+      periodScore: Number(row.period_score)
+    }));
+  }
+
   runAiBootLegacyFreezeTransaction<T>(work: () => T): T {
     return this.db.transaction(work).immediate();
   }

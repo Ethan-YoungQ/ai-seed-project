@@ -54,6 +54,18 @@ export async function runFreezeLegacyScores(
 
     const forceFreeze = env.AI_BOOT_FORCE_FREEZE === "true";
     const result = repository.runAiBootLegacyFreezeTransaction(() => {
+      const orphanRows =
+        repository.listAiBootLegacyOrphanDimensionScoreRows(campId);
+      if (orphanRows.length > 0) {
+        const sample = orphanRows
+          .slice(0, 3)
+          .map((row) => `${row.memberId}:${row.periodId}:${row.dimension}`)
+          .join(",");
+        throw new Error(
+          `Cannot freeze legacy scores: found ${orphanRows.length} orphan dimension score row(s) with missing period records for camp ${campId}. sample=${sample}`
+        );
+      }
+
       const snapshotAt = now();
       let snapshotsWritten = 0;
       let snapshotsSkipped = 0;
