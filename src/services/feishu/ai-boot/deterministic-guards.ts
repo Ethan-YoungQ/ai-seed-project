@@ -33,7 +33,7 @@ const TRIVIAL_TEXTS = new Set([
 ]);
 
 const EMOJI_ONLY_RE = /^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\s]+$/u;
-const URL_ONLY_TEXT_RE = /^https?:\/\/\S+$/i;
+const PURE_LINK_REMAINDER_RE = /^[\s.,;:!?，。！？；、：…()[\]{}（）【】《》「」『』"'“”‘’<>-]*$/u;
 
 export function runDeterministicGuards(
   evidence: EvidenceBundle,
@@ -92,6 +92,15 @@ function isTrivialOnly(text: string): boolean {
 }
 
 function isPureLinkWithoutReason(evidence: EvidenceBundle): boolean {
-  const text = evidence.sanitizedText.trim();
-  return evidence.urls.length === 1 && URL_ONLY_TEXT_RE.test(text) && text === evidence.urls[0];
+  if (evidence.urls.length === 0) {
+    return false;
+  }
+
+  let remainder = evidence.sanitizedText.trim();
+  for (const url of evidence.urls) {
+    remainder = remainder.split(url).join("");
+  }
+
+  return remainder.length < evidence.sanitizedText.trim().length
+    && PURE_LINK_REMAINDER_RE.test(remainder);
 }

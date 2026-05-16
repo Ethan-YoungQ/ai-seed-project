@@ -100,6 +100,54 @@ describe("runDeterministicGuards", () => {
     });
   });
 
+  it("returns no-score for pure links with trailing punctuation and wrappers", () => {
+    for (const [sanitizedText, urls] of [
+      ["https://example.com/a.", ["https://example.com/a"]],
+      ["（https://x.com）", ["https://x.com"]],
+      ["(https://x.com)", ["https://x.com"]],
+      ["【https://x.com】。", ["https://x.com"]],
+    ] as const) {
+      expect(runDeterministicGuards(evidence({ sanitizedText, urls: [...urls] }), context())).toEqual({
+        kind: "no_score",
+        reason: "pure_link_without_reason",
+      });
+    }
+  });
+
+  it("returns no-score for multiple or duplicate pure links without explanatory text", () => {
+    expect(runDeterministicGuards(
+      evidence({
+        sanitizedText: "https://example.com/a https://example.com/b。",
+        urls: ["https://example.com/a", "https://example.com/b"],
+      }),
+      context(),
+    )).toEqual({
+      kind: "no_score",
+      reason: "pure_link_without_reason",
+    });
+
+    expect(runDeterministicGuards(
+      evidence({
+        sanitizedText: "https://example.com/a，https://example.com/a.",
+        urls: ["https://example.com/a"],
+      }),
+      context(),
+    )).toEqual({
+      kind: "no_score",
+      reason: "pure_link_without_reason",
+    });
+  });
+
+  it("continues for a link with explanatory text", () => {
+    expect(runDeterministicGuards(
+      evidence({
+        sanitizedText: "我推荐这个资料 https://example.com",
+        urls: ["https://example.com"],
+      }),
+      context(),
+    )).toEqual({ kind: "continue" });
+  });
+
   it("ignores repeated content with an existing approved score", () => {
     expect(runDeterministicGuards(evidence(), context({
       duplicateApprovedContent: true,
