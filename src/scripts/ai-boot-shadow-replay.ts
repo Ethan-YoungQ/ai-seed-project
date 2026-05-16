@@ -20,6 +20,8 @@ import {
   decideWithLlm,
   type AiBootLlmClient,
 } from "../services/feishu/ai-boot/llm-decision-engine.js";
+import { readLlmProviderConfig } from "../services/llm/provider-config.js";
+import { OpenAiCompatibleLlmScoringClient } from "../services/v2/llm-scoring-client.js";
 import { SqliteRepository } from "../storage/sqlite-repository.js";
 
 const SHADOW_MODEL_PROVIDER = "shadow_harness";
@@ -38,6 +40,7 @@ export interface ShadowReplayOptions {
   stdout?: (line: string) => void;
   decider?: (event: AiBootEventRecord) => ScoringDecision | Promise<ScoringDecision>;
   llmClient?: AiBootLlmClient;
+  allowHeuristic?: boolean;
 }
 
 export interface ShadowReplayResult {
@@ -90,21 +93,30 @@ export async function runShadowReplay(
       noScore: 0,
       reviewRequired: 0,
     };
+    const replayDailyParticipation = new Set<string>();
 
     for (const event of events) {
       const shadowEventId = buildShadowReplayEventId(event.id);
       const existing = repository.findAiBootScoreEventByEventId(shadowEventId);
       if (existing) {
         countStatus(result, inferReplayStatus(existing));
+        if (isShadowDailyParticipationEquivalent(existing)) {
+          replayDailyParticipation.add(dailyParticipationReplayKey(event));
+        }
         continue;
       }
 
       const evidence = evidenceFromStoredEvent(event);
       const member = repository.getMember(event.memberId);
-      const replayNow = now();
       const guardOutcome = runDeterministicGuards(
         evidence,
-        buildGuardContext({ repository, event, evidence, member, nowIso: replayNow }),
+        buildGuardContext({
+          repository,
+          event,
+          evidence,
+          member,
+          replayDailyParticipation,
+        }),
       );
       const decision = guardOutcome.kind === "continue"
         ? await decideContribution({
@@ -113,6 +125,7 @@ export async function runShadowReplay(
             member,
             decider: options.decider,
             llmClient: options.llmClient,
+            allowHeuristic: options.allowHeuristic ?? true,
           })
         : decisionFromGuard(guardOutcome, evidence);
       const normalized = parseScoringDecision(decision);
@@ -124,6 +137,9 @@ export async function runShadowReplay(
         decidedAt: now(),
       }));
       countStatus(result, normalized.status);
+      if (normalized.status === "approved" && normalized.category === "daily_participation") {
+        replayDailyParticipation.add(dailyParticipationReplayKey(event));
+      }
     }
 
     stdout(JSON.stringify(result));
@@ -198,6 +214,7 @@ async function decideContribution(input: {
   member: MemberProfile | undefined;
   decider?: (event: AiBootEventRecord) => ScoringDecision | Promise<ScoringDecision>;
   llmClient?: AiBootLlmClient;
+  allowHeuristic: boolean;
 }): Promise<ScoringDecision> {
   if (input.decider) {
     return input.decider(input.event);
@@ -207,6 +224,19 @@ async function decideContribution(input: {
     return decideWithLlm(input.llmClient, {
       evidence: input.evidence,
       memberName: displayMemberName(input.member, input.event.memberId),
+    });
+  }
+
+  if (!input.allowHeuristic) {
+    return parseScoringDecision({
+      status: "review_required",
+      category: "formal_task",
+      scoreDelta: 1,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "Shadow replay requires an LLM client unless heuristic fallback is explicitly allowed.",
+      evidence: `content_hash:${input.evidence.contentHash}`,
+      badges: ["llm_missing", "shadow_replay"],
     });
   }
 
@@ -290,31 +320,36 @@ function buildGuardContext(input: {
   event: AiBootEventRecord;
   evidence: EvidenceBundle;
   member: MemberProfile | undefined;
-  nowIso: string;
+  replayDailyParticipation: Set<string>;
 }) {
-  const duplicateApprovedScore = input.repository.findApprovedAiBootScoreEventByContentHash(
-    input.event.campId,
-    input.evidence.contentHash,
-    input.event.id,
-  );
-  const duplicateEvent = input.repository.findAiBootEventByContentHash(
-    input.event.campId,
-    input.evidence.contentHash,
-    input.event.id,
-  );
-  const dailyWindow = shanghaiBusinessDayBounds(input.nowIso);
+  const duplicateApprovedScore = input.repository.findPreviousApprovedAiBootScoreEventByContentHash({
+    campId: input.event.campId,
+    contentHash: input.evidence.contentHash,
+    beforeCreatedAt: input.event.createdAt,
+    beforeEventId: input.event.id,
+  });
+  const duplicateEvent = input.repository.findPreviousAiBootEventByContentHash({
+    campId: input.event.campId,
+    contentHash: input.evidence.contentHash,
+    beforeCreatedAt: input.event.createdAt,
+    beforeEventId: input.event.id,
+  });
+  const dailyWindow = shanghaiBusinessDayBounds(input.event.createdAt);
 
   return {
     roleType: input.member?.roleType ?? "observer",
     isParticipant: input.member?.isParticipant ?? false,
     isExcludedFromBoard: input.member?.isExcludedFromBoard ?? true,
     mentionedBot: input.event.eventType === "mention",
-    dailyParticipationAlreadyScored: input.repository.countApprovedAiBootScoreEvents({
+    dailyParticipationAlreadyScored: input.replayDailyParticipation.has(
+      dailyParticipationReplayKey(input.event),
+    ) || input.repository.countApprovedAiBootScoreEventsBefore({
       campId: input.event.campId,
       memberId: input.event.memberId,
       category: "daily_participation",
       decidedAtFrom: dailyWindow.start,
       decidedAtTo: dailyWindow.end,
+      beforeDecidedAt: input.event.createdAt,
     }) > 0,
     categoryCapRemaining: null,
     duplicateApprovedContent: Boolean(duplicateApprovedScore),
@@ -387,6 +422,16 @@ function countStatus(result: ShadowReplayResult, status: AiBootDecisionStatus): 
   } else {
     result.noScore += 1;
   }
+}
+
+function isShadowDailyParticipationEquivalent(scoreEvent: AiBootScoreEventRecord): boolean {
+  return scoreEvent.status === "shadow" &&
+    scoreEvent.category === "daily_participation" &&
+    inferReplayStatus(scoreEvent) === "approved";
+}
+
+function dailyParticipationReplayKey(event: AiBootEventRecord): string {
+  return `${event.memberId}:${shanghaiBusinessDayBounds(event.createdAt).start}`;
 }
 
 function hasImageAttachment(event: AiBootEventRecord): boolean {
@@ -500,8 +545,8 @@ function normalizeLimit(value: number): number {
   return Math.min(Math.floor(value), 10_000);
 }
 
-function parseCliArgs(argv: string[]): Pick<ShadowReplayOptions, "campId" | "since" | "limit"> {
-  const options: Pick<ShadowReplayOptions, "campId" | "since" | "limit"> = {};
+function parseCliArgs(argv: string[]): Pick<ShadowReplayOptions, "campId" | "since" | "limit" | "allowHeuristic"> {
+  const options: Pick<ShadowReplayOptions, "campId" | "since" | "limit" | "allowHeuristic"> = {};
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--camp-id") {
@@ -510,9 +555,41 @@ function parseCliArgs(argv: string[]): Pick<ShadowReplayOptions, "campId" | "sin
       options.since = argv[++index];
     } else if (arg === "--limit") {
       options.limit = Number(argv[++index]);
+    } else if (arg === "--allow-heuristic") {
+      options.allowHeuristic = true;
     }
   }
   return options;
+}
+
+export function resolveShadowReplayDirectRunOptions(
+  env: NodeJS.ProcessEnv,
+  argv: string[],
+): { ok: true; options: ShadowReplayOptions } | { ok: false; error: "llm_client_required" } {
+  const cliOptions = parseCliArgs(argv);
+  const envAllowsHeuristic = env.AI_BOOT_SHADOW_REPLAY_ALLOW_HEURISTIC === "true";
+  const allowHeuristic = Boolean(cliOptions.allowHeuristic || envAllowsHeuristic);
+  const llmConfig = readLlmProviderConfig(env);
+  const llmClient = llmConfig.enabled
+    ? new OpenAiCompatibleLlmScoringClient(llmConfig)
+    : undefined;
+
+  if (!llmClient && !allowHeuristic) {
+    return {
+      ok: false,
+      error: "llm_client_required",
+    };
+  }
+
+  return {
+    ok: true,
+    options: {
+      env,
+      ...cliOptions,
+      allowHeuristic,
+      ...(llmClient ? { llmClient } : {}),
+    },
+  };
 }
 
 const isDirectRun =
@@ -521,5 +598,19 @@ const isDirectRun =
 
 if (isDirectRun) {
   loadLocalEnv();
-  await runShadowReplay({ env: process.env, ...parseCliArgs(process.argv.slice(2)) });
+  try {
+    const resolved = resolveShadowReplayDirectRunOptions(process.env, process.argv.slice(2));
+    if (!resolved.ok) {
+      console.log(JSON.stringify({ ok: false, error: resolved.error }));
+      process.exitCode = 1;
+    } else {
+      await runShadowReplay(resolved.options);
+    }
+  } catch (error) {
+    console.log(JSON.stringify({
+      ok: false,
+      error: error instanceof Error ? error.message : "shadow_replay_failed",
+    }));
+    process.exitCode = 1;
+  }
 }

@@ -147,7 +147,10 @@ describe("runCutoverCheck", () => {
 
     await expect(runCutoverCheck({
       repository,
-      env: { AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1" } as NodeJS.ProcessEnv,
+      env: {
+        AI_BOOT_ALLOW_GROUP_PRAISE: "true",
+        AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
+      } as NodeJS.ProcessEnv,
       campId: "default",
       now: () => "2026-05-17T04:00:00.000Z",
       stdout: () => undefined,
@@ -165,9 +168,79 @@ describe("runCutoverCheck", () => {
 
     await expect(runCutoverCheck({
       repository,
-      env: { AI_BOOT_DAILY_GROUP_PRAISE_CAP: "20" } as NodeJS.ProcessEnv,
+      env: {
+        AI_BOOT_ALLOW_GROUP_PRAISE: "true",
+        AI_BOOT_DAILY_GROUP_PRAISE_CAP: "20",
+      } as NodeJS.ProcessEnv,
       campId: "default",
       now: () => "2026-05-17T00:00:00.000Z",
+      stdout: () => undefined,
+    })).resolves.toEqual({ ok: true, failures: [] });
+  });
+
+  it("uses Shanghai day bounds and counts only approved high group praise when cap is enabled", async () => {
+    const repository = makeRepo();
+    addSnapshot(repository);
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-shanghai-1",
+      eventId: "evt-shanghai-1",
+      status: "approved",
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      decidedAt: "2026-05-16T16:30:00.000Z",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-shanghai-2",
+      eventId: "evt-shanghai-2",
+      status: "approved",
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      decidedAt: "2026-05-17T15:30:00.000Z",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review-praise",
+      eventId: "evt-review-praise",
+      status: "review_required",
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      decidedAt: "2026-05-17T01:00:00.000Z",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-shadow-praise",
+      eventId: "shadow-replay:evt-shadow-praise",
+      status: "shadow",
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      decidedAt: "2026-05-17T02:00:00.000Z",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-rejected-praise",
+      eventId: "evt-rejected-praise",
+      status: "rejected",
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      decidedAt: "2026-05-17T03:00:00.000Z",
+    }));
+
+    await expect(runCutoverCheck({
+      repository,
+      env: {
+        AI_BOOT_ALLOW_GROUP_PRAISE: "true",
+        AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
+      } as NodeJS.ProcessEnv,
+      campId: "default",
+      now: () => "2026-05-17T08:00:00.000Z",
+      stdout: () => undefined,
+    })).resolves.toEqual({ ok: false, failures: ["notification_daily_cap_exceeded"] });
+
+    await expect(runCutoverCheck({
+      repository,
+      env: {
+        AI_BOOT_ALLOW_GROUP_PRAISE: "false",
+        AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
+      } as NodeJS.ProcessEnv,
+      campId: "default",
+      now: () => "2026-05-17T08:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: true, failures: [] });
   });

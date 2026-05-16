@@ -70,15 +70,16 @@ export async function runCutoverCheck(
       failures.push("score_event_missing_audit_text");
     }
 
-    const cap = parseDailyCap(env.AI_BOOT_DAILY_GROUP_PRAISE_CAP);
-    const dayStartIso = utcDayStart(nowIso);
-    const dayEndIso = new Date(new Date(dayStartIso).getTime() + 24 * 60 * 60 * 1000).toISOString();
-    if (repository.countAiBootGroupPraiseNotificationsForDay({
-      campId,
-      dayStartIso,
-      dayEndIso,
-    }) > cap) {
-      failures.push("notification_daily_cap_exceeded");
+    if (env.AI_BOOT_ALLOW_GROUP_PRAISE === "true") {
+      const cap = parseDailyCap(env.AI_BOOT_DAILY_GROUP_PRAISE_CAP);
+      const dayBounds = shanghaiBusinessDayBounds(nowIso);
+      if (repository.countAiBootGroupPraiseNotificationsForDay({
+        campId,
+        dayStartIso: dayBounds.start,
+        dayEndIso: dayBounds.end,
+      }) > cap) {
+        failures.push("notification_daily_cap_exceeded");
+      }
     }
 
     const result: CutoverCheckResult = {
@@ -102,8 +103,21 @@ function parseDailyCap(value: string | undefined): number {
   return Math.floor(parsed);
 }
 
-function utcDayStart(nowIso: string): string {
-  return `${nowIso.slice(0, 10)}T00:00:00.000Z`;
+function shanghaiBusinessDayBounds(nowIso: string): { start: string; end: string } {
+  const offsetMs = 8 * 60 * 60 * 1000;
+  const nowMs = new Date(nowIso).getTime();
+  const shanghai = new Date(nowMs + offsetMs);
+  const dayStartShanghaiMs = Date.UTC(
+    shanghai.getUTCFullYear(),
+    shanghai.getUTCMonth(),
+    shanghai.getUTCDate(),
+  );
+  const startUtcMs = dayStartShanghaiMs - offsetMs;
+
+  return {
+    start: new Date(startUtcMs).toISOString(),
+    end: new Date(startUtcMs + 24 * 60 * 60 * 1000).toISOString(),
+  };
 }
 
 function parseCliArgs(argv: string[]): Pick<CutoverCheckOptions, "campId"> {
@@ -122,8 +136,16 @@ const isDirectRun =
 
 if (isDirectRun) {
   loadLocalEnv();
-  const result = await runCutoverCheck({ env: process.env, ...parseCliArgs(process.argv.slice(2)) });
-  if (!result.ok) {
+  try {
+    const result = await runCutoverCheck({ env: process.env, ...parseCliArgs(process.argv.slice(2)) });
+    if (!result.ok) {
+      process.exitCode = 1;
+    }
+  } catch (error) {
+    console.log(JSON.stringify({
+      ok: false,
+      error: error instanceof Error ? error.message : "cutover_check_failed",
+    }));
     process.exitCode = 1;
   }
 }

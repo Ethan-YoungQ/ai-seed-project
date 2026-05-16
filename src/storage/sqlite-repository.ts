@@ -386,6 +386,8 @@ CREATE INDEX IF NOT EXISTS idx_ai_boot_events_member_created
   ON ai_boot_events (member_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_ai_boot_events_content_hash
   ON ai_boot_events (camp_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_events_camp_created_id
+  ON ai_boot_events (camp_id, created_at, id);
 
 CREATE TABLE IF NOT EXISTS ai_boot_score_events (
   id TEXT PRIMARY KEY,
@@ -1401,6 +1403,31 @@ export class SqliteRepository {
     return row ? this.mapAiBootEventRow(row) : undefined;
   }
 
+  findPreviousAiBootEventByContentHash(input: {
+    campId: string;
+    contentHash: string;
+    beforeCreatedAt: string;
+    beforeEventId: string;
+  }): AiBootEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = @campId
+           AND content_hash = @contentHash
+           AND (
+             created_at < @beforeCreatedAt OR
+             (created_at = @beforeCreatedAt AND id < @beforeEventId)
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`
+      )
+      .get(input) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootEventRow(row) : undefined;
+  }
+
   listAiBootEventsForReplay(input: {
     campId: string;
     since: string;
@@ -1551,6 +1578,34 @@ export class SqliteRepository {
     return row ? this.mapAiBootScoreEventRow(row) : undefined;
   }
 
+  findPreviousApprovedAiBootScoreEventByContentHash(input: {
+    campId: string;
+    contentHash: string;
+    beforeCreatedAt: string;
+    beforeEventId: string;
+  }): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.event_id, s.camp_id, s.member_id, s.category, s.score_delta,
+                s.confidence, s.status, s.notify_policy, s.reason, s.evidence,
+                s.badges_json, s.model_provider, s.model_name, s.prompt_version,
+                s.reviewed_by_op_id, s.review_note, s.decided_at
+         FROM ai_boot_score_events s
+         INNER JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE e.camp_id = @campId
+           AND e.content_hash = @contentHash
+           AND s.status = 'approved'
+           AND (
+             e.created_at < @beforeCreatedAt OR
+             (e.created_at = @beforeCreatedAt AND e.id < @beforeEventId)
+           )
+         ORDER BY e.created_at DESC, e.id DESC, s.decided_at DESC, s.id DESC
+         LIMIT 1`
+      )
+      .get(input) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
   countApprovedAiBootScoreEvents(input: {
     campId: string;
     memberId: string;
@@ -1575,6 +1630,37 @@ export class SqliteRepository {
         input.category,
         input.decidedAtFrom,
         input.decidedAtTo
+      ) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countApprovedAiBootScoreEventsBefore(input: {
+    campId: string;
+    memberId: string;
+    category: AiBootScoreCategory;
+    decidedAtFrom: string;
+    decidedAtTo: string;
+    beforeDecidedAt: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE camp_id = ?
+           AND member_id = ?
+           AND category = ?
+           AND status = 'approved'
+           AND decided_at >= ?
+           AND decided_at < ?
+           AND decided_at < ?`
+      )
+      .get(
+        input.campId,
+        input.memberId,
+        input.category,
+        input.decidedAtFrom,
+        input.decidedAtTo,
+        input.beforeDecidedAt
       ) as { count: number };
     return Number(row.count ?? 0);
   }
@@ -1653,7 +1739,9 @@ export class SqliteRepository {
       .prepare(
         `SELECT COUNT(*) AS count
          FROM ai_boot_score_events
-         WHERE notify_policy = 'group_praise'
+         WHERE status = 'approved'
+           AND confidence = 'high'
+           AND notify_policy = 'group_praise'
            AND decided_at >= @dayStartIso
            AND decided_at < @dayEndIso
            AND (@campId IS NULL OR camp_id = @campId)`

@@ -4,7 +4,10 @@ import type {
   AiBootEventRecord,
   AiBootScoreEventRecord,
 } from "../../src/domain/v3/ai-boot-types.js";
-import { runShadowReplay } from "../../src/scripts/ai-boot-shadow-replay.js";
+import {
+  resolveShadowReplayDirectRunOptions,
+  runShadowReplay,
+} from "../../src/scripts/ai-boot-shadow-replay.js";
 import { SqliteRepository } from "../../src/storage/sqlite-repository.js";
 
 const repositories: SqliteRepository[] = [];
@@ -253,6 +256,166 @@ describe("runShadowReplay", () => {
       status: "shadow",
       category: "daily_participation",
       scoreDelta: 1,
+    });
+  });
+
+  it("does not use future events or future approved scores when checking duplicate content", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-early",
+      sourceMessageId: "om-early",
+      rawText: "我用AI做复盘，沉淀了实践经验",
+      sanitizedText: "我用AI做复盘，沉淀了实践经验",
+      contentHash: "hash-duplicate",
+      createdAt: "2026-05-16T00:00:00.000Z",
+    }));
+    repository.insertAiBootEvent(event({
+      id: "evt-late",
+      sourceMessageId: "om-late",
+      rawText: "我用AI做复盘，沉淀了实践经验",
+      sanitizedText: "我用AI做复盘，沉淀了实践经验",
+      contentHash: "hash-duplicate",
+      createdAt: "2026-05-16T00:00:01.000Z",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-live-late",
+      eventId: "evt-late",
+      category: "ai_practice_reflection",
+      status: "approved",
+      decidedAt: "2026-05-16T00:00:02.000Z",
+    }));
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: vi.fn()
+        .mockReturnValueOnce("score-shadow-early")
+        .mockReturnValueOnce("score-shadow-late"),
+      stdout: () => undefined,
+    });
+
+    expect(result).toMatchObject({
+      eventsReplayed: 2,
+      approved: 1,
+      reviewRequired: 1,
+    });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-early")).toMatchObject({
+      status: "shadow",
+      category: "ai_practice_reflection",
+    });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-late")).toMatchObject({
+      status: "shadow",
+      category: "formal_task",
+      scoreDelta: 1,
+    });
+  });
+
+  it("uses event time and in-memory replay state for daily participation caps", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-trivial-1",
+      sourceMessageId: "om-trivial-1",
+      rawText: "ok",
+      sanitizedText: "ok",
+      contentHash: "hash-trivial-1",
+      createdAt: "2026-05-16T01:00:00.000Z",
+    }));
+    repository.insertAiBootEvent(event({
+      id: "evt-trivial-2",
+      sourceMessageId: "om-trivial-2",
+      rawText: "谢谢",
+      sanitizedText: "谢谢",
+      contentHash: "hash-trivial-2",
+      createdAt: "2026-05-16T02:00:00.000Z",
+    }));
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-18T00:00:00.000Z",
+      uuid: vi.fn()
+        .mockReturnValueOnce("score-shadow-trivial-1")
+        .mockReturnValueOnce("score-shadow-trivial-2"),
+      stdout: () => undefined,
+    });
+
+    expect(result).toMatchObject({
+      eventsReplayed: 2,
+      approved: 1,
+      noScore: 1,
+    });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-trivial-1")).toMatchObject({
+      status: "shadow",
+      category: "daily_participation",
+      scoreDelta: 1,
+    });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-trivial-2")).toMatchObject({
+      status: "shadow",
+      scoreDelta: 0,
+    });
+  });
+
+  it("handles malformed stored evidence and missing members without crashing", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-bad-evidence",
+      memberId: "missing-member",
+      sourceMessageId: "om-bad-evidence",
+      rawText: "ok",
+      sanitizedText: "ok",
+      attachmentJson: JSON.stringify([{ fileKey: "no-type" }, null, "bad"]),
+      evidenceJson: JSON.stringify({ malformed: true }),
+      contentHash: "hash-bad-evidence",
+    }));
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "score-shadow-bad-evidence",
+      stdout: () => undefined,
+    });
+
+    expect(result).toMatchObject({ eventsReplayed: 1, noScore: 1 });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-bad-evidence")).toMatchObject({
+      status: "shadow",
+      scoreDelta: 0,
+    });
+  });
+
+  it("requires an LLM client for direct CLI mode unless heuristic fallback is explicit", () => {
+    expect(resolveShadowReplayDirectRunOptions(
+      {} as NodeJS.ProcessEnv,
+      ["--since", "2026-05-16"],
+    )).toEqual({
+      ok: false,
+      error: "llm_client_required",
+    });
+
+    expect(resolveShadowReplayDirectRunOptions(
+      { AI_BOOT_SHADOW_REPLAY_ALLOW_HEURISTIC: "true" } as NodeJS.ProcessEnv,
+      ["--since", "2026-05-16"],
+    )).toMatchObject({
+      ok: true,
+      options: { allowHeuristic: true, since: "2026-05-16" },
+    });
+
+    expect(resolveShadowReplayDirectRunOptions(
+      {} as NodeJS.ProcessEnv,
+      ["--allow-heuristic"],
+    )).toMatchObject({
+      ok: true,
+      options: { allowHeuristic: true },
     });
   });
 });

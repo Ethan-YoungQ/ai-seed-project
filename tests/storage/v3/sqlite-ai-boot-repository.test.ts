@@ -390,4 +390,117 @@ describe("SqliteRepository ai boot v3", () => {
     })).toBe(1);
     r.close();
   });
+
+  it("finds only previous ai boot events and approved scores by content hash", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({
+      id: "evt-a",
+      sourceMessageId: "om-a",
+      contentHash: "hash-same",
+      createdAt: "2026-05-16T00:00:00.000Z",
+    }));
+    r.insertAiBootEvent(event({
+      id: "evt-b",
+      sourceMessageId: "om-b",
+      contentHash: "hash-same",
+      createdAt: "2026-05-16T00:00:00.000Z",
+    }));
+    r.insertAiBootEvent(event({
+      id: "evt-c",
+      sourceMessageId: "om-c",
+      contentHash: "hash-same",
+      createdAt: "2026-05-16T00:00:01.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-a",
+      eventId: "evt-a",
+      status: "approved",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-c",
+      eventId: "evt-c",
+      status: "approved",
+    }));
+
+    expect(r.findPreviousAiBootEventByContentHash({
+      campId: "default",
+      contentHash: "hash-same",
+      beforeCreatedAt: "2026-05-16T00:00:00.000Z",
+      beforeEventId: "evt-a",
+    })).toBeUndefined();
+    expect(r.findPreviousAiBootEventByContentHash({
+      campId: "default",
+      contentHash: "hash-same",
+      beforeCreatedAt: "2026-05-16T00:00:00.000Z",
+      beforeEventId: "evt-b",
+    })?.id).toBe("evt-a");
+    expect(r.findPreviousApprovedAiBootScoreEventByContentHash({
+      campId: "default",
+      contentHash: "hash-same",
+      beforeCreatedAt: "2026-05-16T00:00:01.000Z",
+      beforeEventId: "evt-c",
+    })?.id).toBe("score-a");
+    r.close();
+  });
+
+  it("counts approved score events before a cutoff and approved high group praise notifications only", () => {
+    const r = repo();
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-before",
+      eventId: "evt-before",
+      category: "daily_participation",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      confidence: "high",
+      decidedAt: "2026-05-16T15:30:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-after",
+      eventId: "evt-after",
+      category: "daily_participation",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      confidence: "high",
+      decidedAt: "2026-05-16T16:30:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review",
+      eventId: "evt-review",
+      status: "review_required",
+      notifyPolicy: "group_praise",
+      confidence: "high",
+      decidedAt: "2026-05-16T17:00:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-shadow",
+      eventId: "shadow-replay:evt-shadow",
+      status: "shadow",
+      notifyPolicy: "group_praise",
+      confidence: "high",
+      decidedAt: "2026-05-16T18:00:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-low",
+      eventId: "evt-low",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      confidence: "low",
+      decidedAt: "2026-05-16T19:00:00.000Z",
+    }));
+
+    expect(r.countApprovedAiBootScoreEventsBefore({
+      campId: "default",
+      memberId: "m-1",
+      category: "daily_participation",
+      decidedAtFrom: "2026-05-16T00:00:00.000Z",
+      decidedAtTo: "2026-05-17T00:00:00.000Z",
+      beforeDecidedAt: "2026-05-16T16:00:00.000Z",
+    })).toBe(1);
+    expect(r.countAiBootGroupPraiseNotificationsForDay({
+      campId: "default",
+      dayStartIso: "2026-05-16T16:00:00.000Z",
+      dayEndIso: "2026-05-17T16:00:00.000Z",
+    })).toBe(1);
+    r.close();
+  });
 });
