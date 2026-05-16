@@ -22,6 +22,12 @@ import type {
 } from "../domain/types.js";
 import type { DimensionScoreRow } from "../domain/v2/rank-context.js";
 import type { ScoringDimension } from "../domain/v2/scoring-items-config.js";
+import type {
+  AiBootDecisionStatus,
+  AiBootEventRecord,
+  AiBootEventStatus,
+  AiBootScoreEventRecord
+} from "../domain/v3/ai-boot-types.js";
 
 // ---------------------------------------------------------------------------
 // Inlined from domain/ranking.ts (deleted as part of v1 legacy cleanup)
@@ -356,6 +362,65 @@ CREATE INDEX IF NOT EXISTS idx_v2_scoring_events_member_period_status
   ON v2_scoring_item_events (member_id, period_id, status);
 CREATE INDEX IF NOT EXISTS idx_v2_scoring_events_status_decided
   ON v2_scoring_item_events (status, decided_at);
+
+CREATE TABLE IF NOT EXISTS ai_boot_events (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  source_message_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  raw_text TEXT NOT NULL DEFAULT '',
+  sanitized_text TEXT NOT NULL DEFAULT '',
+  attachment_json TEXT NOT NULL DEFAULT '[]',
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  content_hash TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'received',
+  engine_version TEXT NOT NULL,
+  ruleset_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(camp_id, source_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_events_member_created
+  ON ai_boot_events (member_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_events_content_hash
+  ON ai_boot_events (camp_id, content_hash);
+
+CREATE TABLE IF NOT EXISTS ai_boot_score_events (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  score_delta INTEGER NOT NULL,
+  confidence TEXT NOT NULL,
+  status TEXT NOT NULL,
+  notify_policy TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  badges_json TEXT NOT NULL DEFAULT '[]',
+  model_provider TEXT NOT NULL DEFAULT '',
+  model_name TEXT NOT NULL DEFAULT '',
+  prompt_version TEXT NOT NULL DEFAULT '',
+  reviewed_by_op_id TEXT,
+  review_note TEXT,
+  decided_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_member_status
+  ON ai_boot_score_events (member_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_status_decided
+  ON ai_boot_score_events (status, decided_at DESC);
+
+CREATE TABLE IF NOT EXISTS ai_boot_legacy_score_snapshots (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  total_score INTEGER NOT NULL,
+  dimension_json TEXT NOT NULL DEFAULT '{}',
+  source_note TEXT NOT NULL,
+  snapshot_at TEXT NOT NULL,
+  UNIQUE(camp_id, member_id)
+);
 
 CREATE TABLE IF NOT EXISTS v2_member_dimension_scores (
   member_id TEXT NOT NULL,
@@ -1274,6 +1339,120 @@ export class SqliteRepository {
       reviewNote: row.review_note === null ? null : String(row.review_note),
       createdAt: String(row.created_at),
       decidedAt: row.decided_at === null ? null : String(row.decided_at)
+    };
+  }
+
+  insertAiBootEvent(input: AiBootEventRecord): void {
+    this.db
+      .prepare(
+        `INSERT OR IGNORE INTO ai_boot_events
+          (id, camp_id, chat_id, member_id, source_message_id, event_type,
+           raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+           status, engine_version, ruleset_version, created_at)
+         VALUES
+          (@id, @campId, @chatId, @memberId, @sourceMessageId, @eventType,
+           @rawText, @sanitizedText, @attachmentJson, @evidenceJson, @contentHash,
+           @status, @engineVersion, @rulesetVersion, @createdAt)`
+      )
+      .run(input);
+  }
+
+  findAiBootEventByMessageId(sourceMessageId: string): AiBootEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events WHERE source_message_id = ? LIMIT 1`
+      )
+      .get(sourceMessageId) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootEventRow(row) : undefined;
+  }
+
+  insertAiBootScoreEvent(input: AiBootScoreEventRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO ai_boot_score_events
+          (id, event_id, camp_id, member_id, category, score_delta, confidence,
+           status, notify_policy, reason, evidence, badges_json, model_provider,
+           model_name, prompt_version, reviewed_by_op_id, review_note, decided_at)
+         VALUES
+          (@id, @eventId, @campId, @memberId, @category, @scoreDelta, @confidence,
+           @status, @notifyPolicy, @reason, @evidence, @badgesJson, @modelProvider,
+           @modelName, @promptVersion, @reviewedByOpId, @reviewNote, @decidedAt)`
+      )
+      .run(input);
+  }
+
+  findAiBootScoreEventById(id: string): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
+                status, notify_policy, reason, evidence, badges_json, model_provider,
+                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
+         FROM ai_boot_score_events WHERE id = ? LIMIT 1`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  sumApprovedAiBootScore(campId: string, memberId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(score_delta), 0) AS total
+         FROM ai_boot_score_events
+         WHERE camp_id = ? AND member_id = ? AND status = 'approved'`
+      )
+      .get(campId, memberId) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
+  private mapAiBootEventRow(row: Record<string, unknown>): AiBootEventRecord {
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      chatId: String(row.chat_id),
+      memberId: String(row.member_id),
+      sourceMessageId: String(row.source_message_id),
+      eventType: String(row.event_type) as AiBootEventRecord["eventType"],
+      rawText: String(row.raw_text),
+      sanitizedText: String(row.sanitized_text),
+      attachmentJson: String(row.attachment_json),
+      evidenceJson: String(row.evidence_json),
+      contentHash: String(row.content_hash),
+      status: String(row.status) as AiBootEventStatus,
+      engineVersion: String(row.engine_version),
+      rulesetVersion: String(row.ruleset_version),
+      createdAt: String(row.created_at)
+    };
+  }
+
+  private mapAiBootScoreEventRow(row: Record<string, unknown>): AiBootScoreEventRecord {
+    return {
+      id: String(row.id),
+      eventId: String(row.event_id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      category: String(row.category) as AiBootScoreEventRecord["category"],
+      scoreDelta: Number(row.score_delta),
+      confidence: String(row.confidence) as AiBootScoreEventRecord["confidence"],
+      status: String(row.status) as AiBootDecisionStatus,
+      notifyPolicy: String(row.notify_policy) as AiBootScoreEventRecord["notifyPolicy"],
+      reason: String(row.reason),
+      evidence: String(row.evidence),
+      badgesJson: String(row.badges_json),
+      modelProvider: String(row.model_provider),
+      modelName: String(row.model_name),
+      promptVersion: String(row.prompt_version),
+      reviewedByOpId:
+        row.reviewed_by_op_id === null || row.reviewed_by_op_id === undefined
+          ? null
+          : String(row.reviewed_by_op_id),
+      reviewNote:
+        row.review_note === null || row.review_note === undefined
+          ? null
+          : String(row.review_note),
+      decidedAt: String(row.decided_at)
     };
   }
 
