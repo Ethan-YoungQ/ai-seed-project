@@ -15,8 +15,7 @@ import {
   reviewPageHandler
 } from "../../../../../src/services/feishu/cards/handlers/review-queue-handler.js";
 import {
-  memberToggleHiddenHandler,
-  memberChangeRoleHandler
+  memberToggleHiddenHandler
 } from "../../../../../src/services/feishu/cards/handlers/member-mgmt-handler.js";
 import {
   manualAdjustConfirmHandler
@@ -131,9 +130,8 @@ function buildDispatcher(deps: CardHandlerDeps): CardActionDispatcher {
   dispatcher.register("review_queue", "review_reject", reviewRejectHandler);
   dispatcher.register("review_queue", "review_page", reviewPageHandler);
 
-  // Member management handlers
-  dispatcher.register("member_mgmt", "member_toggle_hidden", memberToggleHiddenHandler);
-  dispatcher.register("member_mgmt", "member_change_role", memberChangeRoleHandler);
+  // Member management handler
+  dispatcher.register("member_mgmt", "member_mgmt_confirm", memberToggleHiddenHandler);
 
   // Manual adjust handler
   dispatcher.register("manual_adjust", "manual_adjust_confirm", manualAdjustConfirmHandler);
@@ -204,14 +202,15 @@ describe("operator cards smoke test", () => {
     const toggleResult = await dispatcher.dispatch({
       ...BASE_CTX,
       cardType: "member_mgmt",
-      actionName: "member_toggle_hidden",
+      actionName: "member_mgmt_confirm",
       payload: {
-        action: "member_toggle_hidden",
-        memberId: "m-smoke-1",
-        hidden: true
+        action: "member_mgmt_confirm",
+        member_mgmt_select_member: "m-smoke-1",
+        member_mgmt_select_action: "hide"
       }
     });
-    expect(toggleResult.newCardJson).toBeDefined();
+    expect(toggleResult.newCardJson).toBeUndefined();
+    expect(toggleResult.toast?.type).toBe("success");
     expect(deps.adminApiClient.patchMember).toHaveBeenCalledWith("m-smoke-1", {
       hiddenFromBoard: true
     });
@@ -219,14 +218,15 @@ describe("operator cards smoke test", () => {
     const roleResult = await dispatcher.dispatch({
       ...BASE_CTX,
       cardType: "member_mgmt",
-      actionName: "member_change_role",
+      actionName: "member_mgmt_confirm",
       payload: {
-        action: "member_change_role",
-        memberId: "m-smoke-1",
-        roleType: "observer"
+        action: "member_mgmt_confirm",
+        member_mgmt_select_member: "m-smoke-1",
+        member_mgmt_select_action: "role_observer"
       }
     });
-    expect(roleResult.newCardJson).toBeDefined();
+    expect(roleResult.newCardJson).toBeUndefined();
+    expect(roleResult.toast?.type).toBe("success");
     expect(deps.adminApiClient.patchMember).toHaveBeenCalledWith("m-smoke-1", {
       roleType: "observer"
     });
@@ -239,9 +239,9 @@ describe("operator cards smoke test", () => {
       actionName: "manual_adjust_confirm",
       payload: {
         action: "manual_adjust_confirm",
-        memberId: "m-smoke-1",
-        itemCode: "H2",
-        delta: 5,
+        manual_adjust_select_member: "m-smoke-1",
+        manual_adjust_select_item: "H2",
+        manual_adjust_select_delta: "5",
         note: "烟测补分"
       }
     });

@@ -18,9 +18,9 @@ function fakeCtx(overrides: Partial<CardActionContext> = {}): CardActionContext 
     actionName: "manual_adjust_confirm",
     actionPayload: {
       action: "manual_adjust_confirm",
-      memberId: "m-1",
-      itemCode: "K3",
-      delta: 3,
+      manual_adjust_select_member: "m-1",
+      manual_adjust_select_item: "K3",
+      manual_adjust_select_delta: "3",
       note: "手动补分测试"
     },
     messageId: "om-1",
@@ -136,9 +136,9 @@ describe("manualAdjustConfirmHandler", () => {
     const ctx = fakeCtx({
       actionPayload: {
         action: "manual_adjust_confirm",
-        memberId: "m-1",
-        itemCode: "K3",
-        delta: 0,
+        manual_adjust_select_member: "m-1",
+        manual_adjust_select_item: "K3",
+        manual_adjust_select_delta: "0",
         note: "备注"
       }
     });
@@ -146,7 +146,7 @@ describe("manualAdjustConfirmHandler", () => {
     const result = await manualAdjustConfirmHandler(ctx, deps);
 
     expect(result.toast?.type).toBe("error");
-    expect(result.toast?.content).toContain("0");
+    expect(result.toast?.content).toContain("分值变化无效");
     expect(deps.ingestor.ingest).not.toHaveBeenCalled();
   });
 
@@ -155,8 +155,8 @@ describe("manualAdjustConfirmHandler", () => {
     const ctx = fakeCtx({
       actionPayload: {
         action: "manual_adjust_confirm",
-        itemCode: "K3",
-        delta: 3,
+        manual_adjust_select_item: "K3",
+        manual_adjust_select_delta: "3",
         note: "备注"
       }
     });

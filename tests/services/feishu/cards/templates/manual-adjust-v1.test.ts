@@ -37,7 +37,7 @@ describe("manual-adjust-v1 template", () => {
     expect(json).toContain("grey");
   });
 
-  test("confirm button payload contains action=manual_adjust_confirm with all fields", () => {
+  test("form controls use WS select actions and confirm button payload", () => {
     const card = buildManualAdjustCard({
       members: [makeMember(1)],
       selectedMemberId: "m-1",
@@ -47,11 +47,13 @@ describe("manual-adjust-v1 template", () => {
     });
     const json = JSON.stringify(card);
 
+    expect(json).toContain("manual_adjust_select_member");
+    expect(json).toContain("manual_adjust_select_item");
+    expect(json).toContain("manual_adjust_select_delta");
     expect(json).toContain("manual_adjust_confirm");
-    expect(json).toContain('"memberId":"m-1"');
-    expect(json).toContain('"itemCode":"K3"');
-    expect(json).toContain('"delta":5');
-    expect(json).toContain("测试备注");
+    expect(json).toContain('"value":"m-1"');
+    expect(json).toContain('"value":"K3"');
+    expect(json).toContain('"value":"5"');
   });
 
   test("member selector lists all provided members", () => {

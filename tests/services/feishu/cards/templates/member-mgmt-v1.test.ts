@@ -37,15 +37,20 @@ describe("member-mgmt-v1 template", () => {
     expect(json).toContain("blue");
   });
 
-  test("member rows display displayName, role, level, hidden status, and action buttons", () => {
+  test("member rows display metadata and WS select/form controls", () => {
     const member = makeMember(3, "operator");
     const card = buildMemberMgmtCard({ members: [member] });
     const json = JSON.stringify(card);
 
     expect(json).toContain(member.displayName);
-    expect(json).toContain("member_toggle_hidden");
-    expect(json).toContain("member_change_role");
+    expect(json).toContain("member_mgmt_select_member");
+    expect(json).toContain("member_mgmt_select_action");
+    expect(json).toContain("member_mgmt_confirm");
     expect(json).toContain(member.id);
+    expect(json).toContain('"value":"hide"');
+    expect(json).toContain('"value":"role_trainer"');
+    expect(json).not.toContain("member_toggle_hidden");
+    expect(json).not.toContain("member_change_role");
   });
 
   test("empty member list shows 暂无成员数据 without action buttons", () => {
@@ -53,6 +58,7 @@ describe("member-mgmt-v1 template", () => {
     const json = JSON.stringify(card);
     expect(json).toContain("暂无成员数据");
     expect(json).not.toContain("member_toggle_hidden");
+    expect(json).not.toContain("member_change_role");
   });
 
   test("20 members full card stays under CARD_SIZE_BUDGET_BYTES", () => {
