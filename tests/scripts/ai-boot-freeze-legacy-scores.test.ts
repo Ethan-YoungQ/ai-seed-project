@@ -220,6 +220,51 @@ describe("runFreezeLegacyScores", () => {
     });
   });
 
+  it("snapshots warned and eliminated student participants for historical carryover", async () => {
+    const repository = makeRepo();
+    const campId = repository.getDefaultCampId()!;
+    const periodId = insertPeriod(repository, campId);
+    repository.ensureMember("user-bob", campId);
+    repository.updateMember("user-bob", {
+      roleType: "student",
+      isParticipant: true,
+      isExcludedFromBoard: false,
+    });
+    const db = (repository as unknown as {
+      db: import("better-sqlite3").Database;
+    }).db;
+    db.prepare("UPDATE members SET status = ? WHERE id = ?").run(
+      "warned",
+      "user-alice"
+    );
+    db.prepare("UPDATE members SET status = ? WHERE id = ?").run(
+      "eliminated",
+      "user-bob"
+    );
+    addDimensionScores(repository, "user-alice", periodId, { K: 4 });
+    addDimensionScores(repository, "user-bob", periodId, { H: 5 });
+    let snapshotIndex = 0;
+
+    const result = await runFreezeLegacyScores({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => `snapshot-status-${++snapshotIndex}`,
+    });
+
+    expect(result.snapshotsWritten).toBe(2);
+    expect(repository.getAiBootLegacyScoreSnapshot(campId, "user-alice")).toEqual({
+      totalScore: 4,
+      dimensionJson: JSON.stringify({ K: 4, H: 0, C: 0, S: 0, G: 0 }),
+      snapshotAt: "2026-05-17T00:00:00.000Z",
+    });
+    expect(repository.getAiBootLegacyScoreSnapshot(campId, "user-bob")).toEqual({
+      totalScore: 5,
+      dimensionJson: JSON.stringify({ K: 0, H: 5, C: 0, S: 0, G: 0 }),
+      snapshotAt: "2026-05-17T00:00:00.000Z",
+    });
+  });
+
   it("creates a complete zero snapshot for an eligible member with no v2 dimension scores", async () => {
     const repository = makeRepo();
     const campId = repository.getDefaultCampId()!;

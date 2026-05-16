@@ -1607,6 +1607,8 @@ export class SqliteRepository {
     isParticipant: boolean;
     isExcludedFromBoard: boolean;
   }> {
+    // Freeze preserves historical carryover. Display filters such as member
+    // status and hidden_from_board are applied by later ranking/read paths.
     const rows = this.db
       .prepare(
         `SELECT id, camp_id, role_type, is_participant, is_excluded_from_board
