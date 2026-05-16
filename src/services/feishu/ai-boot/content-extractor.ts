@@ -40,7 +40,17 @@ export interface ExtractEvidenceOptions {
 type ExtractionState = Pick<EvidenceBundle, "documentText" | "extractionStatus" | "extractionReason">;
 
 const URL_RE = /https?:\/\/[^\s<>"'，。！？；、]+/g;
-const TRAILING_URL_PUNCTUATION_RE = /[)\].,;:!?，。！？；、]+$/;
+const ALWAYS_TRAILING_URL_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", "。", "！", "？", "；", "、", "，"]);
+const CLOSING_DELIMITER_PAIRS: Record<string, string> = {
+  ")": "(",
+  "]": "[",
+  "}": "{",
+  "）": "（",
+  "】": "【",
+  "》": "《",
+  "」": "「",
+  "』": "『",
+};
 const FEISHU_AT_RE = /<at\b[^>]*>.*?<\/at>/g;
 const RAW_MENTION_RE = /@_user_\d+/g;
 const ATTACHMENT_MESSAGE_TYPES = new Set(["image", "file", "media"]);
@@ -58,12 +68,44 @@ function sanitizeText(message: NormalizedFeishuMessage): string {
 function extractUrls(text: string): string[] {
   const urls: string[] = [];
   for (const match of text.matchAll(URL_RE)) {
-    const url = match[0].replace(TRAILING_URL_PUNCTUATION_RE, "");
+    const url = trimUrlBoundaryPunctuation(match[0]);
     if (!urls.includes(url)) {
       urls.push(url);
     }
   }
   return urls;
+}
+
+function countChar(value: string, target: string): number {
+  return [...value].filter((char) => char === target).length;
+}
+
+function hasUnmatchedClosingDelimiter(value: string, close: string): boolean {
+  const open = CLOSING_DELIMITER_PAIRS[close];
+  return Boolean(open) && countChar(value, close) > countChar(value, open);
+}
+
+function trimUrlBoundaryPunctuation(value: string): string {
+  let url = value;
+
+  while (url.length > 0) {
+    const lastChar = [...url].at(-1);
+    if (!lastChar) break;
+
+    if (ALWAYS_TRAILING_URL_PUNCTUATION.has(lastChar)) {
+      url = url.slice(0, -lastChar.length);
+      continue;
+    }
+
+    if (hasUnmatchedClosingDelimiter(url, lastChar)) {
+      url = url.slice(0, -lastChar.length);
+      continue;
+    }
+
+    break;
+  }
+
+  return url;
 }
 
 function shouldIncludeAttachment(message: NormalizedFeishuMessage): boolean {
@@ -106,6 +148,14 @@ function buildHash(input: {
   return createHash("sha256")
     .update(JSON.stringify(input))
     .digest("hex");
+}
+
+function canonicalizeAttachmentsForHash(
+  attachments: EvidenceBundle["attachments"],
+): EvidenceBundle["attachments"] {
+  return [...attachments].sort((left, right) =>
+    JSON.stringify(left).localeCompare(JSON.stringify(right))
+  );
 }
 
 async function extractDocumentEvidence(
@@ -197,7 +247,7 @@ export async function extractEvidence(
     contentHash: buildHash({
       sanitizedText,
       urls,
-      attachments,
+      attachments: canonicalizeAttachmentsForHash(attachments),
       documentText: extraction.documentText,
     }),
   };

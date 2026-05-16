@@ -59,6 +59,49 @@ describe("extractEvidence", () => {
     expect(evidence.urls).toEqual(["https://example.com/a"]);
   });
 
+  it("preserves balanced parentheses that are part of the URL", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "参考 https://example.com/a_(b)",
+      cleanedText: "参考 https://example.com/a_(b)",
+    }));
+
+    expect(evidence.urls).toEqual(["https://example.com/a_(b)"]);
+  });
+
+  it("trims wrapping ASCII parentheses outside the URL", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "参考 (https://example.com/a)",
+      cleanedText: "参考 (https://example.com/a)",
+    }));
+
+    expect(evidence.urls).toEqual(["https://example.com/a"]);
+  });
+
+  it("trims wrapping full-width parentheses outside the URL", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "参考 （https://例子.cn/路径）",
+      cleanedText: "参考 （https://例子.cn/路径）",
+    }));
+
+    expect(evidence.urls).toEqual(["https://例子.cn/路径"]);
+  });
+
+  it("trims Chinese punctuation after URLs", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "一 https://example.com/a。二 https://example.com/b！三 https://example.com/c？四 https://example.com/d；五 https://example.com/e、六 https://example.com/f，",
+      cleanedText: "一 https://example.com/a。二 https://example.com/b！三 https://example.com/c？四 https://example.com/d；五 https://example.com/e、六 https://example.com/f，",
+    }));
+
+    expect(evidence.urls).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+      "https://example.com/c",
+      "https://example.com/d",
+      "https://example.com/e",
+      "https://example.com/f",
+    ]);
+  });
+
   it("keeps unique URLs in first-seen order after punctuation trimming", async () => {
     const evidence = await extractEvidence(makeMsg({
       rawText: "先看 https://example.com/b，再看 https://example.com/a).，再看 https://example.com/b.",
@@ -281,6 +324,31 @@ describe("extractEvidence", () => {
     expect(first.contentHash).toBe(same.contentHash);
     expect(first.contentHash).not.toBe(differentText.contentHash);
     expect(first.contentHash).not.toBe(differentAttachment.contentHash);
+  });
+
+  it("keeps the same hash for the same attachment metadata in different order", async () => {
+    const first = await extractEvidence(makeMsg({
+      messageType: "post",
+      rawText: "同一段文字",
+      cleanedText: "同一段文字",
+      attachmentTypes: ["media", "image"],
+      fileKey: "shared-file-key",
+      fileName: "evidence.bin",
+      fileExt: "bin",
+    }));
+    const reordered = await extractEvidence(makeMsg({
+      messageType: "post",
+      rawText: "同一段文字",
+      cleanedText: "同一段文字",
+      attachmentTypes: ["image", "media"],
+      fileKey: "shared-file-key",
+      fileName: "evidence.bin",
+      fileExt: "bin",
+    }));
+
+    expect(first.attachments.map((attachment) => attachment.type)).toEqual(["media", "image"]);
+    expect(reordered.attachments.map((attachment) => attachment.type)).toEqual(["image", "media"]);
+    expect(first.contentHash).toBe(reordered.contentHash);
   });
 
   it("keeps the same hash for the same document text", async () => {
