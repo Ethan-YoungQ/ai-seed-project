@@ -32,6 +32,7 @@ This writes these values into `/opt/ai-seed-project/.env` before restart:
 - `AI_BOOT_ALLOW_DAILY_DIGEST=false`
 
 ```bash
+set -euo pipefail
 cd /opt/ai-seed-project
 
 ENV_FILE=/opt/ai-seed-project/.env
@@ -104,6 +105,7 @@ Rollback writes these values into `/opt/ai-seed-project/.env` before restart:
 - `AI_BOOT_ALLOW_DAILY_DIGEST=false`
 
 ```bash
+set -euo pipefail
 cd /opt/ai-seed-project
 
 ENV_FILE=/opt/ai-seed-project/.env

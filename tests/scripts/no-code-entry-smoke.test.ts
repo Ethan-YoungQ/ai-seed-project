@@ -110,8 +110,10 @@ describe("no-code entry smoke", () => {
       "docs/scoring-audit/2026-05-16-ai-boot-cutover-runbook.md",
       "utf8",
     );
+    const failFastBlocks = runbook.match(/```bash\nset -euo pipefail/g) ?? [];
 
     expect(runbook).toContain("npm run build\nnpm test\nnpm run ai-boot:freeze-legacy\nnpm run ai-boot:cutover-check");
+    expect(failFastBlocks).toHaveLength(2);
     expect(runbook).toContain("cd /opt/ai-seed-project");
     expect(runbook).toContain("ENV_FILE=/opt/ai-seed-project/.env");
     expect(runbook).toContain("BACKUP_OUTPUT=\"$(./scripts/ops/backup-db.sh)\"");
