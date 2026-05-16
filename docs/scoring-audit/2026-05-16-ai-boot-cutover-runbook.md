@@ -52,6 +52,15 @@ In `v3_shadow` mode:
 
 Review shadow replay metrics before considering any live-mode follow-up. Do not enable group praise or daily digest as part of this shadow deployment.
 
+## 24-hour observation window
+
+Keep `v3_shadow` mode under observation for at least 24 hours before considering live-mode changes. During that 24-hour window, acceptance requires:
+
+- v3 events and shadow score events are created;
+- no v3 group praise is sent;
+- existing production score behavior remains unchanged;
+- shadow replay metrics are available for review.
+
 ## Rollback
 
 If health checks fail, Feishu status does not report the expected mode, or production score behavior changes unexpectedly, return the service to legacy mode and restart:
