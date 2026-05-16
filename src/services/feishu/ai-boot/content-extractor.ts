@@ -39,8 +39,23 @@ export interface ExtractEvidenceOptions {
 
 type ExtractionState = Pick<EvidenceBundle, "documentText" | "extractionStatus" | "extractionReason">;
 
-const URL_RE = /https?:\/\/[^\s<>"'，。！？；、]+/g;
-const ALWAYS_TRAILING_URL_PUNCTUATION = new Set([".", ",", ";", ":", "!", "?", "。", "！", "？", "；", "、", "，"]);
+const URL_RE = /https?:\/\/[^\s<>"'，。！？；、：…]+/g;
+const ALWAYS_TRAILING_URL_PUNCTUATION = new Set([
+  ".",
+  ",",
+  ";",
+  ":",
+  "!",
+  "?",
+  "。",
+  "！",
+  "？",
+  "；",
+  "、",
+  "，",
+  "：",
+  "…",
+]);
 const CLOSING_DELIMITER_PAIRS: Record<string, string> = {
   ")": "(",
   "]": "[",
@@ -50,6 +65,8 @@ const CLOSING_DELIMITER_PAIRS: Record<string, string> = {
   "》": "《",
   "」": "「",
   "』": "『",
+  "”": "“",
+  "’": "‘",
 };
 const FEISHU_AT_RE = /<at\b[^>]*>.*?<\/at>/g;
 const RAW_MENTION_RE = /@_user_\d+/g;

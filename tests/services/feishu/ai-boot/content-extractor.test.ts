@@ -102,6 +102,37 @@ describe("extractEvidence", () => {
     ]);
   });
 
+  it("treats full-width colon as a URL boundary", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "说明 https://example.com：说明",
+      cleanedText: "说明 https://example.com：说明",
+    }));
+
+    expect(evidence.urls).toEqual(["https://example.com"]);
+  });
+
+  it("treats Chinese ellipsis as URL trailing punctuation", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "说明 https://example.com……",
+      cleanedText: "说明 https://example.com……",
+    }));
+
+    expect(evidence.urls).toEqual(["https://example.com"]);
+  });
+
+  it("trims Chinese closing quote and bracket when outside the URL", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "他说“https://example.com/a” 另见《https://example.com/b》 以及【https://example.com/c】",
+      cleanedText: "他说“https://example.com/a” 另见《https://example.com/b》 以及【https://example.com/c】",
+    }));
+
+    expect(evidence.urls).toEqual([
+      "https://example.com/a",
+      "https://example.com/b",
+      "https://example.com/c",
+    ]);
+  });
+
   it("keeps unique URLs in first-seen order after punctuation trimming", async () => {
     const evidence = await extractEvidence(makeMsg({
       rawText: "先看 https://example.com/b，再看 https://example.com/a).，再看 https://example.com/b.",
