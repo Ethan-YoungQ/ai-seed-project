@@ -44,35 +44,39 @@ export async function runFreezeLegacyScores(
     }
 
     const forceFreeze = env.AI_BOOT_FORCE_FREEZE === "true";
-    const snapshotAt = now();
-    let snapshotsWritten = 0;
-    let snapshotsSkipped = 0;
+    const result = repository.runAiBootLegacyFreezeTransaction(() => {
+      const snapshotAt = now();
+      let snapshotsWritten = 0;
+      let snapshotsSkipped = 0;
 
-    for (const member of repository.listEligibleStudents(campId)) {
-      const existing = repository.getAiBootLegacyScoreSnapshot(campId, member.id);
-      if (existing && !forceFreeze) {
-        snapshotsSkipped += 1;
-        continue;
+      for (const member of repository.listAiBootLegacyFreezeCandidates(campId)) {
+        const existing = repository.getAiBootLegacyScoreSnapshot(campId, member.id);
+        if (existing && !forceFreeze) {
+          snapshotsSkipped += 1;
+          continue;
+        }
+
+        const scores = repository.fetchAiBootLegacyDimensionScoreTotals(member.id);
+        repository.upsertAiBootLegacyScoreSnapshot({
+          id: uuid(),
+          campId,
+          memberId: member.id,
+          totalScore: scores.totalScore,
+          dimensionJson: JSON.stringify(scores.dimensions),
+          sourceNote: "freeze:v2_member_dimension_scores",
+          snapshotAt
+        });
+        snapshotsWritten += 1;
       }
 
-      const scores = repository.fetchAiBootLegacyDimensionScoreTotals(member.id);
-      repository.upsertAiBootLegacyScoreSnapshot({
-        id: uuid(),
-        campId,
-        memberId: member.id,
-        totalScore: scores.totalScore,
-        dimensionJson: JSON.stringify(scores.dimensions),
-        sourceNote: "freeze:v2_member_dimension_scores",
-        snapshotAt
-      });
-      snapshotsWritten += 1;
-    }
+      return { campId, snapshotsWritten, snapshotsSkipped };
+    });
 
     console.log(
-      `snapshots_written=${snapshotsWritten} camp=${campId} snapshots_skipped=${snapshotsSkipped}`
+      `snapshots_written=${result.snapshotsWritten} camp=${campId} snapshots_skipped=${result.snapshotsSkipped}`
     );
 
-    return { campId, snapshotsWritten, snapshotsSkipped };
+    return result;
   } finally {
     if (ownedRepo) {
       repository.close();

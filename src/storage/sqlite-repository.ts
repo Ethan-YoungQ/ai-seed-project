@@ -1600,6 +1600,38 @@ export class SqliteRepository {
     };
   }
 
+  listAiBootLegacyFreezeCandidates(campId: string): Array<{
+    id: string;
+    campId: string;
+    roleType: MemberProfile["roleType"];
+    isParticipant: boolean;
+    isExcludedFromBoard: boolean;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT id, camp_id, role_type, is_participant, is_excluded_from_board
+         FROM members
+         WHERE camp_id = ?
+           AND role_type = 'student'
+           AND is_participant = 1
+           AND is_excluded_from_board = 0
+         ORDER BY id ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      roleType: row.role_type as MemberProfile["roleType"],
+      isParticipant: asBoolean(Number(row.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board))
+    }));
+  }
+
+  runAiBootLegacyFreezeTransaction<T>(work: () => T): T {
+    return this.db.transaction(work).immediate();
+  }
+
   fetchDimensionCumulativeForRanking(
     campId: string,
     dimension: string,
