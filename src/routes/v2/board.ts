@@ -97,6 +97,8 @@ export function registerV2BoardRoutes(
     }
 
     try {
+      let currentRank = 1;
+      let lastScore: number | null = null;
       const rows = deps.repository
         .fetchRankingByCamp(campId)
         .map((row) => {
@@ -118,15 +120,14 @@ export function registerV2BoardRoutes(
           }
           return left.memberName.localeCompare(right.memberName);
         })
-        .map((row, index, sortedRows) => {
-          if (
-            index === 0 ||
-            effectiveRankingScore(row) < effectiveRankingScore(sortedRows[index - 1])
-          ) {
-            return { ...row, rank: index + 1 };
+        .map((row, index) => {
+          const score = effectiveRankingScore(row);
+          if (lastScore !== null && score < lastScore) {
+            currentRank = index + 1;
           }
+          lastScore = score;
 
-          return { ...row, rank: sortedRows[index - 1].rank };
+          return { ...row, rank: currentRank };
         });
       const groupName = boardDeps
         ? await resolveGroupName(boardDeps)

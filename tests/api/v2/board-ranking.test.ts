@@ -283,6 +283,94 @@ describe("GET /api/v2/board/ranking", () => {
       totalScore: 0,
     });
   });
+
+  it("recomputes tie ranks from effective totals instead of old v2 ranks", async () => {
+    const dbPath = databasePath();
+    const repo = new SqliteRepository(dbPath);
+    repo.seedDemo();
+
+    const members = [
+      { id: "tie-a", name: "Alpha", v2Aq: 90 },
+      { id: "tie-b", name: "Bravo", v2Aq: 80 },
+      { id: "old-top", name: "Delta", v2Aq: 110 },
+    ];
+
+    for (const member of members) {
+      repo.ensureMember(member.id, "demo-camp");
+      repo.updateMember(member.id, {
+        roleType: "student",
+        isParticipant: true,
+        isExcludedFromBoard: false,
+        displayName: member.name,
+      });
+    }
+
+    const db = (repo as unknown as {
+      db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    }).db;
+    for (const member of members) {
+      db.prepare(
+        `INSERT INTO v2_window_snapshots (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score, c_score, s_score, g_score, growth_bonus, snapshot_at)
+         VALUES (?, 'w-W1', ?, ?, ?, 10, 10, 10, 10, 10, 0, '2026-04-01T00:00:00Z')`
+      ).run(`snap-${member.id}`, member.id, member.v2Aq, member.v2Aq);
+    }
+
+    repo.upsertAiBootLegacyScoreSnapshot({
+      id: "legacy-tie-a",
+      campId: "demo-camp",
+      memberId: "tie-a",
+      totalScore: 100,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+
+    repo.insertAiBootEvent(aiBootEvent("tie-b", { id: "evt-tie-b" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("tie-b", {
+        id: "score-tie-b",
+        eventId: "evt-tie-b",
+        scoreDelta: 100,
+      })
+    );
+
+    repo.upsertAiBootLegacyScoreSnapshot({
+      id: "legacy-old-top",
+      campId: "demo-camp",
+      memberId: "old-top",
+      totalScore: 50,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v2/board/ranking?campId=demo-camp",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const rows = body.rows.filter((row: { memberId: string }) =>
+      members.some((member) => member.id === row.memberId)
+    );
+
+    expect(rows.map((row: { memberName: string }) => row.memberName)).toEqual([
+      "Alpha",
+      "Bravo",
+      "Delta",
+    ]);
+    expect(rows.map((row: { cumulativeAq: number }) => row.cumulativeAq)).toEqual([
+      100,
+      100,
+      50,
+    ]);
+    expect(rows.map((row: { rank: number }) => row.rank)).toEqual([1, 1, 3]);
+  });
 });
 
 describe("fetchRankingByCamp repository method", () => {
