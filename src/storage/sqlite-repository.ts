@@ -1445,7 +1445,9 @@ export class SqliteRepository {
                 status, notify_policy, reason, evidence, badges_json, model_provider,
                 model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
          FROM ai_boot_score_events
-         WHERE camp_id = @campId AND status = 'review_required'
+         WHERE camp_id = @campId
+           AND status = 'review_required'
+           AND confidence = 'low'
          ORDER BY CASE confidence
                     WHEN 'low' THEN 0
                     WHEN 'medium' THEN 1

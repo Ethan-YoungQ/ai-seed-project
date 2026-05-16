@@ -209,7 +209,7 @@ describe("SqliteRepository ai boot v3", () => {
       campId: "default",
       limit: 10,
       offset: 0,
-    }).map((row) => row.id)).toEqual(["score-review-old", "score-review-new"]);
+    }).map((row) => row.id)).toEqual(["score-review-old"]);
 
     r.updateAiBootScoreDecision({
       id: "score-review-old",

@@ -137,6 +137,13 @@ describe("v3 ai boot operator review APIs", () => {
       status: "approved",
       evidence: "approved evidence",
     });
+    seedScoreEvent(repo, {
+      id: "score-medium-review",
+      eventId: "evt-medium-review",
+      status: "review_required",
+      confidence: "medium",
+      evidence: "medium confidence evidence",
+    });
     repo.close();
 
     const app = await createApp({ databaseUrl: dbPath });
@@ -152,6 +159,7 @@ describe("v3 ai boot operator review APIs", () => {
     const body = res.json();
     expect(body.ok).toBe(true);
     expect(body.rows).toHaveLength(1);
+    expect(body.rows.map((row: { id: string }) => row.id)).not.toContain("score-medium-review");
     expect(body.rows[0]).toMatchObject({
       id: "score-old-low",
       status: "review_required",
