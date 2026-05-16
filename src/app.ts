@@ -11,6 +11,7 @@ import type { FeishuApiClient } from "./services/feishu/client.js";
 import { LarkFeishuApiClient } from "./services/feishu/client.js";
 import type { FeishuConfig } from "./services/feishu/config.js";
 import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config.js";
+import { readAiBootConfig } from "./services/feishu/ai-boot/config.js";
 import type { FeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
@@ -168,6 +169,7 @@ export async function createApp(options?: {
       : undefined;
 
   const cardRepoDeps = cardRepoAdapter(repository);
+  const aiBootConfig = readAiBootConfig(process.env);
 
   // Dashboard URL：优先 FEISHU_LEADERBOARD_URL，其次 PUBLIC_HOST，最后硬编码
   const dashboardUrl =
@@ -412,6 +414,11 @@ export async function createApp(options?: {
         timeoutMs: llmConfig.timeoutMs,
         maxInputChars: llmConfig.maxInputChars,
         concurrency: llmConfig.concurrency
+      },
+      aiBoot: {
+        engineMode: aiBootConfig.engineMode,
+        allowGroupPraise: aiBootConfig.allowGroupPraise,
+        allowDailyDigest: aiBootConfig.allowDailyDigest,
       },
       groupMessageReadAccess: groupMessageReadProbe?.ok ?? null,
       groupMessageReadProbe
