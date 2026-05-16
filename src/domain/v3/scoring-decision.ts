@@ -67,10 +67,14 @@ export interface ScoringDecision {
 }
 
 export function parseScoringDecision(raw: unknown): ScoringDecision {
-  return normalizeDecision(scoringDecisionSchema.parse(raw));
+  return normalizeDecision(raw);
 }
 
-export function normalizeDecision(input: ScoringDecision): ScoringDecision {
+export function normalizeDecision(input: unknown): ScoringDecision {
+  return normalizeParsedDecision(scoringDecisionSchema.parse(input));
+}
+
+function normalizeParsedDecision(input: ScoringDecision): ScoringDecision {
   const badges = normalizeBadges(input.badges);
 
   if (input.status === "no_score" || input.status === "rejected") {

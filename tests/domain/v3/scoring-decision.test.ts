@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  normalizeDecision,
   noScoreDecision,
   parseScoringDecision
 } from "../../../src/domain/v3/scoring-decision.js";
@@ -95,6 +96,21 @@ describe("v3 scoring decision schema", () => {
     ).toThrow();
   });
 
+  test("normalizeDecision rejects numeric string scoreDelta values", () => {
+    expect(() =>
+      normalizeDecision({
+        status: "approved",
+        category: "ai_artifact",
+        scoreDelta: "5",
+        confidence: "high",
+        notifyPolicy: "group_praise",
+        reason: "Numeric strings should fail loudly.",
+        evidence: "scoreDelta was passed through normalizeDecision.",
+        badges: []
+      } as unknown)
+    ).toThrow();
+  });
+
   test("rounds fractional scoreDelta values before clamping", () => {
     expect(
       parseScoringDecision({
@@ -151,6 +167,35 @@ describe("v3 scoring decision schema", () => {
     ).toThrow();
   });
 
+  test("normalizeDecision rejects blank audit fields and badges", () => {
+    const validDecision = {
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 5,
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      reason: "Valid reason.",
+      evidence: "Valid evidence.",
+      badges: ["artifact"]
+    };
+
+    expect(() =>
+      normalizeDecision({ ...validDecision, reason: "" } as unknown)
+    ).toThrow();
+    expect(() =>
+      normalizeDecision({ ...validDecision, reason: "  \n\t" } as unknown)
+    ).toThrow();
+    expect(() =>
+      normalizeDecision({ ...validDecision, evidence: "" } as unknown)
+    ).toThrow();
+    expect(() =>
+      normalizeDecision({ ...validDecision, evidence: "  \n\t" } as unknown)
+    ).toThrow();
+    expect(() =>
+      normalizeDecision({ ...validDecision, badges: ["artifact", " "] } as unknown)
+    ).toThrow();
+  });
+
   test("dedupes badges in order and caps them to 5", () => {
     const decision = parseScoringDecision({
       status: "approved",
@@ -193,6 +238,27 @@ describe("v3 scoring decision schema", () => {
     });
 
     expect(decision.scoreDelta).toBe(1);
+  });
+
+  test("normalizeDecision accepts valid already-typed decisions", () => {
+    const decision = normalizeDecision({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 9,
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      reason: "Already typed decision.",
+      evidence: "Score should still clamp.",
+      badges: ["artifact"]
+    });
+
+    expect(decision).toMatchObject({
+      category: "ai_artifact",
+      scoreDelta: 5,
+      reason: "Already typed decision.",
+      evidence: "Score should still clamp.",
+      badges: ["artifact"]
+    });
   });
 
   test("forces no_score decisions to score 0 and notify silent", () => {
