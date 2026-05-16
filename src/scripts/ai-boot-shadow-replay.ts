@@ -4,12 +4,22 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { loadLocalEnv } from "../config/load-env.js";
+import type { MemberProfile } from "../domain/types.js";
 import type {
   AiBootDecisionStatus,
   AiBootEventRecord,
   AiBootScoreEventRecord,
 } from "../domain/v3/ai-boot-types.js";
 import { parseScoringDecision, type ScoringDecision } from "../domain/v3/scoring-decision.js";
+import type { EvidenceBundle } from "../services/feishu/ai-boot/content-extractor.js";
+import {
+  runDeterministicGuards,
+  type GuardOutcome,
+} from "../services/feishu/ai-boot/deterministic-guards.js";
+import {
+  decideWithLlm,
+  type AiBootLlmClient,
+} from "../services/feishu/ai-boot/llm-decision-engine.js";
 import { SqliteRepository } from "../storage/sqlite-repository.js";
 
 const SHADOW_MODEL_PROVIDER = "shadow_harness";
@@ -27,6 +37,7 @@ export interface ShadowReplayOptions {
   uuid?: () => string;
   stdout?: (line: string) => void;
   decider?: (event: AiBootEventRecord) => ScoringDecision | Promise<ScoringDecision>;
+  llmClient?: AiBootLlmClient;
 }
 
 export interface ShadowReplayResult {
@@ -81,16 +92,33 @@ export async function runShadowReplay(
     };
 
     for (const event of events) {
-      const existing = repository.findAiBootScoreEventByEventId(event.id);
+      const shadowEventId = buildShadowReplayEventId(event.id);
+      const existing = repository.findAiBootScoreEventByEventId(shadowEventId);
       if (existing) {
         countStatus(result, inferReplayStatus(existing));
         continue;
       }
 
-      const decision = await (options.decider ?? heuristicShadowDecider)(event);
+      const evidence = evidenceFromStoredEvent(event);
+      const member = repository.getMember(event.memberId);
+      const replayNow = now();
+      const guardOutcome = runDeterministicGuards(
+        evidence,
+        buildGuardContext({ repository, event, evidence, member, nowIso: replayNow }),
+      );
+      const decision = guardOutcome.kind === "continue"
+        ? await decideContribution({
+            event,
+            evidence,
+            member,
+            decider: options.decider,
+            llmClient: options.llmClient,
+          })
+        : decisionFromGuard(guardOutcome, evidence);
       const normalized = parseScoringDecision(decision);
       repository.insertAiBootScoreEvent(buildShadowScoreEvent({
         id: uuid(),
+        shadowEventId,
         event,
         decision: normalized,
         decidedAt: now(),
@@ -160,15 +188,41 @@ export function heuristicShadowDecider(event: AiBootEventRecord): ScoringDecisio
   });
 }
 
+function buildShadowReplayEventId(sourceEventId: string): string {
+  return `shadow-replay:${sourceEventId}`;
+}
+
+async function decideContribution(input: {
+  event: AiBootEventRecord;
+  evidence: EvidenceBundle;
+  member: MemberProfile | undefined;
+  decider?: (event: AiBootEventRecord) => ScoringDecision | Promise<ScoringDecision>;
+  llmClient?: AiBootLlmClient;
+}): Promise<ScoringDecision> {
+  if (input.decider) {
+    return input.decider(input.event);
+  }
+
+  if (input.llmClient) {
+    return decideWithLlm(input.llmClient, {
+      evidence: input.evidence,
+      memberName: displayMemberName(input.member, input.event.memberId),
+    });
+  }
+
+  return heuristicShadowDecider(input.event);
+}
+
 function buildShadowScoreEvent(input: {
   id: string;
+  shadowEventId: string;
   event: AiBootEventRecord;
   decision: ScoringDecision;
   decidedAt: string;
 }): AiBootScoreEventRecord {
   return {
     id: input.id,
-    eventId: input.event.id,
+    eventId: input.shadowEventId,
     campId: input.event.campId,
     memberId: input.event.memberId,
     category: input.decision.category,
@@ -181,14 +235,133 @@ function buildShadowScoreEvent(input: {
     badgesJson: JSON.stringify([
       ...input.decision.badges,
       `shadow_original_status:${input.decision.status}`,
+      `source_event_id:${input.event.id}`,
     ]),
     modelProvider: SHADOW_MODEL_PROVIDER,
     modelName: SHADOW_MODEL_NAME,
     promptVersion: SHADOW_PROMPT_VERSION,
     reviewedByOpId: null,
-    reviewNote: null,
+    reviewNote: `source_event_id=${input.event.id}`,
     decidedAt: input.decidedAt,
   };
+}
+
+function evidenceFromStoredEvent(event: AiBootEventRecord): EvidenceBundle {
+  const parsed = parseEvidenceBundle(event.evidenceJson);
+  if (parsed) {
+    return parsed;
+  }
+
+  const sanitizedText = (event.sanitizedText || event.rawText).trim();
+  return {
+    sanitizedText,
+    urls: extractUrls(sanitizedText),
+    attachments: parseAttachments(event.attachmentJson),
+    documentText: "",
+    extractionStatus: "not_applicable",
+    extractionReason: "stored_event_replay",
+    contentHash: event.contentHash,
+  };
+}
+
+function parseEvidenceBundle(value: string): EvidenceBundle | undefined {
+  try {
+    const parsed = JSON.parse(value) as Partial<EvidenceBundle>;
+    if (
+      typeof parsed.sanitizedText === "string" &&
+      Array.isArray(parsed.urls) &&
+      Array.isArray(parsed.attachments) &&
+      typeof parsed.documentText === "string" &&
+      typeof parsed.extractionStatus === "string" &&
+      typeof parsed.extractionReason === "string" &&
+      typeof parsed.contentHash === "string"
+    ) {
+      return parsed as EvidenceBundle;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
+}
+
+function buildGuardContext(input: {
+  repository: SqliteRepository;
+  event: AiBootEventRecord;
+  evidence: EvidenceBundle;
+  member: MemberProfile | undefined;
+  nowIso: string;
+}) {
+  const duplicateApprovedScore = input.repository.findApprovedAiBootScoreEventByContentHash(
+    input.event.campId,
+    input.evidence.contentHash,
+    input.event.id,
+  );
+  const duplicateEvent = input.repository.findAiBootEventByContentHash(
+    input.event.campId,
+    input.evidence.contentHash,
+    input.event.id,
+  );
+  const dailyWindow = shanghaiBusinessDayBounds(input.nowIso);
+
+  return {
+    roleType: input.member?.roleType ?? "observer",
+    isParticipant: input.member?.isParticipant ?? false,
+    isExcludedFromBoard: input.member?.isExcludedFromBoard ?? true,
+    mentionedBot: input.event.eventType === "mention",
+    dailyParticipationAlreadyScored: input.repository.countApprovedAiBootScoreEvents({
+      campId: input.event.campId,
+      memberId: input.event.memberId,
+      category: "daily_participation",
+      decidedAtFrom: dailyWindow.start,
+      decidedAtTo: dailyWindow.end,
+    }) > 0,
+    categoryCapRemaining: null,
+    duplicateApprovedContent: Boolean(duplicateApprovedScore),
+    duplicateContent: Boolean(duplicateEvent && !duplicateApprovedScore),
+  };
+}
+
+function decisionFromGuard(
+  outcome: Exclude<GuardOutcome, { kind: "continue" }>,
+  evidence: EvidenceBundle,
+): ScoringDecision {
+  if (outcome.kind === "daily_participation") {
+    return parseScoringDecision({
+      status: "approved",
+      category: "daily_participation",
+      scoreDelta: 1,
+      confidence: "high",
+      notifyPolicy: "silent",
+      reason: outcome.reason,
+      evidence: summarizeEvidenceBundle(evidence),
+      badges: ["deterministic_guard"],
+    });
+  }
+
+  if (outcome.kind === "review_required") {
+    return parseScoringDecision({
+      status: "review_required",
+      category: "formal_task",
+      scoreDelta: 1,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: outcome.reason,
+      evidence: summarizeEvidenceBundle(evidence),
+      badges: ["deterministic_guard"],
+    });
+  }
+
+  return parseScoringDecision({
+    status: "no_score",
+    category: "daily_participation",
+    scoreDelta: 0,
+    confidence: "low",
+    notifyPolicy: "silent",
+    reason: outcome.reason,
+    evidence: summarizeEvidenceBundle(evidence),
+    badges: ["deterministic_guard", `guard_${outcome.kind}`],
+  });
 }
 
 function inferReplayStatus(scoreEvent: AiBootScoreEventRecord): AiBootDecisionStatus {
@@ -217,12 +390,9 @@ function countStatus(result: ShadowReplayResult, status: AiBootDecisionStatus): 
 }
 
 function hasImageAttachment(event: AiBootEventRecord): boolean {
-  return event.eventType === "image" || parseJsonArray(event.attachmentJson).some((attachment) => {
-    if (!attachment || typeof attachment !== "object") {
-      return false;
-    }
-    return String((attachment as { type?: unknown }).type ?? "").toLowerCase() === "image";
-  });
+  return event.eventType === "image" || parseAttachments(event.attachmentJson).some(
+    (attachment) => attachment.type.toLowerCase() === "image",
+  );
 }
 
 function hasPracticeReflectionText(event: AiBootEventRecord): boolean {
@@ -245,10 +415,34 @@ function summarizeEvidence(event: AiBootEventRecord): string {
   return `content_hash:${event.contentHash}`;
 }
 
-function parseJsonArray(value: string): unknown[] {
+function summarizeEvidenceBundle(evidence: EvidenceBundle): string {
+  const text = evidence.sanitizedText || evidence.documentText;
+  if (text.trim().length > 0) {
+    return text.trim().slice(0, 180);
+  }
+  if (evidence.attachments.length > 0) {
+    return `attachments:${evidence.attachments.map((attachment) => attachment.type).join(",")}`;
+  }
+  return `content_hash:${evidence.contentHash}`;
+}
+
+function parseAttachments(value: string): EvidenceBundle["attachments"] {
   try {
     const parsed = JSON.parse(value);
-    return Array.isArray(parsed) ? parsed : [];
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed
+      .filter((attachment): attachment is Record<string, unknown> => {
+        return Boolean(attachment) && typeof attachment === "object";
+      })
+      .map((attachment) => ({
+        type: String(attachment.type ?? "attachment"),
+        ...(attachment.fileKey ? { fileKey: String(attachment.fileKey) } : {}),
+        ...(attachment.fileName ? { fileName: String(attachment.fileName) } : {}),
+        ...(attachment.fileExt ? { fileExt: String(attachment.fileExt) } : {}),
+      }));
   } catch {
     return [];
   }
@@ -261,6 +455,32 @@ function parseBadges(value: string): string[] {
   } catch {
     return [];
   }
+}
+
+function extractUrls(text: string): string[] {
+  const matches = text.match(/https?:\/\/[^\s<>"'，。！？；、：…]+/g) ?? [];
+  return [...new Set(matches)];
+}
+
+function shanghaiBusinessDayBounds(nowIso: string): { start: string; end: string } {
+  const offsetMs = 8 * 60 * 60 * 1000;
+  const nowMs = new Date(nowIso).getTime();
+  const shanghai = new Date(nowMs + offsetMs);
+  const dayStartShanghaiMs = Date.UTC(
+    shanghai.getUTCFullYear(),
+    shanghai.getUTCMonth(),
+    shanghai.getUTCDate(),
+  );
+  const startUtcMs = dayStartShanghaiMs - offsetMs;
+
+  return {
+    start: new Date(startUtcMs).toISOString(),
+    end: new Date(startUtcMs + 24 * 60 * 60 * 1000).toISOString(),
+  };
+}
+
+function displayMemberName(member: MemberProfile | undefined, fallback: string): string {
+  return member?.displayName?.trim() || member?.name || fallback;
 }
 
 function normalizeSince(value: string | undefined): string {

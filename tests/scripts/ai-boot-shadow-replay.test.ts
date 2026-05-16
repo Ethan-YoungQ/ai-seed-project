@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { AiBootEventRecord } from "../../src/domain/v3/ai-boot-types.js";
+import type {
+  AiBootEventRecord,
+  AiBootScoreEventRecord,
+} from "../../src/domain/v3/ai-boot-types.js";
 import { runShadowReplay } from "../../src/scripts/ai-boot-shadow-replay.js";
 import { SqliteRepository } from "../../src/storage/sqlite-repository.js";
 
@@ -30,6 +33,30 @@ function event(overrides: Partial<AiBootEventRecord>): AiBootEventRecord {
     engineVersion: "v3.0.0",
     rulesetVersion: "2026-05-16",
     createdAt: "2026-05-16T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function scoreEvent(overrides: Partial<AiBootScoreEventRecord> = {}): AiBootScoreEventRecord {
+  return {
+    id: "score-live-1",
+    eventId: "evt-1",
+    campId: "default",
+    memberId: "user-alice",
+    category: "ai_artifact",
+    scoreDelta: 4,
+    confidence: "high",
+    status: "approved",
+    notifyPolicy: "group_praise",
+    reason: "Live approved reason",
+    evidence: "Live approved evidence",
+    badgesJson: "[]",
+    modelProvider: "live",
+    modelName: "live",
+    promptVersion: "live",
+    reviewedByOpId: null,
+    reviewNote: null,
+    decidedAt: "2026-05-16T01:00:00.000Z",
     ...overrides,
   };
 }
@@ -92,18 +119,20 @@ describe("runShadowReplay", () => {
       reviewRequired: 0,
     });
     expect(JSON.parse(stdout.mock.calls[0][0])).toEqual(result);
-    expect(repository.findAiBootScoreEventByEventId("evt-image")).toMatchObject({
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-image")).toMatchObject({
+      eventId: "shadow-replay:evt-image",
       status: "shadow",
       category: "ai_artifact",
       reason: expect.any(String),
       evidence: expect.any(String),
+      reviewNote: "source_event_id=evt-image",
     });
-    expect(repository.findAiBootScoreEventByEventId("evt-link")).toMatchObject({
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-link")).toMatchObject({
       status: "shadow",
       scoreDelta: 0,
       notifyPolicy: "silent",
     });
-    expect(repository.findAiBootScoreEventByEventId("evt-reflection")).toMatchObject({
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-reflection")).toMatchObject({
       status: "shadow",
       category: "ai_practice_reflection",
     });
@@ -143,6 +172,87 @@ describe("runShadowReplay", () => {
 
     expect(first.approved).toBe(1);
     expect(second.approved).toBe(1);
-    expect(repository.findAiBootScoreEventByEventId("evt-image")?.id).toBe("score-shadow-1");
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-image")?.id).toBe("score-shadow-1");
+  });
+
+  it("creates an independent synthetic shadow score when the source event already has a live score", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-live",
+      sourceMessageId: "om-live",
+      eventType: "image",
+      attachmentJson: JSON.stringify([{ type: "image" }]),
+      contentHash: "hash-live",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-live",
+      eventId: "evt-live",
+      scoreDelta: 5,
+    }));
+
+    const first = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "score-shadow-live",
+      stdout: () => undefined,
+    });
+    const second = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "score-shadow-live-duplicate",
+      stdout: () => undefined,
+    });
+
+    expect(first).toMatchObject({ eventsReplayed: 1, approved: 1 });
+    expect(second).toMatchObject({ eventsReplayed: 1, approved: 1 });
+    expect(repository.findAiBootScoreEventByEventId("evt-live")).toMatchObject({
+      id: "score-live",
+      status: "approved",
+    });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-live")).toMatchObject({
+      id: "score-shadow-live",
+      status: "shadow",
+    });
+    expect(repository.sumApprovedAiBootScore("default", "user-alice")).toBe(5);
+  });
+
+  it("runs deterministic guards before injected deciders", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-trivial",
+      sourceMessageId: "om-trivial",
+      rawText: "ok",
+      sanitizedText: "ok",
+      contentHash: "hash-trivial",
+    }));
+    const decider = vi.fn();
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "score-shadow-trivial",
+      stdout: () => undefined,
+      decider,
+    });
+
+    expect(decider).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ eventsReplayed: 1, approved: 1, noScore: 0 });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-trivial")).toMatchObject({
+      status: "shadow",
+      category: "daily_participation",
+      scoreDelta: 1,
+    });
   });
 });
