@@ -188,6 +188,62 @@ describe("GET /api/v2/board/member/:id", () => {
     expect(body.detail.windowSnapshots).toEqual([]);
     expect(body.detail.dimensions).toEqual({ K: 0, H: 0, C: 0, S: 0, G: 0 });
   });
+
+  it("shows additive fields for zero-net approved v3 score and uses zero as cumulative AQ", async () => {
+    const dbPath = databasePath();
+    const repo = new SqliteRepository(dbPath);
+    repo.seedDemo();
+    const db = (repo as unknown as {
+      db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    }).db;
+    db.prepare(
+      `INSERT INTO v2_window_snapshots (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score, c_score, s_score, g_score, growth_bonus, snapshot_at)
+       VALUES ('snap-alice', 'w-W1', 'user-alice', 33, 33, 10, 10, 5, 5, 3, 0, '2026-04-01T00:00:00Z')`
+    ).run();
+    repo.insertAiBootEvent(
+      aiBootEvent("user-alice", { id: "evt-alice-plus", campId: "camp-demo" })
+    );
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("user-alice", {
+        id: "score-alice-plus",
+        eventId: "evt-alice-plus",
+        campId: "camp-demo",
+        scoreDelta: 5,
+      })
+    );
+    repo.insertAiBootEvent(
+      aiBootEvent("user-alice", { id: "evt-alice-minus", campId: "camp-demo" })
+    );
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("user-alice", {
+        id: "score-alice-minus",
+        eventId: "evt-alice-minus",
+        campId: "camp-demo",
+        category: "operator_adjustment",
+        scoreDelta: -5,
+      })
+    );
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v2/board/member/user-alice",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    expect(body.detail).toMatchObject({
+      memberId: "user-alice",
+      cumulativeAq: 0,
+      legacyScore: 0,
+      v3Score: 0,
+      totalScore: 0,
+    });
+    expect(body.detail.windowSnapshots).toHaveLength(1);
+  });
 });
 
 describe("fetchMemberBoardDetail repository method", () => {

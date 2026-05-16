@@ -126,6 +126,7 @@ describe("GET /api/v2/board/ranking", () => {
       { id: "s2", name: "Bravo", v2Aq: 90 },
       { id: "s3", name: "Charlie", v2Aq: 80 },
       { id: "s4", name: "Delta", v2Aq: 70 },
+      { id: "s5", name: "Echo", v2Aq: 65 },
     ];
 
     for (const member of members) {
@@ -212,6 +213,24 @@ describe("GET /api/v2/board/ranking", () => {
         scoreDelta: 500,
       })
     );
+
+    repo.insertAiBootEvent(aiBootEvent("s5", { id: "evt-s5-a" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s5", {
+        id: "score-s5-a",
+        eventId: "evt-s5-a",
+        scoreDelta: 5,
+      })
+    );
+    repo.insertAiBootEvent(aiBootEvent("s5", { id: "evt-s5-b" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("s5", {
+        id: "score-s5-b",
+        eventId: "evt-s5-b",
+        category: "operator_adjustment",
+        scoreDelta: -5,
+      })
+    );
     repo.close();
 
     const app = await createApp({ databaseUrl: dbPath });
@@ -233,8 +252,9 @@ describe("GET /api/v2/board/ranking", () => {
       "Delta",
       "Bravo",
       "Alpha",
+      "Echo",
     ]);
-    expect(rows.map((row: { rank: number }) => row.rank)).toEqual([1, 2, 3, 4]);
+    expect(rows.map((row: { rank: number }) => row.rank)).toEqual([1, 2, 3, 4, 5]);
 
     expect(rows[0]).not.toHaveProperty("legacyScore");
     expect(rows[0]).toMatchObject({
@@ -254,6 +274,13 @@ describe("GET /api/v2/board/ranking", () => {
       legacyScore: 40,
       v3Score: 10,
       totalScore: 50,
+    });
+    expect(rows[4]).toMatchObject({
+      memberId: "s5",
+      cumulativeAq: 0,
+      legacyScore: 0,
+      v3Score: 0,
+      totalScore: 0,
     });
   });
 });

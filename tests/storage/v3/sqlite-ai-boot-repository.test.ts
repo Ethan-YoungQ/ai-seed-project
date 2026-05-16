@@ -147,6 +147,31 @@ describe("SqliteRepository ai boot v3", () => {
     r.close();
   });
 
+  it("counts approved score events for a member even when the net score is zero", () => {
+    const r = repo();
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-1",
+      eventId: "evt-1",
+      scoreDelta: 5
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-2",
+      eventId: "evt-2",
+      category: "operator_adjustment",
+      scoreDelta: -5
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-3",
+      eventId: "evt-3",
+      status: "review_required",
+      scoreDelta: 100
+    }));
+
+    expect(r.sumApprovedAiBootScore("default", "m-1")).toBe(0);
+    expect(r.countApprovedAiBootScoreEventsForMember("default", "m-1")).toBe(2);
+    r.close();
+  });
+
   it("finds a score event by id", () => {
     const r = repo();
     r.insertAiBootScoreEvent(scoreEvent());

@@ -35,8 +35,12 @@ function resolveAdditiveScoreFields(
   const legacySnapshot = deps.repository.getAiBootLegacyScoreSnapshot(campId, memberId);
   const legacyScore = legacySnapshot?.totalScore ?? 0;
   const v3Score = deps.repository.sumApprovedAiBootScore(campId, memberId);
+  const approvedV3ScoreEventCount = deps.repository.countApprovedAiBootScoreEventsForMember(
+    campId,
+    memberId
+  );
 
-  if (!legacySnapshot && v3Score === 0) {
+  if (!legacySnapshot && approvedV3ScoreEventCount === 0) {
     return undefined;
   }
 
