@@ -1469,8 +1469,8 @@ export class SqliteRepository {
     scoreDelta?: number;
     category?: AiBootScoreCategory;
     reason?: string;
-  }): void {
-    this.db
+  }): boolean {
+    const result = this.db
       .prepare(
         `UPDATE ai_boot_score_events
          SET status = @status,
@@ -1479,7 +1479,9 @@ export class SqliteRepository {
              score_delta = COALESCE(@scoreDelta, score_delta),
              category = COALESCE(@category, category),
              reason = COALESCE(@reason, reason)
-         WHERE id = @id`
+         WHERE id = @id
+           AND status = 'review_required'
+           AND confidence = 'low'`
       )
       .run({
         id: input.id,
@@ -1490,6 +1492,7 @@ export class SqliteRepository {
         category: input.category ?? null,
         reason: input.reason ?? null,
       });
+    return result.changes > 0;
   }
 
   findAiBootScoreEventByEventId(eventId: string): AiBootScoreEventRecord | undefined {

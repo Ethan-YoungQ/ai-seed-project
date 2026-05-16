@@ -6,6 +6,7 @@ import type {
   AiBootScoreCategory,
   AiBootScoreEventRecord,
 } from "../../domain/v3/ai-boot-types.js";
+import { parseScoringDecision } from "../../domain/v3/scoring-decision.js";
 import type { SqliteRepository } from "../../storage/sqlite-repository.js";
 
 export interface V3AiBootAdminRouteDeps {
@@ -62,31 +63,48 @@ function parseStrict<T>(
   return parsed.data as T;
 }
 
-function parseNonNegativeInteger(value: unknown, fallback: number): number {
-  if (typeof value !== "string" || value.trim() === "") {
-    return fallback;
-  }
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    return fallback;
-  }
-  return Math.max(0, Math.trunc(parsed));
-}
-
 function reviewNoteOrDefault(value: string | undefined, fallback: string): string {
   const trimmed = value?.trim();
   return trimmed && trimmed.length > 0 ? trimmed : fallback;
 }
 
+function parseQueryInteger(input: {
+  value: unknown;
+  fallback: number;
+  min: number;
+  max?: number;
+}): number | null {
+  if (input.value === undefined) {
+    return input.fallback;
+  }
+  if (typeof input.value !== "string" || !/^\d+$/.test(input.value.trim())) {
+    return null;
+  }
+  const parsed = Number(input.value);
+  if (!Number.isSafeInteger(parsed) || parsed < input.min) {
+    return null;
+  }
+  if (input.max !== undefined && parsed > input.max) {
+    return null;
+  }
+  return parsed;
+}
+
+function conflict(reply: FastifyReply) {
+  return reply.code(409).send({ ok: false, code: "decision_conflict" });
+}
+
 function updateDecision(
   repository: SqliteRepository,
   input: Parameters<SqliteRepository["updateAiBootScoreDecision"]>[0]
-): AiBootScoreEventRecord | undefined {
+): "not_found" | "conflict" | AiBootScoreEventRecord {
   if (!repository.getAiBootScoreEvent(input.id)) {
-    return undefined;
+    return "not_found";
   }
-  repository.updateAiBootScoreDecision(input);
-  return repository.getAiBootScoreEvent(input.id);
+  if (!repository.updateAiBootScoreDecision(input)) {
+    return "conflict";
+  }
+  return repository.getAiBootScoreEvent(input.id)!;
 }
 
 export function registerV3AiBootAdminRoutes(
@@ -102,11 +120,26 @@ export function registerV3AiBootAdminRoutes(
         limit?: string;
         offset?: string;
       };
+      if (Object.prototype.hasOwnProperty.call(query, "campId") && query.campId?.trim() === "") {
+        return reply.code(400).send({ ok: false, code: "invalid_query" });
+      }
       const campId = query.campId?.trim()
-        || deps.repository.getDefaultCampId()
-        || "default";
-      const limit = Math.min(parseNonNegativeInteger(query.limit, 100), 200);
-      const offset = parseNonNegativeInteger(query.offset, 0);
+        ?? deps.repository.getDefaultCampId()
+        ?? "default";
+      const limit = parseQueryInteger({
+        value: query.limit,
+        fallback: 100,
+        min: 1,
+        max: 200,
+      });
+      const offset = parseQueryInteger({
+        value: query.offset,
+        fallback: 0,
+        min: 0,
+      });
+      if (limit === null || offset === null) {
+        return reply.code(400).send({ ok: false, code: "invalid_query" });
+      }
 
       const rows = deps.repository.listAiBootReviewQueue({
         campId,
@@ -131,9 +164,10 @@ export function registerV3AiBootAdminRoutes(
         reviewedByOpId: request.currentAdmin!.id,
         reviewNote: reviewNoteOrDefault(parsed.reviewNote, "approved"),
       });
-      if (!scoreEvent) {
+      if (scoreEvent === "not_found") {
         return reply.code(404).send({ ok: false, code: "not_found" });
       }
+      if (scoreEvent === "conflict") return conflict(reply);
       return reply.send({ ok: true, scoreEvent });
     }
   );
@@ -153,9 +187,10 @@ export function registerV3AiBootAdminRoutes(
         reviewNote: reviewNoteOrDefault(parsed.reviewNote, "rejected"),
         scoreDelta: 0,
       });
-      if (!scoreEvent) {
+      if (scoreEvent === "not_found") {
         return reply.code(404).send({ ok: false, code: "not_found" });
       }
+      if (scoreEvent === "conflict") return conflict(reply);
       return reply.send({ ok: true, scoreEvent });
     }
   );
@@ -167,19 +202,31 @@ export function registerV3AiBootAdminRoutes(
       const params = request.params as { id: string };
       const parsed = parseStrict(correctSchema, request.body, reply);
       if (!parsed) return;
+      const existing = deps.repository.getAiBootScoreEvent(params.id);
+      if (!existing) {
+        return reply.code(404).send({ ok: false, code: "not_found" });
+      }
+      const decision = parseScoringDecision({
+        status: "approved",
+        category: parsed.category,
+        scoreDelta: parsed.scoreDelta,
+        confidence: existing.confidence,
+        notifyPolicy: existing.notifyPolicy,
+        reason: parsed.reason,
+        evidence: existing.evidence,
+        badges: [],
+      });
 
       const scoreEvent = updateDecision(deps.repository, {
         id: params.id,
         status: "approved",
         reviewedByOpId: request.currentAdmin!.id,
         reviewNote: parsed.reviewNote,
-        category: parsed.category as AiBootScoreCategory,
-        scoreDelta: parsed.scoreDelta,
-        reason: parsed.reason,
+        category: decision.category as AiBootScoreCategory,
+        scoreDelta: decision.scoreDelta,
+        reason: decision.reason,
       });
-      if (!scoreEvent) {
-        return reply.code(404).send({ ok: false, code: "not_found" });
-      }
+      if (scoreEvent === "conflict") return conflict(reply);
       return reply.send({ ok: true, scoreEvent });
     }
   );

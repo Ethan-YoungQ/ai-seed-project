@@ -211,7 +211,7 @@ describe("SqliteRepository ai boot v3", () => {
       offset: 0,
     }).map((row) => row.id)).toEqual(["score-review-old"]);
 
-    r.updateAiBootScoreDecision({
+    expect(r.updateAiBootScoreDecision({
       id: "score-review-old",
       status: "approved",
       reviewedByOpId: "op-1",
@@ -219,7 +219,7 @@ describe("SqliteRepository ai boot v3", () => {
       category: "operator_adjustment",
       scoreDelta: -2,
       reason: "operator correction",
-    });
+    })).toBe(true);
 
     expect(r.getAiBootScoreEvent("score-review-old")).toMatchObject({
       status: "approved",
@@ -230,6 +230,34 @@ describe("SqliteRepository ai boot v3", () => {
       reason: "operator correction",
     });
     expect(r.sumApprovedAiBootScore("default", "m-1")).toBe(2);
+
+    expect(r.updateAiBootScoreDecision({
+      id: "score-review-new",
+      status: "approved",
+      reviewedByOpId: "op-1",
+      reviewNote: "should not update medium confidence",
+    })).toBe(false);
+    expect(r.getAiBootScoreEvent("score-review-new")).toMatchObject({
+      status: "review_required",
+      confidence: "medium",
+      reviewedByOpId: null,
+      reviewNote: null,
+    });
+
+    expect(r.updateAiBootScoreDecision({
+      id: "score-approved",
+      status: "rejected",
+      reviewedByOpId: "op-1",
+      reviewNote: "should not update approved",
+      scoreDelta: 0,
+    })).toBe(false);
+    expect(r.getAiBootScoreEvent("score-approved")).toMatchObject({
+      status: "approved",
+      confidence: "high",
+      scoreDelta: 4,
+      reviewedByOpId: null,
+      reviewNote: null,
+    });
     r.close();
   });
 

@@ -93,6 +93,13 @@ function seedScoreEvent(
   );
 }
 
+function getScoreEvent(dbPath: string, id: string) {
+  const repo = new SqliteRepository(dbPath);
+  const scoreEvent = repo.getAiBootScoreEvent(id);
+  repo.close();
+  return scoreEvent;
+}
+
 describe("v3 ai boot operator review APIs", () => {
   const apps: Array<Awaited<ReturnType<typeof createApp>>> = [];
 
@@ -171,6 +178,34 @@ describe("v3 ai boot operator review APIs", () => {
     });
   });
 
+  it.each([
+    "/api/v3/ai-boot/review-queue?campId=",
+    "/api/v3/ai-boot/review-queue?limit=abc",
+    "/api/v3/ai-boot/review-queue?limit=-1",
+    "/api/v3/ai-boot/review-queue?limit=0",
+    "/api/v3/ai-boot/review-queue?limit=1.5",
+    "/api/v3/ai-boot/review-queue?limit=201",
+    "/api/v3/ai-boot/review-queue?offset=-1",
+    "/api/v3/ai-boot/review-queue?offset=1.5",
+    "/api/v3/ai-boot/review-queue?offset=abc",
+  ])("returns 400 for invalid review queue query %s", async (url) => {
+    const dbPath = databasePath();
+    const repo = seedBase(dbPath);
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "GET",
+      url,
+      headers: { "x-feishu-open-id": "ou-operator" },
+    });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ ok: false, code: "invalid_query" });
+  });
+
   it("approve marks the score event approved and increments effective v3 score", async () => {
     const dbPath = databasePath();
     const repo = seedBase(dbPath);
@@ -200,6 +235,21 @@ describe("v3 ai boot operator review APIs", () => {
     const readRepo = new SqliteRepository(dbPath);
     expect(readRepo.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(7);
     readRepo.close();
+
+    const repeat = await app.inject({
+      method: "POST",
+      url: "/api/v3/ai-boot/score-events/score-review/approve",
+      headers: { "x-feishu-open-id": "ou-operator" },
+      payload: { reviewNote: "approve again" },
+    });
+
+    expect(repeat.statusCode).toBe(409);
+    expect(repeat.json()).toEqual({ ok: false, code: "decision_conflict" });
+    expect(getScoreEvent(dbPath, "score-review")).toMatchObject({
+      status: "approved",
+      reviewNote: "looks valid",
+      scoreDelta: 7,
+    });
   });
 
   it("reject marks the score event rejected without incrementing effective v3 score", async () => {
@@ -266,6 +316,208 @@ describe("v3 ai boot operator review APIs", () => {
 
     const readRepo = new SqliteRepository(dbPath);
     expect(readRepo.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(-3);
+    readRepo.close();
+  });
+
+  it("rejects non-admin POST decisions", async () => {
+    const dbPath = databasePath();
+    const repo = seedBase(dbPath);
+    seedScoreEvent(repo);
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/api/v3/ai-boot/score-events/score-review/reject",
+      headers: { "x-feishu-open-id": "ou-student" },
+      payload: { reviewNote: "student reject" },
+    });
+
+    expect(res.statusCode).toBe(403);
+    expect(res.json()).toEqual({ ok: false, code: "not_admin" });
+  });
+
+  it("returns 409 and preserves scores for non-reviewable score events", async () => {
+    const dbPath = databasePath();
+    const repo = seedBase(dbPath);
+    seedScoreEvent(repo, {
+      id: "score-approved",
+      eventId: "evt-approved",
+      status: "approved",
+      confidence: "low",
+      scoreDelta: 7,
+      reviewNote: "already approved",
+    });
+    seedScoreEvent(repo, {
+      id: "score-medium-review",
+      eventId: "evt-medium-review",
+      status: "review_required",
+      confidence: "medium",
+      scoreDelta: 8,
+    });
+    seedScoreEvent(repo, {
+      id: "score-high-review",
+      eventId: "evt-high-review",
+      status: "review_required",
+      confidence: "high",
+      scoreDelta: 9,
+    });
+    seedScoreEvent(repo, {
+      id: "score-low-rejected",
+      eventId: "evt-low-rejected",
+      status: "rejected",
+      confidence: "low",
+      scoreDelta: 0,
+    });
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const cases = [
+      {
+        id: "score-approved",
+        action: "reject",
+        payload: { reviewNote: "should not reject approved" },
+      },
+      {
+        id: "score-medium-review",
+        action: "approve",
+        payload: { reviewNote: "should not approve medium" },
+      },
+      {
+        id: "score-high-review",
+        action: "correct",
+        payload: {
+          category: "ai_artifact",
+          scoreDelta: 5,
+          reason: "should not correct high",
+          reviewNote: "not reviewable",
+        },
+      },
+      {
+        id: "score-low-rejected",
+        action: "approve",
+        payload: { reviewNote: "should not approve rejected" },
+      },
+    ];
+
+    for (const c of cases) {
+      const res = await app.inject({
+        method: "POST",
+        url: `/api/v3/ai-boot/score-events/${c.id}/${c.action}`,
+        headers: { "x-feishu-open-id": "ou-operator" },
+        payload: c.payload,
+      });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toEqual({ ok: false, code: "decision_conflict" });
+    }
+
+    const readRepo = new SqliteRepository(dbPath);
+    expect(readRepo.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(7);
+    expect(readRepo.getAiBootScoreEvent("score-approved")).toMatchObject({
+      status: "approved",
+      scoreDelta: 7,
+      reviewNote: "already approved",
+    });
+    expect(readRepo.getAiBootScoreEvent("score-medium-review")).toMatchObject({
+      status: "review_required",
+      confidence: "medium",
+      reviewedByOpId: null,
+    });
+    expect(readRepo.getAiBootScoreEvent("score-high-review")).toMatchObject({
+      status: "review_required",
+      confidence: "high",
+      reviewedByOpId: null,
+    });
+    expect(readRepo.getAiBootScoreEvent("score-low-rejected")).toMatchObject({
+      status: "rejected",
+      reviewedByOpId: null,
+    });
+    readRepo.close();
+  });
+
+  it("normalizes corrected scores through v3 scoring rules", async () => {
+    const dbPath = databasePath();
+    const repo = seedBase(dbPath);
+    seedScoreEvent(repo, {
+      id: "score-artifact",
+      eventId: "evt-artifact",
+      category: "ai_artifact",
+      scoreDelta: 4,
+    });
+    seedScoreEvent(repo, {
+      id: "score-daily",
+      eventId: "evt-daily",
+      category: "ai_artifact",
+      scoreDelta: 4,
+    });
+    seedScoreEvent(repo, {
+      id: "score-fractional",
+      eventId: "evt-fractional",
+      category: "ai_artifact",
+      scoreDelta: 4,
+    });
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const artifact = await app.inject({
+      method: "POST",
+      url: "/api/v3/ai-boot/score-events/score-artifact/correct",
+      headers: { "x-feishu-open-id": "ou-operator" },
+      payload: {
+        category: "ai_artifact",
+        scoreDelta: 999999,
+        reason: "clamp artifact",
+        reviewNote: "clamped",
+      },
+    });
+    expect(artifact.statusCode).toBe(200);
+    expect(artifact.json().scoreEvent).toMatchObject({
+      category: "ai_artifact",
+      scoreDelta: 5,
+    });
+
+    const daily = await app.inject({
+      method: "POST",
+      url: "/api/v3/ai-boot/score-events/score-daily/correct",
+      headers: { "x-feishu-open-id": "ou-operator" },
+      payload: {
+        category: "daily_participation",
+        scoreDelta: 50,
+        reason: "daily is fixed",
+        reviewNote: "fixed",
+      },
+    });
+    expect(daily.statusCode).toBe(200);
+    expect(daily.json().scoreEvent).toMatchObject({
+      category: "daily_participation",
+      scoreDelta: 1,
+    });
+
+    const fractional = await app.inject({
+      method: "POST",
+      url: "/api/v3/ai-boot/score-events/score-fractional/correct",
+      headers: { "x-feishu-open-id": "ou-operator" },
+      payload: {
+        category: "ai_artifact",
+        scoreDelta: 4.6,
+        reason: "fractional rounds",
+        reviewNote: "rounded",
+      },
+    });
+    expect(fractional.statusCode).toBe(200);
+    expect(fractional.json().scoreEvent).toMatchObject({
+      category: "ai_artifact",
+      scoreDelta: 5,
+    });
+
+    const readRepo = new SqliteRepository(dbPath);
+    expect(readRepo.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(11);
     readRepo.close();
   });
 
