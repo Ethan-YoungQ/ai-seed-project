@@ -36,15 +36,23 @@ const notifyPolicySchema = z.enum([
 
 const confidenceSchema = z.enum(["high", "medium", "low"]);
 
+const nonBlankStringSchema = z.string().refine((value) => value.trim().length > 0, {
+  message: "Required audit text must not be blank"
+});
+
 const scoringDecisionSchema = z.object({
   status: decisionStatusSchema,
   category: scoreCategorySchema,
   scoreDelta: z.number().finite(),
   confidence: confidenceSchema,
   notifyPolicy: notifyPolicySchema,
-  reason: z.string(),
-  evidence: z.string(),
-  badges: z.array(z.string())
+  reason: nonBlankStringSchema,
+  evidence: nonBlankStringSchema,
+  badges: z.array(
+    z.string().refine((value) => value.trim().length > 0, {
+      message: "Badge must not be blank"
+    })
+  )
 });
 
 export interface ScoringDecision {
@@ -63,9 +71,12 @@ export function parseScoringDecision(raw: unknown): ScoringDecision {
 }
 
 export function normalizeDecision(input: ScoringDecision): ScoringDecision {
+  const badges = normalizeBadges(input.badges);
+
   if (input.status === "no_score" || input.status === "rejected") {
     return {
       ...input,
+      badges,
       scoreDelta: 0,
       notifyPolicy: "silent"
     };
@@ -74,6 +85,7 @@ export function normalizeDecision(input: ScoringDecision): ScoringDecision {
   if (input.category === "daily_participation") {
     return {
       ...input,
+      badges,
       scoreDelta: 1
     };
   }
@@ -86,6 +98,7 @@ export function normalizeDecision(input: ScoringDecision): ScoringDecision {
 
   return {
     ...input,
+    badges,
     scoreDelta
   };
 }
@@ -94,7 +107,7 @@ export function noScoreDecision(
   reason: string,
   evidence: string
 ): ScoringDecision {
-  return normalizeDecision({
+  return parseScoringDecision({
     status: "no_score",
     category: "daily_participation",
     scoreDelta: 0,
@@ -104,4 +117,8 @@ export function noScoreDecision(
     evidence,
     badges: []
   });
+}
+
+function normalizeBadges(badges: string[]): string[] {
+  return [...new Set(badges)].slice(0, 5);
 }

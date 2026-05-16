@@ -49,6 +49,137 @@ describe("v3 scoring decision schema", () => {
     ).toThrow();
   });
 
+  test("rejects blank reason and evidence without trimming non-blank values", () => {
+    const validDecision = {
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 5,
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      reason: "  Preserved reason spacing.  ",
+      evidence: "\nPreserved evidence spacing.\n",
+      badges: []
+    };
+
+    expect(parseScoringDecision(validDecision)).toMatchObject({
+      reason: "  Preserved reason spacing.  ",
+      evidence: "\nPreserved evidence spacing.\n"
+    });
+
+    expect(() =>
+      parseScoringDecision({ ...validDecision, reason: "" })
+    ).toThrow();
+    expect(() =>
+      parseScoringDecision({ ...validDecision, reason: "   \n\t" })
+    ).toThrow();
+    expect(() =>
+      parseScoringDecision({ ...validDecision, evidence: "" })
+    ).toThrow();
+    expect(() =>
+      parseScoringDecision({ ...validDecision, evidence: "   \n\t" })
+    ).toThrow();
+  });
+
+  test("rejects numeric string scoreDelta values", () => {
+    expect(() =>
+      parseScoringDecision({
+        status: "approved",
+        category: "ai_artifact",
+        scoreDelta: "5",
+        confidence: "high",
+        notifyPolicy: "group_praise",
+        reason: "Numeric strings should fail loudly.",
+        evidence: "scoreDelta was emitted as a string.",
+        badges: []
+      })
+    ).toThrow();
+  });
+
+  test("rounds fractional scoreDelta values before clamping", () => {
+    expect(
+      parseScoringDecision({
+        status: "approved",
+        category: "prompt_or_method",
+        scoreDelta: 4.4,
+        confidence: "medium",
+        notifyPolicy: "personal_reply",
+        reason: "Fraction should round down.",
+        evidence: "scoreDelta=4.4",
+        badges: []
+      }).scoreDelta
+    ).toBe(4);
+
+    expect(
+      parseScoringDecision({
+        status: "approved",
+        category: "prompt_or_method",
+        scoreDelta: 4.5,
+        confidence: "medium",
+        notifyPolicy: "personal_reply",
+        reason: "Fraction should round up.",
+        evidence: "scoreDelta=4.5",
+        badges: []
+      }).scoreDelta
+    ).toBe(5);
+
+    expect(
+      parseScoringDecision({
+        status: "approved",
+        category: "ai_artifact",
+        scoreDelta: 2.5,
+        confidence: "medium",
+        notifyPolicy: "personal_reply",
+        reason: "Rounded result should still respect category minimum.",
+        evidence: "scoreDelta=2.5",
+        badges: []
+      }).scoreDelta
+    ).toBe(3);
+  });
+
+  test("rejects blank badge strings", () => {
+    expect(() =>
+      parseScoringDecision({
+        status: "approved",
+        category: "ai_artifact",
+        scoreDelta: 5,
+        confidence: "high",
+        notifyPolicy: "group_praise",
+        reason: "Badge text must be auditable.",
+        evidence: "Blank badge supplied.",
+        badges: ["artifact", "   "]
+      })
+    ).toThrow();
+  });
+
+  test("dedupes badges in order and caps them to 5", () => {
+    const decision = parseScoringDecision({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 5,
+      confidence: "high",
+      notifyPolicy: "group_praise",
+      reason: "Badge list should be compact.",
+      evidence: "Duplicate and excess badges supplied.",
+      badges: [
+        "artifact",
+        "builder",
+        "artifact",
+        "share",
+        "practice",
+        "helper",
+        "extra"
+      ]
+    });
+
+    expect(decision.badges).toEqual([
+      "artifact",
+      "builder",
+      "share",
+      "practice",
+      "helper"
+    ]);
+  });
+
   test("forces daily_participation decisions to score 1", () => {
     const decision = parseScoringDecision({
       status: "approved",
@@ -134,5 +265,12 @@ describe("v3 scoring decision schema", () => {
       evidence: "FYI message.",
       badges: []
     });
+  });
+
+  test("noScoreDecision rejects blank reason and evidence", () => {
+    expect(() => noScoreDecision("", "Evidence.")).toThrow();
+    expect(() => noScoreDecision("   ", "Evidence.")).toThrow();
+    expect(() => noScoreDecision("Reason.", "")).toThrow();
+    expect(() => noScoreDecision("Reason.", " \n\t ")).toThrow();
   });
 });
