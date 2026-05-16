@@ -187,7 +187,7 @@ async function extractDocumentEvidence(
     };
   }
 
-  if (message.documentParseStatus === "parsed" && message.documentText) {
+  if (message.documentParseStatus === "parsed") {
     return {
       documentText: message.documentText,
       extractionStatus: "parsed",

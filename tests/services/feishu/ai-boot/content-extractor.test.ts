@@ -86,6 +86,15 @@ describe("extractEvidence", () => {
     expect(evidence.urls).toEqual(["https://例子.cn/路径"]);
   });
 
+  it("preserves balanced full-width parentheses in Chinese prose URLs", async () => {
+    const evidence = await extractEvidence(makeMsg({
+      rawText: "参考 https://x.cn/a（说明）",
+      cleanedText: "参考 https://x.cn/a（说明）",
+    }));
+
+    expect(evidence.urls).toEqual(["https://x.cn/a（说明）"]);
+  });
+
   it("trims Chinese punctuation after URLs", async () => {
     const evidence = await extractEvidence(makeMsg({
       rawText: "一 https://example.com/a。二 https://example.com/b！三 https://example.com/c？四 https://example.com/d；五 https://example.com/e、六 https://example.com/f，",
@@ -211,6 +220,33 @@ describe("extractEvidence", () => {
       fileExt: "pdf",
     }]);
     expect(evidence.documentText).toBe("文件里已经解析出的证据文本");
+    expect(evidence.extractionStatus).toBe("parsed");
+    expect(evidence.extractionReason).toBe("existing_document_text");
+    expect(feishuClient.getMessageFile).not.toHaveBeenCalled();
+    expect(documentExtractor.extract).not.toHaveBeenCalled();
+  });
+
+  it("uses existing parsed PDF or DOCX status even when parsed text is empty", async () => {
+    const feishuClient = {
+      getMessageFile: vi.fn(),
+    };
+    const documentExtractor = {
+      extract: vi.fn(),
+    };
+
+    const evidence = await extractEvidence(makeMsg({
+      messageType: "file",
+      fileKey: "file-key-scanned",
+      fileName: "扫描件.pdf",
+      fileExt: "pdf",
+      documentText: "",
+      documentParseStatus: "parsed",
+    }), {
+      feishuClient,
+      documentExtractor,
+    });
+
+    expect(evidence.documentText).toBe("");
     expect(evidence.extractionStatus).toBe("parsed");
     expect(evidence.extractionReason).toBe("existing_document_text");
     expect(feishuClient.getMessageFile).not.toHaveBeenCalled();
