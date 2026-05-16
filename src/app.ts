@@ -12,6 +12,7 @@ import { LarkFeishuApiClient } from "./services/feishu/client.js";
 import type { FeishuConfig } from "./services/feishu/config.js";
 import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config.js";
 import { readAiBootConfig } from "./services/feishu/ai-boot/config.js";
+import type { AiBootConfig } from "./services/feishu/ai-boot/config.js";
 import { createAiBootOrchestrator } from "./services/feishu/ai-boot/orchestrator.js";
 import type { FeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime.js";
@@ -113,6 +114,7 @@ export function requireAdmin(repository: SqliteRepository) {
 
 export interface V2Runtime {
   repository: SqliteRepository;
+  aiBootConfig?: AiBootConfig;
   ingestor: unknown;
   aggregator: unknown;
   periodLifecycle: unknown;
@@ -451,6 +453,7 @@ export async function createApp(options?: {
   // ---------------------------------------------------------------------------
   const v2: V2Runtime = {
     repository,
+    aiBootConfig,
     ingestor: options?.ingestor ?? null,
     aggregator: options?.aggregator ?? null,
     periodLifecycle: options?.periodLifecycle ?? null,

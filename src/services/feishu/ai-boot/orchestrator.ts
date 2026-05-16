@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import type {
   AiBootEventRecord,
   AiBootEventType,
@@ -25,6 +27,10 @@ import {
 
 const DEFAULT_CAMP_ID = "default";
 const ENGINE_VERSION = "ai-boot-v3.0.0";
+const ROLLING_CHAT_WINDOW_MS = 60 * 60 * 1_000;
+const TOPIC_TTL_MS = 24 * 60 * 60 * 1_000;
+const MAX_STUDENT_DAILY_PRAISE = 3;
+const MAX_CHAT_HOURLY_PRAISE = 5;
 
 export interface AiBootOrchestratorDeps {
   repo: Pick<
@@ -37,6 +43,11 @@ export interface AiBootOrchestratorDeps {
     | "findApprovedAiBootScoreEventByContentHash"
     | "countApprovedAiBootScoreEvents"
     | "sumApprovedAiBootScore"
+    | "insertAiBootNotificationEvent"
+    | "countAiBootNotificationEventsForMember"
+    | "countAiBootNotificationEventsForChat"
+    | "findRecentAiBootNotificationByTopicHash"
+    | "findAiBootNotificationEventByScoreEventId"
   >;
   memberResolver: {
     findMemberByOpenId(openId: string): MemberLite | null;
@@ -183,16 +194,90 @@ export function createAiBootOrchestrator(
         return;
       }
 
+      const praiseText = buildPraiseText({
+        memberName: member.displayName,
+        decision,
+      });
+      if (!passesDurableNotificationCaps({
+        deps,
+        scoreEvent,
+        message,
+        topicHash: evidence.contentHash,
+      })) {
+        return;
+      }
+
       await deps.feishuClient.sendTextMessage({
         receiveId: message.chatId,
         receiveIdType: "chat_id",
-        text: buildPraiseText({
-          memberName: member.displayName,
-          decision,
-        }),
+        text: praiseText,
+      });
+      deps.repo.insertAiBootNotificationEvent({
+        id: `notification:${scoreEvent.id}`,
+        scoreEventId: scoreEvent.id,
+        campId: scoreEvent.campId,
+        memberId: scoreEvent.memberId,
+        chatId: message.chatId,
+        topicHash: evidence.contentHash,
+        notifyPolicy: "group_praise",
+        sentAt: scoreEvent.decidedAt,
+        textHash: stableTextHash(praiseText),
       });
     },
   };
+}
+
+function passesDurableNotificationCaps(input: {
+  deps: AiBootOrchestratorDeps;
+  scoreEvent: AiBootScoreEventRecord;
+  message: NormalizedFeishuMessage;
+  topicHash: string;
+}): boolean {
+  const { deps, scoreEvent, message, topicHash } = input;
+  if (!message.chatId) {
+    return false;
+  }
+
+  if (deps.repo.findAiBootNotificationEventByScoreEventId(scoreEvent.id)) {
+    return false;
+  }
+
+  const decidedAtMs = new Date(scoreEvent.decidedAt).getTime();
+  if (!Number.isFinite(decidedAtMs)) {
+    return false;
+  }
+
+  const dayBounds = shanghaiBusinessDayBounds(scoreEvent.decidedAt);
+  if (deps.repo.countAiBootNotificationEventsForMember({
+    campId: scoreEvent.campId,
+    memberId: scoreEvent.memberId,
+    from: dayBounds.start,
+    to: dayBounds.end,
+  }) >= MAX_STUDENT_DAILY_PRAISE) {
+    return false;
+  }
+
+  if (deps.repo.countAiBootNotificationEventsForChat({
+    campId: scoreEvent.campId,
+    chatId: message.chatId,
+    from: new Date(decidedAtMs - ROLLING_CHAT_WINDOW_MS).toISOString(),
+  }) >= MAX_CHAT_HOURLY_PRAISE) {
+    return false;
+  }
+
+  if (deps.repo.findRecentAiBootNotificationByTopicHash({
+    campId: scoreEvent.campId,
+    topicHash,
+    since: new Date(decidedAtMs - TOPIC_TTL_MS).toISOString(),
+  })) {
+    return false;
+  }
+
+  return true;
+}
+
+function stableTextHash(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
 }
 
 function parseEvidenceBundle(value: string): EvidenceBundle | undefined {

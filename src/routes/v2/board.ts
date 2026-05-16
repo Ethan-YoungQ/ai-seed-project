@@ -32,6 +32,10 @@ function resolveAdditiveScoreFields(
   campId: string,
   memberId: string
 ): AdditiveScoreFields | undefined {
+  if (!isAdditiveAggregationEnabled(deps, campId)) {
+    return undefined;
+  }
+
   const legacySnapshot = deps.repository.getAiBootLegacyScoreSnapshot(campId, memberId);
   const legacyScore = legacySnapshot?.totalScore ?? 0;
   const v3Score = deps.repository.sumApprovedAiBootScore(campId, memberId);
@@ -52,6 +56,11 @@ function resolveAdditiveScoreFields(
       approvedV3Total: v3Score,
     }),
   };
+}
+
+function isAdditiveAggregationEnabled(deps: V2Runtime, campId: string): boolean {
+  return deps.aiBootConfig?.engineMode === "v3_live" &&
+    deps.repository.hasCompleteAiBootLegacyScoreSnapshots(campId);
 }
 
 function effectiveRankingScore(row: { cumulativeAq: number; totalScore?: number }): number {

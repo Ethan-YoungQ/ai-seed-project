@@ -9,6 +9,7 @@ const DEFAULT_DAILY_GROUP_PRAISE_CAP = 20;
 
 export type CutoverFailure =
   | "legacy_snapshots_missing"
+  | "legacy_snapshots_incomplete"
   | "stale_review_required"
   | "score_event_missing_audit_text"
   | "notification_daily_cap_exceeded";
@@ -62,6 +63,8 @@ export async function runCutoverCheck(
     const failures: CutoverFailure[] = [];
     if (repository.countAiBootLegacyScoreSnapshots(campId) === 0) {
       failures.push("legacy_snapshots_missing");
+    } else if (repository.countMissingAiBootLegacyScoreSnapshots(campId) > 0) {
+      failures.push("legacy_snapshots_incomplete");
     }
     if (repository.countStaleAiBootReviewRequired({ campId, nowIso, olderThanHours: 24 }) > 0) {
       failures.push("stale_review_required");

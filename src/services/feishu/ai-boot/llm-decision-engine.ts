@@ -83,7 +83,7 @@ no-score boundaries（命中时通常输出 status=no_score 或 review_required�
 - JSON-only。只输出一个 JSON 对象。
 - No markdown around output. 不要代码块、不要解释、不要前后缀。
 - 字段必须 exactly compatible with ScoringDecision：
-  status: "approved" | "review_required" | "rejected" | "no_score" | "shadow"
+  status: "approved" | "review_required" | "rejected" | "no_score"
   category: "daily_participation" | "ai_artifact" | "ai_practice_reflection" | "prompt_or_method" | "resource_recommendation" | "peer_help" | "formal_task" | "operator_adjustment"
   scoreDelta: number
   confidence: "high" | "medium" | "low"

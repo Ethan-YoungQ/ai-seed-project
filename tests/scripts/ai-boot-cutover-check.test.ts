@@ -16,7 +16,7 @@ function makeRepo(): SqliteRepository {
 function addSnapshot(repository: SqliteRepository) {
   repository.upsertAiBootLegacyScoreSnapshot({
     id: "snapshot-1",
-    campId: "default",
+    campId: "camp-demo",
     memberId: "user-alice",
     totalScore: 0,
     dimensionJson: "{}",
@@ -29,7 +29,7 @@ function scoreEvent(overrides: Partial<AiBootScoreEventRecord> = {}): AiBootScor
   return {
     id: "score-1",
     eventId: "evt-1",
-    campId: "default",
+    campId: "camp-demo",
     memberId: "user-alice",
     category: "ai_artifact",
     scoreDelta: 4,
@@ -64,13 +64,33 @@ describe("runCutoverCheck", () => {
     const result = await runCutoverCheck({
       repository,
       env: {} as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T00:00:00.000Z",
       stdout,
     });
 
     expect(result).toEqual({ ok: false, failures: ["legacy_snapshots_missing"] });
     expect(JSON.parse(stdout.mock.calls[0][0])).toEqual(result);
+  });
+
+  it("fails when any freeze-eligible member lacks a legacy snapshot", async () => {
+    const repository = makeRepo();
+    repository.ensureMember("user-bob", "camp-demo");
+    repository.updateMember("user-bob", {
+      roleType: "student",
+      isParticipant: true,
+      isExcludedFromBoard: false,
+      displayName: "Bob",
+    });
+    addSnapshot(repository);
+
+    await expect(runCutoverCheck({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "camp-demo",
+      now: () => "2026-05-17T00:00:00.000Z",
+      stdout: () => undefined,
+    })).resolves.toEqual({ ok: false, failures: ["legacy_snapshots_incomplete"] });
   });
 
   it("fails when review-required score events are older than 24 hours", async () => {
@@ -85,7 +105,7 @@ describe("runCutoverCheck", () => {
     await expect(runCutoverCheck({
       repository,
       env: {} as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T00:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: false, failures: ["stale_review_required"] });
@@ -104,7 +124,7 @@ describe("runCutoverCheck", () => {
     ).run(
       "score-missing-audit",
       "evt-missing-audit",
-      "default",
+      "camp-demo",
       "user-alice",
       "ai_artifact",
       4,
@@ -123,7 +143,7 @@ describe("runCutoverCheck", () => {
     await expect(runCutoverCheck({
       repository,
       env: {} as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T00:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: false, failures: ["score_event_missing_audit_text"] });
@@ -151,7 +171,7 @@ describe("runCutoverCheck", () => {
         AI_BOOT_ALLOW_GROUP_PRAISE: "1",
         AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
       } as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T04:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: false, failures: ["notification_daily_cap_exceeded"] });
@@ -172,7 +192,7 @@ describe("runCutoverCheck", () => {
         AI_BOOT_ALLOW_GROUP_PRAISE: "true",
         AI_BOOT_DAILY_GROUP_PRAISE_CAP: "20",
       } as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T00:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: true, failures: [] });
@@ -228,7 +248,7 @@ describe("runCutoverCheck", () => {
         AI_BOOT_ALLOW_GROUP_PRAISE: "true",
         AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
       } as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T08:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: false, failures: ["notification_daily_cap_exceeded"] });
@@ -239,7 +259,7 @@ describe("runCutoverCheck", () => {
         AI_BOOT_ALLOW_GROUP_PRAISE: "false",
         AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
       } as NodeJS.ProcessEnv,
-      campId: "default",
+      campId: "camp-demo",
       now: () => "2026-05-17T08:00:00.000Z",
       stdout: () => undefined,
     })).resolves.toEqual({ ok: true, failures: [] });

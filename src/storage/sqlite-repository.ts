@@ -26,6 +26,7 @@ import type {
   AiBootDecisionStatus,
   AiBootEventRecord,
   AiBootEventStatus,
+  AiBootNotificationEventRecord,
   AiBootScoreCategory,
   AiBootScoreEventRecord
 } from "../domain/v3/ai-boot-types.js";
@@ -426,6 +427,25 @@ CREATE TABLE IF NOT EXISTS ai_boot_legacy_score_snapshots (
   snapshot_at TEXT NOT NULL,
   UNIQUE(camp_id, member_id)
 );
+
+CREATE TABLE IF NOT EXISTS ai_boot_notification_events (
+  id TEXT PRIMARY KEY,
+  score_event_id TEXT NOT NULL,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  topic_hash TEXT NOT NULL,
+  notify_policy TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  UNIQUE(score_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_member_sent
+  ON ai_boot_notification_events (camp_id, member_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_chat_sent
+  ON ai_boot_notification_events (camp_id, chat_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_topic_sent
+  ON ai_boot_notification_events (camp_id, topic_hash, sent_at);
 
 CREATE TABLE IF NOT EXISTS v2_member_dimension_scores (
   member_id TEXT NOT NULL,
@@ -1698,6 +1718,25 @@ export class SqliteRepository {
     return Number(row.count ?? 0);
   }
 
+  countMissingAiBootLegacyScoreSnapshots(campId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM members m
+         LEFT JOIN ai_boot_legacy_score_snapshots s
+           ON s.camp_id = m.camp_id AND s.member_id = m.id
+         WHERE m.camp_id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+           AND s.member_id IS NULL`
+      )
+      .get(campId) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  hasCompleteAiBootLegacyScoreSnapshots(campId: string): boolean {
+    return this.countMissingAiBootLegacyScoreSnapshots(campId) === 0;
+  }
+
   countStaleAiBootReviewRequired(input: {
     campId?: string;
     nowIso: string;
@@ -1763,6 +1802,92 @@ export class SqliteRepository {
     return Number(row.count ?? 0);
   }
 
+  insertAiBootNotificationEvent(input: AiBootNotificationEventRecord): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT INTO ai_boot_notification_events
+          (id, score_event_id, camp_id, member_id, chat_id, topic_hash,
+           notify_policy, sent_at, text_hash)
+         VALUES
+          (@id, @scoreEventId, @campId, @memberId, @chatId, @topicHash,
+           @notifyPolicy, @sentAt, @textHash)
+         ON CONFLICT(score_event_id) DO NOTHING`
+      )
+      .run(input);
+    return result.changes > 0;
+  }
+
+  countAiBootNotificationEventsForMember(input: {
+    campId: string;
+    memberId: string;
+    from: string;
+    to: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_notification_events
+         WHERE camp_id = @campId
+           AND member_id = @memberId
+           AND sent_at >= @from
+           AND sent_at < @to`
+      )
+      .get(input) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countAiBootNotificationEventsForChat(input: {
+    campId: string;
+    chatId: string;
+    from: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_notification_events
+         WHERE camp_id = @campId
+           AND chat_id = @chatId
+           AND sent_at >= @from`
+      )
+      .get(input) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  findRecentAiBootNotificationByTopicHash(input: {
+    campId: string;
+    topicHash: string;
+    since: string;
+  }): AiBootNotificationEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, score_event_id, camp_id, member_id, chat_id, topic_hash,
+                notify_policy, sent_at, text_hash
+         FROM ai_boot_notification_events
+         WHERE camp_id = @campId
+           AND topic_hash = @topicHash
+           AND sent_at >= @since
+         ORDER BY sent_at DESC, id DESC
+         LIMIT 1`
+      )
+      .get(input) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootNotificationEventRow(row) : undefined;
+  }
+
+  findAiBootNotificationEventByScoreEventId(
+    scoreEventId: string
+  ): AiBootNotificationEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, score_event_id, camp_id, member_id, chat_id, topic_hash,
+                notify_policy, sent_at, text_hash
+         FROM ai_boot_notification_events
+         WHERE score_event_id = ?
+         LIMIT 1`
+      )
+      .get(scoreEventId) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootNotificationEventRow(row) : undefined;
+  }
+
   private mapAiBootEventRow(row: Record<string, unknown>): AiBootEventRecord {
     return {
       id: String(row.id),
@@ -1809,6 +1934,22 @@ export class SqliteRepository {
           ? null
           : String(row.review_note),
       decidedAt: String(row.decided_at)
+    };
+  }
+
+  private mapAiBootNotificationEventRow(
+    row: Record<string, unknown>
+  ): AiBootNotificationEventRecord {
+    return {
+      id: String(row.id),
+      scoreEventId: String(row.score_event_id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      chatId: String(row.chat_id),
+      topicHash: String(row.topic_hash),
+      notifyPolicy: String(row.notify_policy) as AiBootNotificationEventRecord["notifyPolicy"],
+      sentAt: String(row.sent_at),
+      textHash: String(row.text_hash)
     };
   }
 

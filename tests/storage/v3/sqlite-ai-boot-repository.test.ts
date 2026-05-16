@@ -522,4 +522,101 @@ describe("SqliteRepository ai boot v3", () => {
     })).toBe(1);
     r.close();
   });
+
+  it("counts missing legacy snapshots using freeze-eligible members", () => {
+    const r = repo();
+    r.seedDemo();
+
+    expect(r.countMissingAiBootLegacyScoreSnapshots("camp-demo")).toBe(1);
+    expect(r.hasCompleteAiBootLegacyScoreSnapshots("camp-demo")).toBe(false);
+
+    r.upsertAiBootLegacyScoreSnapshot({
+      id: "snapshot-alice",
+      campId: "camp-demo",
+      memberId: "user-alice",
+      totalScore: 0,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+
+    expect(r.countMissingAiBootLegacyScoreSnapshots("camp-demo")).toBe(0);
+    expect(r.hasCompleteAiBootLegacyScoreSnapshots("camp-demo")).toBe(true);
+
+    r.ensureMember("user-bob", "camp-demo");
+    r.updateMember("user-bob", {
+      roleType: "student",
+      isParticipant: true,
+      isExcludedFromBoard: false,
+      displayName: "Bob",
+    });
+
+    expect(r.countMissingAiBootLegacyScoreSnapshots("camp-demo")).toBe(1);
+    expect(r.hasCompleteAiBootLegacyScoreSnapshots("camp-demo")).toBe(false);
+    r.close();
+  });
+
+  it("records and queries durable AI Boot notification ledger events", () => {
+    const r = repo();
+
+    expect(r.insertAiBootNotificationEvent({
+      id: "notification-1",
+      scoreEventId: "score-1",
+      campId: "default",
+      memberId: "m-1",
+      chatId: "chat-1",
+      topicHash: "topic-1",
+      notifyPolicy: "group_praise",
+      sentAt: "2026-05-16T08:00:00.000Z",
+      textHash: "text-1",
+    })).toBe(true);
+    expect(r.insertAiBootNotificationEvent({
+      id: "notification-duplicate",
+      scoreEventId: "score-1",
+      campId: "default",
+      memberId: "m-1",
+      chatId: "chat-1",
+      topicHash: "topic-1",
+      notifyPolicy: "group_praise",
+      sentAt: "2026-05-16T08:30:00.000Z",
+      textHash: "text-duplicate",
+    })).toBe(false);
+    expect(r.insertAiBootNotificationEvent({
+      id: "notification-2",
+      scoreEventId: "score-2",
+      campId: "default",
+      memberId: "m-1",
+      chatId: "chat-1",
+      topicHash: "topic-2",
+      notifyPolicy: "group_praise",
+      sentAt: "2026-05-16T09:00:00.000Z",
+      textHash: "text-2",
+    })).toBe(true);
+
+    expect(r.countAiBootNotificationEventsForMember({
+      campId: "default",
+      memberId: "m-1",
+      from: "2026-05-16T00:00:00.000Z",
+      to: "2026-05-17T00:00:00.000Z",
+    })).toBe(2);
+    expect(r.countAiBootNotificationEventsForChat({
+      campId: "default",
+      chatId: "chat-1",
+      from: "2026-05-16T08:30:00.000Z",
+    })).toBe(1);
+    expect(r.findRecentAiBootNotificationByTopicHash({
+      campId: "default",
+      topicHash: "topic-1",
+      since: "2026-05-16T07:59:59.000Z",
+    })).toMatchObject({
+      id: "notification-1",
+      scoreEventId: "score-1",
+      textHash: "text-1",
+    });
+    expect(r.findAiBootNotificationEventByScoreEventId("score-1")).toMatchObject({
+      id: "notification-1",
+      topicHash: "topic-1",
+    });
+    r.close();
+  });
 });

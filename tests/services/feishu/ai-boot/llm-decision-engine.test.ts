@@ -73,6 +73,8 @@ describe("buildScoringPrompt", () => {
     expect(prompt).toContain("operational/meta chat");
     expect(prompt).toContain("JSON-only");
     expect(prompt).toContain("No markdown");
+    expect(prompt).toContain('status: "approved" | "review_required" | "rejected" | "no_score"');
+    expect(prompt).not.toContain('"shadow"');
 
     for (const field of [
       "status",
@@ -211,6 +213,10 @@ describe("decideWithLlm", () => {
     [
       "schema-invalid JSON",
       '{"status":"approved","category":"formal_task","scoreDelta":"10","confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}',
+    ],
+    [
+      "shadow status",
+      '{"status":"shadow","category":"formal_task","scoreDelta":10,"confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}',
     ],
   ])("returns review_required for invalid LLM output: %s", async (_name, response) => {
     const client: AiBootLlmClient = {

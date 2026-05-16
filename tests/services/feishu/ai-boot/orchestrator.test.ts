@@ -6,6 +6,7 @@ import {
 } from "../../../../src/services/feishu/ai-boot/orchestrator";
 import type {
   AiBootEventRecord,
+  AiBootNotificationEventRecord,
   AiBootScoreEventRecord,
 } from "../../../../src/domain/v3/ai-boot-types";
 import type { NormalizedFeishuMessage } from "../../../../src/services/feishu/normalize-message";
@@ -45,10 +46,12 @@ function makeDeps(
   overrides: Partial<AiBootOrchestratorDeps> = {},
 ): AiBootOrchestratorDeps & {
   events: AiBootEventRecord[];
+  notificationEvents: AiBootNotificationEventRecord[];
   scoreEvents: AiBootScoreEventRecord[];
 } {
   const events: AiBootEventRecord[] = [];
   const scoreEvents: AiBootScoreEventRecord[] = [];
+  const notificationEvents: AiBootNotificationEventRecord[] = [];
   const repo = {
     insertAiBootEvent: vi.fn((event: AiBootEventRecord) => {
       const existing = events.find(
@@ -114,6 +117,52 @@ function makeDeps(
         .filter((event) => event.campId === campId && event.memberId === memberId && event.status === "approved")
         .reduce((sum, event) => sum + event.scoreDelta, 0),
     ),
+    insertAiBootNotificationEvent: vi.fn((event: AiBootNotificationEventRecord) => {
+      const existing = notificationEvents.find((row) => row.scoreEventId === event.scoreEventId);
+      if (existing) return false;
+      notificationEvents.push(event);
+      return true;
+    }),
+    countAiBootNotificationEventsForMember: vi.fn((input: {
+      campId: string;
+      memberId: string;
+      from: string;
+      to: string;
+    }) =>
+      notificationEvents.filter((event) =>
+        event.campId === input.campId &&
+        event.memberId === input.memberId &&
+        event.sentAt >= input.from &&
+        event.sentAt < input.to,
+      ).length,
+    ),
+    countAiBootNotificationEventsForChat: vi.fn((input: {
+      campId: string;
+      chatId: string;
+      from: string;
+    }) =>
+      notificationEvents.filter((event) =>
+        event.campId === input.campId &&
+        event.chatId === input.chatId &&
+        event.sentAt >= input.from,
+      ).length,
+    ),
+    findRecentAiBootNotificationByTopicHash: vi.fn((input: {
+      campId: string;
+      topicHash: string;
+      since: string;
+    }) =>
+      [...notificationEvents]
+        .reverse()
+        .find((event) =>
+          event.campId === input.campId &&
+          event.topicHash === input.topicHash &&
+          event.sentAt >= input.since,
+        ),
+    ),
+    findAiBootNotificationEventByScoreEventId: vi.fn((scoreEventId: string) =>
+      notificationEvents.find((event) => event.scoreEventId === scoreEventId),
+    ),
   };
   const deps: AiBootOrchestratorDeps = {
     repo: repo as AiBootOrchestratorDeps["repo"],
@@ -145,7 +194,7 @@ function makeDeps(
     ...overrides,
   };
 
-  return Object.assign(deps, { events, scoreEvents });
+  return Object.assign(deps, { events, notificationEvents, scoreEvents });
 }
 
 const approvedArtifact = {
@@ -209,6 +258,65 @@ describe("createAiBootOrchestrator", () => {
       receiveIdType: "chat_id",
       text: expect.stringContaining("测试学员"),
     }));
+    expect(deps.notificationEvents).toHaveLength(1);
+    expect(deps.notificationEvents[0]).toMatchObject({
+      scoreEventId: "score-1",
+      campId: "default",
+      memberId: "member-1",
+      chatId: "chat-1",
+      topicHash: expect.any(String),
+      notifyPolicy: "group_praise",
+      sentAt: "2026-05-16T09:00:00.000Z",
+      textHash: expect.any(String),
+    });
+  });
+
+  it("uses durable notification caps after restart before sending group praise", async () => {
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    deps.notificationEvents.push(
+      {
+        id: "notification-prior-1",
+        scoreEventId: "score-prior-1",
+        campId: "default",
+        memberId: "member-1",
+        chatId: "chat-1",
+        topicHash: "prior-topic-1",
+        notifyPolicy: "group_praise",
+        sentAt: "2026-05-16T01:00:00.000Z",
+        textHash: "text-prior-1",
+      },
+      {
+        id: "notification-prior-2",
+        scoreEventId: "score-prior-2",
+        campId: "default",
+        memberId: "member-1",
+        chatId: "chat-1",
+        topicHash: "prior-topic-2",
+        notifyPolicy: "group_praise",
+        sentAt: "2026-05-16T02:00:00.000Z",
+        textHash: "text-prior-2",
+      },
+      {
+        id: "notification-prior-3",
+        scoreEventId: "score-prior-3",
+        campId: "default",
+        memberId: "member-1",
+        chatId: "chat-1",
+        topicHash: "prior-topic-3",
+        notifyPolicy: "group_praise",
+        sentAt: "2026-05-16T03:00:00.000Z",
+        textHash: "text-prior-3",
+      },
+    );
+    const orchestratorAfterRestart = createAiBootOrchestrator(deps);
+
+    await orchestratorAfterRestart.handleMessage(message());
+
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+    expect(deps.notificationEvents).toHaveLength(3);
   });
 
   it("@Bot mention remains chat-only and does not write score event", async () => {

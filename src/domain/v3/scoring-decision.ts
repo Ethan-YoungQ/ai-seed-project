@@ -23,8 +23,7 @@ const decisionStatusSchema = z.enum([
   "approved",
   "review_required",
   "rejected",
-  "no_score",
-  "shadow"
+  "no_score"
 ]);
 
 const notifyPolicySchema = z.enum([
@@ -56,7 +55,7 @@ const scoringDecisionSchema = z.object({
 });
 
 export interface ScoringDecision {
-  status: AiBootDecisionStatus;
+  status: Exclude<AiBootDecisionStatus, "shadow">;
   category: AiBootScoreCategory;
   scoreDelta: number;
   confidence: AiBootConfidence;

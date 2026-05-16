@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { createApp } from "../../../src/app.js";
 import type {
   AiBootEventRecord,
@@ -76,6 +76,10 @@ describe("GET /api/v2/board/member/:id", () => {
     }
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("returns 404 for unknown member id", async () => {
     const app = await createApp({ databaseUrl: ":memory:" });
     apps.push(app);
@@ -142,7 +146,64 @@ describe("GET /api/v2/board/member/:id", () => {
     expect(body.detail.memberId).toBe("user-alice");
   });
 
-  it("adds legacy and v3 score fields and uses combined total as cumulative AQ", async () => {
+  it.each(["legacy", "v3_shadow"] as const)(
+    "keeps v2 cumulative detail in %s mode even when AI Boot rows exist",
+    async (engineMode) => {
+      vi.stubEnv("AI_BOOT_ENGINE_MODE", engineMode);
+      const dbPath = databasePath();
+      const repo = new SqliteRepository(dbPath);
+      repo.seedDemo();
+      const db = (repo as unknown as {
+        db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+      }).db;
+      db.prepare(
+        `INSERT INTO v2_window_snapshots (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score, c_score, s_score, g_score, growth_bonus, snapshot_at)
+         VALUES ('snap-alice-shadow', 'w-W1', 'user-alice', 33, 33, 10, 10, 5, 5, 3, 0, '2026-04-01T00:00:00Z')`
+      ).run();
+      repo.upsertAiBootLegacyScoreSnapshot({
+        id: "legacy-alice-shadow",
+        campId: "camp-demo",
+        memberId: "user-alice",
+        totalScore: 12,
+        dimensionJson: "{}",
+        sourceNote: "test",
+        snapshotAt: "2026-05-16T00:00:00.000Z",
+      });
+      repo.insertAiBootEvent(
+        aiBootEvent("user-alice", { id: "evt-alice-shadow", campId: "camp-demo" })
+      );
+      repo.insertAiBootScoreEvent(
+        aiBootScoreEvent("user-alice", {
+          id: "score-alice-shadow",
+          eventId: "evt-alice-shadow",
+          campId: "camp-demo",
+          scoreDelta: 8,
+        })
+      );
+      repo.close();
+
+      const app = await createApp({ databaseUrl: dbPath });
+      apps.push(app);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v2/board/member/user-alice",
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      expect(body.detail).toMatchObject({
+        memberId: "user-alice",
+        cumulativeAq: 33,
+      });
+      expect(body.detail).not.toHaveProperty("legacyScore");
+      expect(body.detail).not.toHaveProperty("v3Score");
+      expect(body.detail).not.toHaveProperty("totalScore");
+    }
+  );
+
+  it("adds legacy and v3 score fields in v3_live when snapshots are complete", async () => {
+    vi.stubEnv("AI_BOOT_ENGINE_MODE", "v3_live");
     const dbPath = databasePath();
     const repo = new SqliteRepository(dbPath);
     repo.seedDemo();
@@ -189,7 +250,8 @@ describe("GET /api/v2/board/member/:id", () => {
     expect(body.detail.dimensions).toEqual({ K: 0, H: 0, C: 0, S: 0, G: 0 });
   });
 
-  it("shows additive fields for zero-net approved v3 score and uses zero as cumulative AQ", async () => {
+  it("keeps v2 detail in v3_live when legacy snapshots are incomplete", async () => {
+    vi.stubEnv("AI_BOOT_ENGINE_MODE", "v3_live");
     const dbPath = databasePath();
     const repo = new SqliteRepository(dbPath);
     repo.seedDemo();
@@ -237,11 +299,11 @@ describe("GET /api/v2/board/member/:id", () => {
     const body = res.json();
     expect(body.detail).toMatchObject({
       memberId: "user-alice",
-      cumulativeAq: 0,
-      legacyScore: 0,
-      v3Score: 0,
-      totalScore: 0,
+      cumulativeAq: 33,
     });
+    expect(body.detail).not.toHaveProperty("legacyScore");
+    expect(body.detail).not.toHaveProperty("v3Score");
+    expect(body.detail).not.toHaveProperty("totalScore");
     expect(body.detail.windowSnapshots).toHaveLength(1);
   });
 });

@@ -50,6 +50,21 @@ describe("v3 scoring decision schema", () => {
     ).toThrow();
   });
 
+  test("rejects shadow as a model-facing scoring decision status", () => {
+    expect(() =>
+      parseScoringDecision({
+        status: "shadow",
+        category: "ai_artifact",
+        scoreDelta: 5,
+        confidence: "high",
+        notifyPolicy: "group_praise",
+        reason: "Shadow is an internal storage status.",
+        evidence: "LLM output attempted to set shadow.",
+        badges: []
+      })
+    ).toThrow();
+  });
+
   test("rejects blank reason and evidence without trimming non-blank values", () => {
     const validDecision = {
       status: "approved",

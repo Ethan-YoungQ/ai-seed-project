@@ -11,8 +11,6 @@ Run this exact local sequence before touching the server:
 ```bash
 npm run build
 npm test
-npm run ai-boot:freeze-legacy
-npm run ai-boot:cutover-check
 ```
 
 Record:
@@ -44,6 +42,9 @@ printf '%s\n' "$BACKUP_OUTPUT"
 BACKUP_PATH="$(printf '%s\n' "$BACKUP_OUTPUT" | sed -n 's/^backup saved to //p' | tail -n 1)"
 test -n "$BACKUP_PATH"
 test -f "$BACKUP_PATH"
+
+npm run ai-boot:freeze-legacy
+npm run ai-boot:cutover-check
 
 set_env() {
   key="$1"

@@ -2,7 +2,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, afterEach, vi } from "vitest";
 import { createApp } from "../../../src/app.js";
 import type {
   AiBootEventRecord,
@@ -76,6 +76,10 @@ describe("GET /api/v2/board/ranking", () => {
     }
   });
 
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
   it("returns 200 with empty rows when no members exist", async () => {
     const app = await createApp({ databaseUrl: ":memory:" });
     apps.push(app);
@@ -116,7 +120,105 @@ describe("GET /api/v2/board/ranking", () => {
     expect(hasOperator).toBe(false);
   });
 
-  it("adds legacy and v3 score fields and ranks by effective total score", async () => {
+  it.each(["legacy", "v3_shadow"] as const)(
+    "keeps v2 cumulative scores in %s mode even when AI Boot snapshots and v3 rows exist",
+    async (engineMode) => {
+      vi.stubEnv("AI_BOOT_ENGINE_MODE", engineMode);
+      const dbPath = databasePath();
+      const repo = new SqliteRepository(dbPath);
+      repo.seedDemo();
+
+      const members = [
+        { id: "shadow-a", name: "Alpha", v2Aq: 100 },
+        { id: "shadow-b", name: "Bravo", v2Aq: 60 },
+      ];
+
+      for (const member of members) {
+        repo.ensureMember(member.id, "demo-camp");
+        repo.updateMember(member.id, {
+          roleType: "student",
+          isParticipant: true,
+          isExcludedFromBoard: false,
+          displayName: member.name,
+        });
+      }
+
+      const db = (repo as unknown as {
+        db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+      }).db;
+      for (const member of members) {
+        db.prepare(
+          `INSERT INTO v2_window_snapshots (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score, c_score, s_score, g_score, growth_bonus, snapshot_at)
+           VALUES (?, 'w-W1', ?, ?, ?, 10, 10, 10, 10, 10, 0, '2026-04-01T00:00:00Z')`
+        ).run(`snap-${member.id}`, member.id, member.v2Aq, member.v2Aq);
+      }
+
+      repo.upsertAiBootLegacyScoreSnapshot({
+        id: "legacy-shadow-a",
+        campId: "demo-camp",
+        memberId: "shadow-a",
+        totalScore: 5,
+        dimensionJson: "{}",
+        sourceNote: "test",
+        snapshotAt: "2026-05-16T00:00:00.000Z",
+      });
+      repo.upsertAiBootLegacyScoreSnapshot({
+        id: "legacy-shadow-b",
+        campId: "demo-camp",
+        memberId: "shadow-b",
+        totalScore: 500,
+        dimensionJson: "{}",
+        sourceNote: "test",
+        snapshotAt: "2026-05-16T00:00:00.000Z",
+      });
+      repo.insertAiBootEvent(aiBootEvent("shadow-b", { id: "evt-shadow-b-a" }));
+      repo.insertAiBootScoreEvent(
+        aiBootScoreEvent("shadow-b", {
+          id: "score-shadow-b-a",
+          eventId: "evt-shadow-b-a",
+          scoreDelta: 500,
+        })
+      );
+      repo.insertAiBootEvent(aiBootEvent("shadow-a", { id: "evt-shadow-a-shadow" }));
+      repo.insertAiBootScoreEvent(
+        aiBootScoreEvent("shadow-a", {
+          id: "score-shadow-a-shadow",
+          eventId: "evt-shadow-a-shadow",
+          status: "shadow",
+          scoreDelta: 500,
+        })
+      );
+      repo.close();
+
+      const app = await createApp({ databaseUrl: dbPath });
+      apps.push(app);
+
+      const res = await app.inject({
+        method: "GET",
+        url: "/api/v2/board/ranking?campId=demo-camp",
+      });
+
+      expect(res.statusCode).toBe(200);
+      const body = res.json();
+      const rows = body.rows.filter((row: { memberId: string }) =>
+        members.some((member) => member.id === row.memberId)
+      );
+
+      expect(rows.map((row: { memberId: string }) => row.memberId)).toEqual([
+        "shadow-a",
+        "shadow-b",
+      ]);
+      expect(rows.map((row: { cumulativeAq: number }) => row.cumulativeAq)).toEqual([
+        100,
+        60,
+      ]);
+      expect(rows[0]).not.toHaveProperty("legacyScore");
+      expect(rows[1]).not.toHaveProperty("legacyScore");
+    }
+  );
+
+  it("adds legacy and v3 score fields in v3_live only when snapshots are complete", async () => {
+    vi.stubEnv("AI_BOOT_ENGINE_MODE", "v3_live");
     const dbPath = databasePath();
     const repo = new SqliteRepository(dbPath);
     repo.seedDemo();
@@ -149,15 +251,17 @@ describe("GET /api/v2/board/ranking", () => {
       ).run(`snap-${member.id}`, member.id, member.v2Aq, member.v2Aq);
     }
 
-    repo.upsertAiBootLegacyScoreSnapshot({
-      id: "legacy-s1",
-      campId: "demo-camp",
-      memberId: "s1",
-      totalScore: 40,
-      dimensionJson: "{}",
-      sourceNote: "test",
-      snapshotAt: "2026-05-16T00:00:00.000Z",
-    });
+    for (const member of members) {
+      repo.upsertAiBootLegacyScoreSnapshot({
+        id: `legacy-${member.id}`,
+        campId: "demo-camp",
+        memberId: member.id,
+        totalScore: member.v2Aq,
+        dimensionJson: "{}",
+        sourceNote: "test",
+        snapshotAt: "2026-05-16T00:00:00.000Z",
+      });
+    }
     repo.insertAiBootEvent(aiBootEvent("s1", { id: "evt-s1-a" }));
     repo.insertAiBootScoreEvent(
       aiBootScoreEvent("s1", {
@@ -248,43 +352,46 @@ describe("GET /api/v2/board/ranking", () => {
     );
 
     expect(rows.map((row: { memberName: string }) => row.memberName)).toEqual([
-      "Charlie",
-      "Delta",
       "Bravo",
       "Alpha",
+      "Charlie",
+      "Delta",
       "Echo",
     ]);
     expect(rows.map((row: { rank: number }) => row.rank)).toEqual([1, 2, 3, 4, 5]);
 
-    expect(rows[0]).not.toHaveProperty("legacyScore");
     expect(rows[0]).toMatchObject({
-      memberId: "s3",
-      cumulativeAq: 80,
+      memberId: "s2",
+      cumulativeAq: 150,
+      legacyScore: 90,
+      v3Score: 60,
+      totalScore: 150,
+    });
+    expect(rows[1]).toMatchObject({
+      memberId: "s1",
+      cumulativeAq: 110,
+      legacyScore: 100,
+      v3Score: 10,
+      totalScore: 110,
     });
     expect(rows[2]).toMatchObject({
-      memberId: "s2",
-      cumulativeAq: 60,
-      legacyScore: 0,
-      v3Score: 60,
-      totalScore: 60,
-    });
-    expect(rows[3]).toMatchObject({
-      memberId: "s1",
-      cumulativeAq: 50,
-      legacyScore: 40,
-      v3Score: 10,
-      totalScore: 50,
+      memberId: "s3",
+      cumulativeAq: 80,
+      legacyScore: 80,
+      v3Score: 0,
+      totalScore: 80,
     });
     expect(rows[4]).toMatchObject({
       memberId: "s5",
-      cumulativeAq: 0,
-      legacyScore: 0,
+      cumulativeAq: 65,
+      legacyScore: 65,
       v3Score: 0,
-      totalScore: 0,
+      totalScore: 65,
     });
   });
 
   it("recomputes tie ranks from effective totals instead of old v2 ranks", async () => {
+    vi.stubEnv("AI_BOOT_ENGINE_MODE", "v3_live");
     const dbPath = databasePath();
     const repo = new SqliteRepository(dbPath);
     repo.seedDemo();
@@ -320,6 +427,15 @@ describe("GET /api/v2/board/ranking", () => {
       campId: "demo-camp",
       memberId: "tie-a",
       totalScore: 100,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+    repo.upsertAiBootLegacyScoreSnapshot({
+      id: "legacy-tie-b",
+      campId: "demo-camp",
+      memberId: "tie-b",
+      totalScore: 0,
       dimensionJson: "{}",
       sourceNote: "test",
       snapshotAt: "2026-05-16T00:00:00.000Z",
@@ -370,6 +486,82 @@ describe("GET /api/v2/board/ranking", () => {
       50,
     ]);
     expect(rows.map((row: { rank: number }) => row.rank)).toEqual([1, 1, 3]);
+  });
+
+  it("keeps v2 leaderboard in v3_live when legacy snapshots are incomplete", async () => {
+    vi.stubEnv("AI_BOOT_ENGINE_MODE", "v3_live");
+    const dbPath = databasePath();
+    const repo = new SqliteRepository(dbPath);
+    repo.seedDemo();
+
+    const members = [
+      { id: "incomplete-a", name: "Alpha", v2Aq: 100 },
+      { id: "incomplete-b", name: "Bravo", v2Aq: 40 },
+    ];
+
+    for (const member of members) {
+      repo.ensureMember(member.id, "demo-camp");
+      repo.updateMember(member.id, {
+        roleType: "student",
+        isParticipant: true,
+        isExcludedFromBoard: false,
+        displayName: member.name,
+      });
+    }
+
+    const db = (repo as unknown as {
+      db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } };
+    }).db;
+    for (const member of members) {
+      db.prepare(
+        `INSERT INTO v2_window_snapshots (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score, c_score, s_score, g_score, growth_bonus, snapshot_at)
+         VALUES (?, 'w-W1', ?, ?, ?, 10, 10, 10, 10, 10, 0, '2026-04-01T00:00:00Z')`
+      ).run(`snap-${member.id}`, member.id, member.v2Aq, member.v2Aq);
+    }
+
+    repo.upsertAiBootLegacyScoreSnapshot({
+      id: "legacy-incomplete-a",
+      campId: "demo-camp",
+      memberId: "incomplete-a",
+      totalScore: 5,
+      dimensionJson: "{}",
+      sourceNote: "test",
+      snapshotAt: "2026-05-16T00:00:00.000Z",
+    });
+    repo.insertAiBootEvent(aiBootEvent("incomplete-b", { id: "evt-incomplete-b" }));
+    repo.insertAiBootScoreEvent(
+      aiBootScoreEvent("incomplete-b", {
+        id: "score-incomplete-b",
+        eventId: "evt-incomplete-b",
+        scoreDelta: 500,
+      })
+    );
+    repo.close();
+
+    const app = await createApp({ databaseUrl: dbPath });
+    apps.push(app);
+
+    const res = await app.inject({
+      method: "GET",
+      url: "/api/v2/board/ranking?campId=demo-camp",
+    });
+
+    expect(res.statusCode).toBe(200);
+    const body = res.json();
+    const rows = body.rows.filter((row: { memberId: string }) =>
+      members.some((member) => member.id === row.memberId)
+    );
+
+    expect(rows.map((row: { memberId: string }) => row.memberId)).toEqual([
+      "incomplete-a",
+      "incomplete-b",
+    ]);
+    expect(rows.map((row: { cumulativeAq: number }) => row.cumulativeAq)).toEqual([
+      100,
+      40,
+    ]);
+    expect(rows[0]).not.toHaveProperty("legacyScore");
+    expect(rows[1]).not.toHaveProperty("legacyScore");
   });
 });
 

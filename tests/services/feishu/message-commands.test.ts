@@ -323,7 +323,7 @@ describe("message-commands AI Boot v3 routing", () => {
     };
   }
 
-  it("routes regular auto-capture messages to AI Boot v3 and skips legacy ingestor scoring", async () => {
+  it("routes v3_live auto-capture messages to AI Boot v3 and skips legacy ingestor scoring", async () => {
     const deps = buildDeps();
     const handler = createMessageCommandHandler(deps);
     const msg = makeMsg({ rawText: "我用 AI 完成了一张客户沟通海报。" });
@@ -332,6 +332,32 @@ describe("message-commands AI Boot v3 routing", () => {
 
     expect(deps.aiBootOrchestrator?.handleMessage).toHaveBeenCalledWith(msg);
     expect(deps.ingestor?.ingest).not.toHaveBeenCalled();
+  });
+
+  it("runs v3_shadow as a sidecar while keeping legacy auto-capture scoring", async () => {
+    const deps = buildDeps({
+      aiBootConfig: {
+        engineMode: "v3_shadow",
+        allowGroupPraise: false,
+        allowDailyDigest: false,
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+    const msg = makeMsg({
+      rawText: "我完成视频学习了，分享一个 prompt 模板给大家 https://example.com",
+    });
+
+    await handler(msg);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).toHaveBeenCalledWith(msg);
+    const ingestCalls = (deps.ingestor!.ingest as ReturnType<typeof vi.fn>).mock.calls;
+    expect(ingestCalls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ itemCode: "K1", sourceRef: `msg:${msg.messageId}:K1` })],
+        [expect.objectContaining({ itemCode: "H3", sourceRef: `msg:${msg.messageId}:H3` })],
+        [expect.objectContaining({ itemCode: "G2", sourceRef: `msg:${msg.messageId}:G2` })],
+      ]),
+    );
   });
 
   it("keeps @Bot chat path ahead of AI Boot v3 routing", async () => {

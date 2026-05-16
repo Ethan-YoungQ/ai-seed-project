@@ -240,9 +240,17 @@ async function handleAutoCapture(
     return;
   }
 
-  if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode !== "legacy") {
+  if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode === "v3_live") {
     await deps.aiBootOrchestrator.handleMessage(message);
     return;
+  }
+
+  if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode === "v3_shadow") {
+    try {
+      await deps.aiBootOrchestrator.handleMessage(message);
+    } catch (err) {
+      console.error("[AutoCapture] AI Boot v3 shadow sidecar failed:", err);
+    }
   }
 
   // Step 1: K1 签到始终直接给（不需要 LLM）

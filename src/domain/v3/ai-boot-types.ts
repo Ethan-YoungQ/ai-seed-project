@@ -60,3 +60,15 @@ export interface AiBootScoreEventRecord {
   reviewNote: string | null;
   decidedAt: string;
 }
+
+export interface AiBootNotificationEventRecord {
+  id: string;
+  scoreEventId: string;
+  campId: string;
+  memberId: string;
+  chatId: string;
+  topicHash: string;
+  notifyPolicy: AiBootNotifyPolicy;
+  sentAt: string;
+  textHash: string;
+}

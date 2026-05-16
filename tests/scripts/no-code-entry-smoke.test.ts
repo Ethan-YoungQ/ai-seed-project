@@ -112,13 +112,15 @@ describe("no-code entry smoke", () => {
     );
     const failFastBlocks = runbook.match(/```bash\nset -euo pipefail/g) ?? [];
 
-    expect(runbook).toContain("npm run build\nnpm test\nnpm run ai-boot:freeze-legacy\nnpm run ai-boot:cutover-check");
+    expect(runbook).toContain("npm run build\nnpm test");
+    expect(runbook).not.toContain("npm run build\nnpm test\nnpm run ai-boot:freeze-legacy");
     expect(failFastBlocks).toHaveLength(2);
     expect(runbook).toContain("cd /opt/ai-seed-project");
     expect(runbook).toContain("ENV_FILE=/opt/ai-seed-project/.env");
     expect(runbook).toContain("BACKUP_OUTPUT=\"$(./scripts/ops/backup-db.sh)\"");
     expect(runbook).toContain("BACKUP_PATH=");
     expect(runbook).toContain("test -f \"$BACKUP_PATH\"");
+    expect(runbook).toContain("test -f \"$BACKUP_PATH\"\n\nnpm run ai-boot:freeze-legacy\nnpm run ai-boot:cutover-check");
     expect(runbook).toContain("AI_BOOT_ENGINE_MODE=v3_shadow");
     expect(runbook).toContain("AI_BOOT_ALLOW_GROUP_PRAISE=false");
     expect(runbook).toContain("AI_BOOT_ALLOW_DAILY_DIGEST=false");
