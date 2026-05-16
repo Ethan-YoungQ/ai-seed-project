@@ -25,13 +25,45 @@ Record:
 
 Run this exact server sequence during the deployment window:
 
+This writes these values into `/opt/ai-seed-project/.env` before restart:
+
+- `AI_BOOT_ENGINE_MODE=v3_shadow`
+- `AI_BOOT_ALLOW_GROUP_PRAISE=false`
+- `AI_BOOT_ALLOW_DAILY_DIGEST=false`
+
 ```bash
 cd /opt/ai-seed-project
-./scripts/ops/backup-db.sh
-AI_BOOT_ENGINE_MODE=v3_shadow systemctl restart ai-seed-project.service
+
+ENV_FILE=/opt/ai-seed-project/.env
+ENV_BACKUP="${ENV_FILE}.pre-ai-boot-shadow.$(date +%Y%m%d%H%M%S)"
+cp "$ENV_FILE" "$ENV_BACKUP"
+
+BACKUP_OUTPUT="$(./scripts/ops/backup-db.sh)"
+printf '%s\n' "$BACKUP_OUTPUT"
+BACKUP_PATH="$(printf '%s\n' "$BACKUP_OUTPUT" | sed -n 's/^backup saved to //p' | tail -n 1)"
+test -n "$BACKUP_PATH"
+test -f "$BACKUP_PATH"
+
+set_env() {
+  key="$1"
+  value="$2"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+set_env AI_BOOT_ENGINE_MODE v3_shadow
+set_env AI_BOOT_ALLOW_GROUP_PRAISE false
+set_env AI_BOOT_ALLOW_DAILY_DIGEST false
+
+systemctl restart ai-seed-project.service
 curl -fsS http://127.0.0.1:3001/api/health
 curl -fsS http://127.0.0.1:3001/api/feishu/status
 ```
+
+Do not use inline environment variables with `systemctl restart`; the service reads `/opt/ai-seed-project/.env` via its systemd `EnvironmentFile`.
 
 Record before and after restart:
 
@@ -65,8 +97,31 @@ Keep `v3_shadow` mode under observation for at least 24 hours before considering
 
 If health checks fail, Feishu status does not report the expected mode, or production score behavior changes unexpectedly, return the service to legacy mode and restart:
 
+Rollback writes these values into `/opt/ai-seed-project/.env` before restart:
+
+- `AI_BOOT_ENGINE_MODE=legacy`
+- `AI_BOOT_ALLOW_GROUP_PRAISE=false`
+- `AI_BOOT_ALLOW_DAILY_DIGEST=false`
+
 ```bash
-AI_BOOT_ENGINE_MODE=legacy systemctl restart ai-seed-project.service
+cd /opt/ai-seed-project
+
+ENV_FILE=/opt/ai-seed-project/.env
+set_env() {
+  key="$1"
+  value="$2"
+  if grep -q "^${key}=" "$ENV_FILE"; then
+    sed -i "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
+  else
+    printf '%s=%s\n' "$key" "$value" >> "$ENV_FILE"
+  fi
+}
+
+set_env AI_BOOT_ENGINE_MODE legacy
+set_env AI_BOOT_ALLOW_GROUP_PRAISE false
+set_env AI_BOOT_ALLOW_DAILY_DIGEST false
+
+systemctl restart ai-seed-project.service
 curl -fsS http://127.0.0.1:3001/api/health
 curl -fsS http://127.0.0.1:3001/api/feishu/status
 ```

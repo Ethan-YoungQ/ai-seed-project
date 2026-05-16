@@ -89,6 +89,9 @@ describe("no-code entry smoke", () => {
     expect(checkScript).toContain("allowGroupPraise");
     expect(checkScript).toContain("allowDailyDigest");
     expect(checkScript).not.toContain("jq");
+    expect(checkScript).not.toContain("AI Boot status unavailable");
+    expect(checkScript).not.toContain("|| true");
+    expect(checkScript).toContain("Missing aiBoot.engineMode");
   });
 
   it("keeps deploy shadow-safe without auto-enabling AI Boot modes", () => {
@@ -98,6 +101,8 @@ describe("no-code entry smoke", () => {
     expect(deployScript).toContain("v3_shadow");
     expect(deployScript).toContain("does not change production AI Boot mode");
     expect(deployScript).toContain("\"$NPM_BIN\" run seed:ensure");
+    expect(deployScript).not.toContain("systemctl restart \"$SERVICE_NAME\" || true");
+    expect(deployScript).not.toContain("sudo systemctl restart \"$SERVICE_NAME\" || true");
   });
 
   it("documents the production shadow cutover and rollback sequence", () => {
@@ -107,16 +112,26 @@ describe("no-code entry smoke", () => {
     );
 
     expect(runbook).toContain("npm run build\nnpm test\nnpm run ai-boot:freeze-legacy\nnpm run ai-boot:cutover-check");
-    expect(runbook).toContain(
-      "cd /opt/ai-seed-project\n./scripts/ops/backup-db.sh\nAI_BOOT_ENGINE_MODE=v3_shadow systemctl restart ai-seed-project.service\ncurl -fsS http://127.0.0.1:3001/api/health\ncurl -fsS http://127.0.0.1:3001/api/feishu/status",
-    );
+    expect(runbook).toContain("cd /opt/ai-seed-project");
+    expect(runbook).toContain("ENV_FILE=/opt/ai-seed-project/.env");
+    expect(runbook).toContain("BACKUP_OUTPUT=\"$(./scripts/ops/backup-db.sh)\"");
+    expect(runbook).toContain("BACKUP_PATH=");
+    expect(runbook).toContain("test -f \"$BACKUP_PATH\"");
+    expect(runbook).toContain("AI_BOOT_ENGINE_MODE=v3_shadow");
+    expect(runbook).toContain("AI_BOOT_ALLOW_GROUP_PRAISE=false");
+    expect(runbook).toContain("AI_BOOT_ALLOW_DAILY_DIGEST=false");
+    expect(runbook).toContain("systemctl restart ai-seed-project.service");
+    expect(runbook).not.toContain("AI_BOOT_ENGINE_MODE=v3_shadow systemctl restart");
     expect(runbook).toContain("v3 events and shadow score events are created");
     expect(runbook).toContain("no v3 group praise is sent");
     expect(runbook).toContain("existing production score behavior remains unchanged");
     expect(runbook).toContain("shadow replay metrics are available for review");
     expect(runbook).toContain("AI_BOOT_ENGINE_MODE=legacy");
+    expect(runbook).not.toContain("AI_BOOT_ENGINE_MODE=legacy systemctl restart");
     expect(runbook).toContain("DB backup path");
     expect(runbook).toContain("server git SHA");
     expect(runbook).toContain("engine mode");
+    expect(runbook).toContain("curl -fsS http://127.0.0.1:3001/api/health");
+    expect(runbook).toContain("curl -fsS http://127.0.0.1:3001/api/feishu/status");
   });
 });

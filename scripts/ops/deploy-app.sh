@@ -32,9 +32,9 @@ fi
 "$NPM_BIN" run seed:ensure
 
 if [ "$(id -u)" -eq 0 ]; then
-  systemctl restart "$SERVICE_NAME" || true
+  systemctl restart "$SERVICE_NAME"
 elif command -v sudo >/dev/null 2>&1; then
-  sudo systemctl restart "$SERVICE_NAME" || true
+  sudo systemctl restart "$SERVICE_NAME"
 fi
 
 echo "deploy completed"

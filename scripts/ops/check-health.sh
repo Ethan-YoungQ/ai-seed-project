@@ -18,16 +18,15 @@ fetch_url() {
 fetch_url "$HEALTH_URL"
 echo
 
-if status_json="$(fetch_url "$FEISHU_STATUS_URL" 2>/dev/null)"; then
-  STATUS_JSON="$status_json" node --input-type=module -e '
+status_json="$(fetch_url "$FEISHU_STATUS_URL")"
+STATUS_JSON="$status_json" node --input-type=module -e '
 const status = JSON.parse(process.env.STATUS_JSON ?? "{}");
 const aiBoot = status.aiBoot;
-if (aiBoot) {
-  console.log(`aiBoot.engineMode=${aiBoot.engineMode ?? "unknown"}`);
-  console.log(`aiBoot.allowGroupPraise=${String(Boolean(aiBoot.allowGroupPraise))}`);
-  console.log(`aiBoot.allowDailyDigest=${String(Boolean(aiBoot.allowDailyDigest))}`);
+if (!aiBoot?.engineMode) {
+  console.error("Missing aiBoot.engineMode in /api/feishu/status response");
+  process.exit(1);
 }
-' || true
-else
-  echo "AI Boot status unavailable at $FEISHU_STATUS_URL" >&2
-fi
+console.log(`aiBoot.engineMode=${aiBoot.engineMode}`);
+console.log(`aiBoot.allowGroupPraise=${String(Boolean(aiBoot.allowGroupPraise))}`);
+console.log(`aiBoot.allowDailyDigest=${String(Boolean(aiBoot.allowDailyDigest))}`);
+'
