@@ -125,7 +125,7 @@ export async function runShadowReplay(
             member,
             decider: options.decider,
             llmClient: options.llmClient,
-            allowHeuristic: options.allowHeuristic ?? true,
+            allowHeuristic: options.allowHeuristic ?? false,
           })
         : decisionFromGuard(guardOutcome, evidence);
       const normalized = parseScoringDecision(decision);
@@ -279,7 +279,10 @@ function buildShadowScoreEvent(input: {
 function evidenceFromStoredEvent(event: AiBootEventRecord): EvidenceBundle {
   const parsed = parseEvidenceBundle(event.evidenceJson);
   if (parsed) {
-    return parsed;
+    return {
+      ...parsed,
+      contentHash: parsed.contentHash || event.contentHash,
+    };
   }
 
   const sanitizedText = (event.sanitizedText || event.rawText).trim();
@@ -297,16 +300,39 @@ function evidenceFromStoredEvent(event: AiBootEventRecord): EvidenceBundle {
 function parseEvidenceBundle(value: string): EvidenceBundle | undefined {
   try {
     const parsed = JSON.parse(value) as Partial<EvidenceBundle>;
-    if (
-      typeof parsed.sanitizedText === "string" &&
-      Array.isArray(parsed.urls) &&
-      Array.isArray(parsed.attachments) &&
-      typeof parsed.documentText === "string" &&
-      typeof parsed.extractionStatus === "string" &&
-      typeof parsed.extractionReason === "string" &&
-      typeof parsed.contentHash === "string"
-    ) {
-      return parsed as EvidenceBundle;
+    if (parsed && typeof parsed === "object") {
+      const hasEvidenceShape = "sanitizedText" in parsed ||
+        "urls" in parsed ||
+        "attachments" in parsed ||
+        "documentText" in parsed ||
+        "extractionStatus" in parsed ||
+        "extractionReason" in parsed ||
+        "contentHash" in parsed;
+      if (!hasEvidenceShape) {
+        return undefined;
+      }
+
+      return {
+        sanitizedText: typeof parsed.sanitizedText === "string"
+          ? parsed.sanitizedText
+          : "",
+        urls: Array.isArray(parsed.urls)
+          ? parsed.urls.filter((url): url is string => typeof url === "string")
+          : [],
+        attachments: sanitizeAttachments(parsed.attachments),
+        documentText: typeof parsed.documentText === "string"
+          ? parsed.documentText
+          : "",
+        extractionStatus: isEvidenceExtractionStatus(parsed.extractionStatus)
+          ? parsed.extractionStatus
+          : "not_applicable",
+        extractionReason: typeof parsed.extractionReason === "string"
+          ? parsed.extractionReason
+          : "stored_event_replay",
+        contentHash: typeof parsed.contentHash === "string"
+          ? parsed.contentHash
+          : "",
+      };
     }
   } catch {
     return undefined;
@@ -474,23 +500,38 @@ function summarizeEvidenceBundle(evidence: EvidenceBundle): string {
 function parseAttachments(value: string): EvidenceBundle["attachments"] {
   try {
     const parsed = JSON.parse(value);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed
-      .filter((attachment): attachment is Record<string, unknown> => {
-        return Boolean(attachment) && typeof attachment === "object";
-      })
-      .map((attachment) => ({
-        type: String(attachment.type ?? "attachment"),
-        ...(attachment.fileKey ? { fileKey: String(attachment.fileKey) } : {}),
-        ...(attachment.fileName ? { fileName: String(attachment.fileName) } : {}),
-        ...(attachment.fileExt ? { fileExt: String(attachment.fileExt) } : {}),
-      }));
+    return sanitizeAttachments(parsed);
   } catch {
     return [];
   }
+}
+
+function sanitizeAttachments(value: unknown): EvidenceBundle["attachments"] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((attachment): attachment is Record<string, unknown> => {
+      return Boolean(attachment) && typeof attachment === "object";
+    })
+    .map((attachment) => ({
+      type: typeof attachment.type === "string" && attachment.type.trim().length > 0
+        ? attachment.type
+        : "attachment",
+      ...(typeof attachment.fileKey === "string" ? { fileKey: attachment.fileKey } : {}),
+      ...(typeof attachment.fileName === "string" ? { fileName: attachment.fileName } : {}),
+      ...(typeof attachment.fileExt === "string" ? { fileExt: attachment.fileExt } : {}),
+    }));
+}
+
+function isEvidenceExtractionStatus(
+  value: unknown,
+): value is EvidenceBundle["extractionStatus"] {
+  return value === "not_applicable" ||
+    value === "parsed" ||
+    value === "unsupported" ||
+    value === "failed";
 }
 
 function parseBadges(value: string): string[] {

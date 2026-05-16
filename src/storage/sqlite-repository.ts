@@ -1742,6 +1742,15 @@ export class SqliteRepository {
          WHERE status = 'approved'
            AND confidence = 'high'
            AND notify_policy = 'group_praise'
+           AND score_delta > 0
+           AND category IN (
+             'ai_artifact',
+             'ai_practice_reflection',
+             'prompt_or_method',
+             'resource_recommendation',
+             'peer_help',
+             'formal_task'
+           )
            AND decided_at >= @dayStartIso
            AND decided_at < @dayEndIso
            AND (@campId IS NULL OR camp_id = @campId)`

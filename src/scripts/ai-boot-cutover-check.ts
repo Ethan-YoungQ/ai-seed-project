@@ -70,7 +70,7 @@ export async function runCutoverCheck(
       failures.push("score_event_missing_audit_text");
     }
 
-    if (env.AI_BOOT_ALLOW_GROUP_PRAISE === "true") {
+    if (readBoolean(env.AI_BOOT_ALLOW_GROUP_PRAISE, false)) {
       const cap = parseDailyCap(env.AI_BOOT_DAILY_GROUP_PRAISE_CAP);
       const dayBounds = shanghaiBusinessDayBounds(nowIso);
       if (repository.countAiBootGroupPraiseNotificationsForDay({
@@ -101,6 +101,13 @@ function parseDailyCap(value: string | undefined): number {
     return DEFAULT_DAILY_GROUP_PRAISE_CAP;
   }
   return Math.floor(parsed);
+}
+
+function readBoolean(value: string | undefined, fallback: boolean): boolean {
+  if (!value) {
+    return fallback;
+  }
+  return ["1", "true", "yes", "on"].includes(value.toLowerCase());
 }
 
 function shanghaiBusinessDayBounds(nowIso: string): { start: string; end: string } {

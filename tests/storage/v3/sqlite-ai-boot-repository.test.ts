@@ -457,11 +457,30 @@ describe("SqliteRepository ai boot v3", () => {
     r.insertAiBootScoreEvent(scoreEvent({
       id: "score-after",
       eventId: "evt-after",
-      category: "daily_participation",
+      category: "ai_artifact",
       status: "approved",
       notifyPolicy: "group_praise",
       confidence: "high",
       decidedAt: "2026-05-16T16:30:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-daily",
+      eventId: "evt-daily",
+      category: "daily_participation",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      confidence: "high",
+      decidedAt: "2026-05-16T17:30:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-adjustment",
+      eventId: "evt-adjustment",
+      category: "operator_adjustment",
+      status: "approved",
+      scoreDelta: 3,
+      notifyPolicy: "group_praise",
+      confidence: "high",
+      decidedAt: "2026-05-16T18:30:00.000Z",
     }));
     r.insertAiBootScoreEvent(scoreEvent({
       id: "score-review",

@@ -113,6 +113,7 @@ describe("runShadowReplay", () => {
       now: () => "2026-05-17T00:00:00.000Z",
       uuid: () => `score-shadow-${++scoreId}`,
       stdout,
+      allowHeuristic: true,
     });
 
     expect(result).toEqual({
@@ -161,6 +162,7 @@ describe("runShadowReplay", () => {
       now: () => "2026-05-17T00:00:00.000Z",
       uuid: () => "score-shadow-1",
       stdout: () => undefined,
+      allowHeuristic: true,
     });
     const second = await runShadowReplay({
       repository,
@@ -171,6 +173,7 @@ describe("runShadowReplay", () => {
       now: () => "2026-05-17T00:00:00.000Z",
       uuid: () => "score-shadow-2",
       stdout: () => undefined,
+      allowHeuristic: true,
     });
 
     expect(first.approved).toBe(1);
@@ -202,6 +205,7 @@ describe("runShadowReplay", () => {
       now: () => "2026-05-17T00:00:00.000Z",
       uuid: () => "score-shadow-live",
       stdout: () => undefined,
+      allowHeuristic: true,
     });
     const second = await runShadowReplay({
       repository,
@@ -212,6 +216,7 @@ describe("runShadowReplay", () => {
       now: () => "2026-05-17T00:00:00.000Z",
       uuid: () => "score-shadow-live-duplicate",
       stdout: () => undefined,
+      allowHeuristic: true,
     });
 
     expect(first).toMatchObject({ eventsReplayed: 1, approved: 1 });
@@ -296,6 +301,7 @@ describe("runShadowReplay", () => {
         .mockReturnValueOnce("score-shadow-early")
         .mockReturnValueOnce("score-shadow-late"),
       stdout: () => undefined,
+      allowHeuristic: true,
     });
 
     expect(result).toMatchObject({
@@ -344,6 +350,7 @@ describe("runShadowReplay", () => {
         .mockReturnValueOnce("score-shadow-trivial-1")
         .mockReturnValueOnce("score-shadow-trivial-2"),
       stdout: () => undefined,
+      allowHeuristic: true,
     });
 
     expect(result).toMatchObject({
@@ -384,12 +391,80 @@ describe("runShadowReplay", () => {
       now: () => "2026-05-17T00:00:00.000Z",
       uuid: () => "score-shadow-bad-evidence",
       stdout: () => undefined,
+      allowHeuristic: true,
     });
 
     expect(result).toMatchObject({ eventsReplayed: 1, noScore: 1 });
     expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-bad-evidence")).toMatchObject({
       status: "shadow",
       scoreDelta: 0,
+    });
+  });
+
+  it("sanitizes partially malformed stored evidence bundles", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-partial-evidence",
+      sourceMessageId: "om-partial-evidence",
+      rawText: "",
+      sanitizedText: "",
+      attachmentJson: "[]",
+      evidenceJson: JSON.stringify({
+        sanitizedText: "",
+        urls: [null, "https://x.test"],
+        attachments: [null, { type: "image" }],
+        documentText: "",
+        extractionStatus: "parsed",
+        extractionReason: "x",
+        contentHash: "hash-partial-evidence",
+      }),
+      contentHash: "hash-partial-evidence",
+    }));
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "score-shadow-partial-evidence",
+      stdout: () => undefined,
+      allowHeuristic: true,
+    });
+
+    expect(result).toMatchObject({ eventsReplayed: 1 });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-partial-evidence")).toMatchObject({
+      status: "shadow",
+    });
+  });
+
+  it("does not use heuristic fallback by default in the exported API", async () => {
+    const repository = makeRepo();
+    repository.insertAiBootEvent(event({
+      id: "evt-needs-llm",
+      sourceMessageId: "om-needs-llm",
+      rawText: "我用AI做复盘，沉淀了实践经验",
+      sanitizedText: "我用AI做复盘，沉淀了实践经验",
+      contentHash: "hash-needs-llm",
+    }));
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-16",
+      limit: 100,
+      now: () => "2026-05-17T00:00:00.000Z",
+      uuid: () => "score-shadow-needs-llm",
+      stdout: () => undefined,
+    });
+
+    expect(result).toMatchObject({ eventsReplayed: 1, reviewRequired: 1 });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-needs-llm")).toMatchObject({
+      status: "shadow",
+      category: "formal_task",
+      reason: expect.stringContaining("requires an LLM client"),
     });
   });
 

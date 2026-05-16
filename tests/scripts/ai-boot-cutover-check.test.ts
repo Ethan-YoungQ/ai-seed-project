@@ -148,7 +148,7 @@ describe("runCutoverCheck", () => {
     await expect(runCutoverCheck({
       repository,
       env: {
-        AI_BOOT_ALLOW_GROUP_PRAISE: "true",
+        AI_BOOT_ALLOW_GROUP_PRAISE: "1",
         AI_BOOT_DAILY_GROUP_PRAISE_CAP: "1",
       } as NodeJS.ProcessEnv,
       campId: "default",
