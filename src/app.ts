@@ -25,6 +25,7 @@ import { registerV2BoardRoutes } from "./routes/v2/board.js";
 import { registerV2AdminReviewRoutes } from "./routes/v2/admin-review.js";
 import { registerV2AdminMembersRoutes } from "./routes/v2/admin-members.js";
 import { registerV2LlmStatusRoute } from "./routes/v2/llm-status.js";
+import { registerV3AiBootAdminRoutes } from "./routes/v3/ai-boot-admin.js";
 import { feishuCardsPlugin, resolveCardType as resolveCardTypeFromAction } from "./services/feishu/cards/router.js";
 import { CardActionDispatcher } from "./services/feishu/cards/card-action-dispatcher.js";
 import {
@@ -471,6 +472,10 @@ export async function createApp(options?: {
   registerV2AdminReviewRoutes(app, v2);
   registerV2AdminMembersRoutes(app, v2);
   registerV2LlmStatusRoute(app, v2);
+  registerV3AiBootAdminRoutes(app, {
+    repository,
+    requireAdmin: requireAdmin(repository),
+  });
 
   // ---------------------------------------------------------------------------
   // Sub-project 2: Feishu card protocol

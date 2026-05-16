@@ -1430,6 +1430,66 @@ export class SqliteRepository {
     return row ? this.mapAiBootScoreEventRow(row) : undefined;
   }
 
+  getAiBootScoreEvent(id: string): AiBootScoreEventRecord | undefined {
+    return this.findAiBootScoreEventById(id);
+  }
+
+  listAiBootReviewQueue(input: {
+    campId: string;
+    limit: number;
+    offset: number;
+  }): AiBootScoreEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
+                status, notify_policy, reason, evidence, badges_json, model_provider,
+                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
+         FROM ai_boot_score_events
+         WHERE camp_id = @campId AND status = 'review_required'
+         ORDER BY CASE confidence
+                    WHEN 'low' THEN 0
+                    WHEN 'medium' THEN 1
+                    ELSE 2
+                  END ASC,
+                  decided_at ASC,
+                  id ASC
+         LIMIT @limit OFFSET @offset`
+      )
+      .all(input) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapAiBootScoreEventRow(row));
+  }
+
+  updateAiBootScoreDecision(input: {
+    id: string;
+    status: AiBootDecisionStatus;
+    reviewedByOpId: string;
+    reviewNote: string;
+    scoreDelta?: number;
+    category?: AiBootScoreCategory;
+    reason?: string;
+  }): void {
+    this.db
+      .prepare(
+        `UPDATE ai_boot_score_events
+         SET status = @status,
+             reviewed_by_op_id = @reviewedByOpId,
+             review_note = @reviewNote,
+             score_delta = COALESCE(@scoreDelta, score_delta),
+             category = COALESCE(@category, category),
+             reason = COALESCE(@reason, reason)
+         WHERE id = @id`
+      )
+      .run({
+        id: input.id,
+        status: input.status,
+        reviewedByOpId: input.reviewedByOpId,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta ?? null,
+        category: input.category ?? null,
+        reason: input.reason ?? null,
+      });
+  }
+
   findAiBootScoreEventByEventId(eventId: string): AiBootScoreEventRecord | undefined {
     const row = this.db
       .prepare(

@@ -179,6 +179,60 @@ describe("SqliteRepository ai boot v3", () => {
     r.close();
   });
 
+  it("lists and updates ai boot score decisions for operator review", () => {
+    const r = repo();
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-approved",
+      eventId: "evt-approved",
+      status: "approved",
+      confidence: "high",
+      decidedAt: "2026-05-16T00:00:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review-old",
+      eventId: "evt-review-old",
+      status: "review_required",
+      confidence: "low",
+      evidence: "old evidence",
+      decidedAt: "2026-05-16T00:01:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review-new",
+      eventId: "evt-review-new",
+      status: "review_required",
+      confidence: "medium",
+      evidence: "new evidence",
+      decidedAt: "2026-05-16T00:02:00.000Z",
+    }));
+
+    expect(r.listAiBootReviewQueue({
+      campId: "default",
+      limit: 10,
+      offset: 0,
+    }).map((row) => row.id)).toEqual(["score-review-old", "score-review-new"]);
+
+    r.updateAiBootScoreDecision({
+      id: "score-review-old",
+      status: "approved",
+      reviewedByOpId: "op-1",
+      reviewNote: "corrected",
+      category: "operator_adjustment",
+      scoreDelta: -2,
+      reason: "operator correction",
+    });
+
+    expect(r.getAiBootScoreEvent("score-review-old")).toMatchObject({
+      status: "approved",
+      reviewedByOpId: "op-1",
+      reviewNote: "corrected",
+      category: "operator_adjustment",
+      scoreDelta: -2,
+      reason: "operator correction",
+    });
+    expect(r.sumApprovedAiBootScore("default", "m-1")).toBe(2);
+    r.close();
+  });
+
   it("finds a score event by event id and ignores duplicate score inserts for the same event", () => {
     const r = repo();
     expect(r.insertAiBootScoreEvent(scoreEvent({ id: "score-1", eventId: "evt-1" }))).toBe(true);
