@@ -15,6 +15,11 @@ import type { AiBootConfig } from "./config.js";
 import { extractEvidence, type EvidenceBundle } from "./content-extractor.js";
 import { runDeterministicGuards, type GuardOutcome } from "./deterministic-guards.js";
 import {
+  createAiBootImageUnderstandingService,
+  hasImageEvidence,
+  type AiBootImageUnderstandingService,
+} from "./image-understanding.js";
+import {
   AI_BOOT_PROMPT_VERSION,
   decideWithLlm,
   type AiBootLlmClient,
@@ -47,6 +52,8 @@ export interface AiBootOrchestratorDeps {
     | "countAiBootNotificationEventsForChat"
     | "findRecentAiBootNotificationByTopicHash"
     | "findAiBootNotificationEventByScoreEventId"
+    | "findAiBootImageUnderstandingByContentHash"
+    | "upsertAiBootImageUnderstanding"
   >;
   campId: string;
   chatId?: string;
@@ -56,6 +63,7 @@ export interface AiBootOrchestratorDeps {
   llmClient?: AiBootLlmClient;
   botOpenId?: string;
   feishuClient: Pick<FeishuApiClient, "getMessageFile" | "sendTextMessage">;
+  imageUnderstandingService?: AiBootImageUnderstandingService;
   config: AiBootConfig;
   now: () => string;
   uuid: () => string;
@@ -69,6 +77,13 @@ export function createAiBootOrchestrator(
   deps: AiBootOrchestratorDeps,
 ): AiBootOrchestrator {
   const notificationState = createNotificationState();
+  const imageUnderstandingService = deps.imageUnderstandingService
+    ?? createAiBootImageUnderstandingService({
+      repo: deps.repo,
+      feishuClient: deps.feishuClient,
+      llmClient: deps.llmClient,
+      now: deps.now,
+    });
 
   return {
     async handleMessage(message: NormalizedFeishuMessage): Promise<void> {
@@ -98,6 +113,16 @@ export function createAiBootOrchestrator(
         : undefined;
       if (!evidence) {
         evidence = await extractEvidence(message, { feishuClient: deps.feishuClient });
+      }
+      const originalEvidence = evidence;
+      const imageOnlyMessage = isImageOnlyMessage(message, originalEvidence);
+      const imageUnderstandingPending = prepareImageUnderstanding({
+        service: imageUnderstandingService,
+        message,
+        evidence,
+      });
+      if (imageUnderstandingPending.cached) {
+        evidence = appendImageUnderstandingEvidence(evidence, imageUnderstandingPending.cached);
       }
 
       if (!event) {
@@ -160,21 +185,26 @@ export function createAiBootOrchestrator(
         return;
       }
 
-      const decision = guardOutcome.kind === "continue"
-        ? enforcePostLlmGuards(
-            await decideContribution({ deps, evidence, member, message }),
-            {
-              dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
-                campId: deps.campId,
-                memberId: member.id,
-                category: "daily_participation",
-                decidedAtFrom: dailyWindow.start,
-                decidedAtTo: dailyWindow.end,
-              }) > 0,
-              evidence,
-            },
-          )
-        : decisionFromGuard(guardOutcome, evidence);
+      const rawDecision = imageUnderstandingPending.pending && imageOnlyMessage
+        ? pendingImageUnderstandingDecision(evidence)
+        : guardOutcome.kind === "continue"
+          ? enforcePostLlmGuards(
+              await decideContribution({ deps, evidence, member }),
+              {
+                dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
+                  campId: deps.campId,
+                  memberId: member.id,
+                  category: "daily_participation",
+                  decidedAtFrom: dailyWindow.start,
+                  decidedAtTo: dailyWindow.end,
+                }) > 0,
+                evidence,
+              },
+            )
+          : decisionFromGuard(guardOutcome, evidence);
+      const decision = imageOnlyMessage
+        ? forceSilentImageOnlyDecision(rawDecision, evidence)
+        : rawDecision;
 
       const scoreEvent = buildScoreEvent({
         id: deps.uuid(),
@@ -395,9 +425,8 @@ async function decideContribution(input: {
   deps: AiBootOrchestratorDeps;
   evidence: EvidenceBundle;
   member: MemberLite;
-  message: NormalizedFeishuMessage;
 }): Promise<ScoringDecision> {
-  const { deps, evidence, member, message } = input;
+  const { deps, evidence, member } = input;
 
   if (!deps.llmClient) {
     return parseScoringDecision({
@@ -416,7 +445,6 @@ async function decideContribution(input: {
     return await decideWithLlm(deps.llmClient, {
       evidence,
       memberName: member.displayName,
-      imageDataUrl: await buildVisionImageDataUrl({ deps, message, evidence }),
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
@@ -430,34 +458,6 @@ async function decideContribution(input: {
       evidence: summarizeEvidence(evidence),
       badges: ["llm_error"],
     });
-  }
-}
-
-async function buildVisionImageDataUrl(input: {
-  deps: AiBootOrchestratorDeps;
-  message: NormalizedFeishuMessage;
-  evidence: EvidenceBundle;
-}): Promise<string | undefined> {
-  if (!input.deps.llmClient || !("visionModel" in input.deps.llmClient)) {
-    return undefined;
-  }
-  if (!input.message.fileKey) {
-    return undefined;
-  }
-  if (!input.evidence.attachments.some((attachment) => attachment.type === "image")) {
-    return undefined;
-  }
-
-  try {
-    const file = await input.deps.feishuClient.getMessageFile({
-      messageId: input.message.messageId,
-      fileKey: input.message.fileKey,
-      resourceType: "image",
-    });
-    const mimeType = file.mimeType || "image/png";
-    return `data:${mimeType};base64,${file.bytes.toString("base64")}`;
-  } catch {
-    return undefined;
   }
 }
 
@@ -486,6 +486,89 @@ function enforcePostLlmGuards(
   }
 
   return decision;
+}
+
+function prepareImageUnderstanding(input: {
+  service: AiBootImageUnderstandingService;
+  message: NormalizedFeishuMessage;
+  evidence: EvidenceBundle;
+}): {
+  cached: ReturnType<AiBootImageUnderstandingService["getCachedUnderstanding"]>;
+  pending: boolean;
+} {
+  if (!hasImageEvidence(input.evidence)) {
+    return { cached: null, pending: false };
+  }
+
+  const cached = input.service.getCachedUnderstanding(input.evidence);
+  if (cached) {
+    return { cached, pending: false };
+  }
+
+  input.service.enqueueUnderstanding({
+    message: input.message,
+    evidence: input.evidence,
+  });
+  return { cached: null, pending: true };
+}
+
+function appendImageUnderstandingEvidence(
+  evidence: EvidenceBundle,
+  understanding: NonNullable<ReturnType<AiBootImageUnderstandingService["getCachedUnderstanding"]>>,
+): EvidenceBundle {
+  const imageText = [
+    "Image understanding:",
+    understanding.caption,
+    understanding.scoreHint ? `Score hint: ${understanding.scoreHint}` : "",
+  ].filter(Boolean).join("\n");
+  return {
+    ...evidence,
+    documentText: [evidence.documentText, imageText]
+      .filter((part) => part.trim().length > 0)
+      .join("\n\n"),
+    extractionStatus: "parsed",
+    extractionReason: `image_understanding:${understanding.modelName}`,
+  };
+}
+
+function isImageOnlyMessage(
+  message: NormalizedFeishuMessage,
+  evidence: EvidenceBundle,
+): boolean {
+  return hasImageEvidence(evidence) &&
+    (message.rawText || message.cleanedText || evidence.sanitizedText).trim().length === 0 &&
+    evidence.documentText.trim().length === 0 &&
+    evidence.urls.length === 0;
+}
+
+function pendingImageUnderstandingDecision(evidence: EvidenceBundle): ScoringDecision {
+  return parseScoringDecision({
+    status: "review_required",
+    category: "formal_task",
+    scoreDelta: 1,
+    confidence: "low",
+    notifyPolicy: "silent",
+    reason: "image_understanding_pending",
+    evidence: `Image understanding is pending for content hash ${evidence.contentHash}.`,
+    badges: ["image_understanding_pending"],
+  });
+}
+
+function forceSilentImageOnlyDecision(
+  decision: ScoringDecision,
+  evidence: EvidenceBundle,
+): ScoringDecision {
+  if (decision.notifyPolicy !== "group_praise") {
+    return decision;
+  }
+
+  return parseScoringDecision({
+    ...decision,
+    notifyPolicy: "silent",
+    reason: decision.reason || "image_only_no_group_praise",
+    evidence: decision.evidence || summarizeEvidence(evidence),
+    badges: [...decision.badges, "image_only_silent"],
+  });
 }
 
 function decisionFromGuard(
@@ -584,14 +667,10 @@ function buildScoreEvent(input: {
 
 function resolveUsedModelName(
   llmClient: AiBootLlmClient | undefined,
-  evidence: EvidenceBundle,
+  _evidence: EvidenceBundle,
 ): string | undefined {
   if (!llmClient) {
     return undefined;
-  }
-  const hasImage = evidence.attachments.some((attachment) => attachment.type === "image");
-  if (hasImage && llmClient.visionModel) {
-    return llmClient.visionModel;
   }
   return llmClient.model;
 }

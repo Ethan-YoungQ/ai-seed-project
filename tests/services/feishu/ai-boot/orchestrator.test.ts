@@ -6,6 +6,7 @@ import {
 } from "../../../../src/services/feishu/ai-boot/orchestrator";
 import type {
   AiBootEventRecord,
+  AiBootImageUnderstandingRecord,
   AiBootNotificationEventRecord,
   AiBootScoreEventRecord,
 } from "../../../../src/domain/v3/ai-boot-types";
@@ -50,12 +51,14 @@ function makeDeps(
   overrides: Partial<AiBootOrchestratorDeps> = {},
 ): AiBootOrchestratorDeps & {
   events: AiBootEventRecord[];
+  imageUnderstandings: AiBootImageUnderstandingRecord[];
   notificationEvents: AiBootNotificationEventRecord[];
   scoreEvents: AiBootScoreEventRecord[];
 } {
   const events: AiBootEventRecord[] = [];
   const scoreEvents: AiBootScoreEventRecord[] = [];
   const notificationEvents: AiBootNotificationEventRecord[] = [];
+  const imageUnderstandings: AiBootImageUnderstandingRecord[] = [];
   const repo = {
     insertAiBootEvent: vi.fn((event: AiBootEventRecord) => {
       const existing = events.find(
@@ -167,6 +170,17 @@ function makeDeps(
     findAiBootNotificationEventByScoreEventId: vi.fn((scoreEventId: string) =>
       notificationEvents.find((event) => event.scoreEventId === scoreEventId),
     ),
+    findAiBootImageUnderstandingByContentHash: vi.fn((contentHash: string) =>
+      imageUnderstandings.find((row) => row.contentHash === contentHash) ?? null,
+    ),
+    upsertAiBootImageUnderstanding: vi.fn((record: AiBootImageUnderstandingRecord) => {
+      const index = imageUnderstandings.findIndex((row) => row.contentHash === record.contentHash);
+      if (index >= 0) {
+        imageUnderstandings[index] = record;
+      } else {
+        imageUnderstandings.push(record);
+      }
+    }),
   };
   const deps: AiBootOrchestratorDeps = {
     repo: repo as AiBootOrchestratorDeps["repo"],
@@ -203,7 +217,7 @@ function makeDeps(
     ...overrides,
   };
 
-  return Object.assign(deps, { events, notificationEvents, scoreEvents });
+  return Object.assign(deps, { events, imageUnderstandings, notificationEvents, scoreEvents });
 }
 
 const approvedArtifact = {
@@ -258,7 +272,20 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("records the vision model name when image scoring uses a vision model", async () => {
+  it("records the text scoring model name when an image is scored from cached understanding", async () => {
+    const cachedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "img-key-1",
+      messageId: "om-1",
+      contentHash: "hash-image-1",
+      modelName: "qwen-vl-max-latest",
+      caption: "截图展示了一个 AI 生成的客户拜访复盘表。",
+      scoreHint: "可按 ai_artifact 审核。",
+      latencyMs: 40,
+      status: "succeeded",
+      errorReason: "",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:00:00.000Z",
+    };
     const deps = makeDeps({
       config: {
         engineMode: "v3_shadow",
@@ -269,7 +296,11 @@ describe("createAiBootOrchestrator", () => {
         model: "glm-4.7",
         visionModel: "qwen-vl-max-latest",
       }),
-    });
+      imageUnderstandingService: {
+        getCachedUnderstanding: vi.fn().mockReturnValue(cachedUnderstanding),
+        enqueueUnderstanding: vi.fn(),
+      },
+    } as Partial<AiBootOrchestratorDeps>);
     const orchestrator = createAiBootOrchestrator(deps);
 
     await orchestrator.handleMessage(message({
@@ -284,7 +315,7 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.scoreEvents).toHaveLength(1);
     expect(deps.scoreEvents[0]).toMatchObject({
       modelProvider: "test-provider",
-      modelName: "qwen-vl-max-latest",
+      modelName: "glm-4.7",
     });
   });
 
@@ -434,10 +465,15 @@ describe("createAiBootOrchestrator", () => {
     });
   });
 
-  it("allows an image share without prompt to approve as ai_artifact", async () => {
+  it("does not synchronously download or group-praise an image-only cache miss", async () => {
+    const imageUnderstandingService = {
+      getCachedUnderstanding: vi.fn().mockReturnValue(null),
+      enqueueUnderstanding: vi.fn(),
+    };
     const deps = makeDeps({
       llmClient: makeLlmClient(approvedArtifact),
-    });
+      imageUnderstandingService,
+    } as Partial<AiBootOrchestratorDeps>);
     const orchestrator = createAiBootOrchestrator(deps);
 
     await orchestrator.handleMessage(message({
@@ -450,17 +486,42 @@ describe("createAiBootOrchestrator", () => {
     }));
 
     expect(deps.scoreEvents[0]).toMatchObject({
-      status: "approved",
-      category: "ai_artifact",
-      scoreDelta: 5,
+      status: "review_required",
+      category: "formal_task",
+      scoreDelta: 1,
+      notifyPolicy: "silent",
+      reason: "image_understanding_pending",
     });
+    expect(imageUnderstandingService.enqueueUnderstanding).toHaveBeenCalledTimes(1);
+    expect(deps.llmClient?.chat).not.toHaveBeenCalled();
+    expect(deps.feishuClient.getMessageFile).not.toHaveBeenCalled();
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
-  it("passes image evidence to the configured vision model when an image key is available", async () => {
+  it("scores image messages from cached captions without passing the raw image to the scoring model", async () => {
     const llmClient = makeLlmClient(approvedArtifact, {
       visionModel: "glm-4.6v",
     });
-    const deps = makeDeps({ llmClient });
+    const cachedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "img-key-1",
+      messageId: "om-1",
+      contentHash: "hash-image-1",
+      modelName: "glm-4.6v",
+      caption: "截图展示了一个 AI 生成的客户拜访复盘表。",
+      scoreHint: "可按 ai_artifact 审核。",
+      latencyMs: 40,
+      status: "succeeded",
+      errorReason: "",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:00:00.000Z",
+    };
+    const deps = makeDeps({
+      llmClient,
+      imageUnderstandingService: {
+        getCachedUnderstanding: vi.fn().mockReturnValue(cachedUnderstanding),
+        enqueueUnderstanding: vi.fn(),
+      },
+    } as Partial<AiBootOrchestratorDeps>);
     const orchestrator = createAiBootOrchestrator(deps);
 
     await orchestrator.handleMessage(message({
@@ -472,19 +533,12 @@ describe("createAiBootOrchestrator", () => {
       fileKey: "img-key-1",
     }));
 
-    expect(deps.feishuClient.getMessageFile).toHaveBeenCalledWith({
-      messageId: "om-1",
-      fileKey: "img-key-1",
-      resourceType: "image",
-    });
+    expect(deps.feishuClient.getMessageFile).not.toHaveBeenCalled();
     const messages = (llmClient.chat as ReturnType<typeof vi.fn>).mock.calls[0][0];
-    expect(messages[1].content).toEqual([
-      expect.objectContaining({ type: "text" }),
-      {
-        type: "image_url",
-        image_url: { url: "data:image/png;base64,ZmFrZS1pbWFnZQ==" },
-      },
-    ]);
+    expect(messages[1].content).toEqual(expect.stringContaining("截图展示了一个 AI 生成的客户拜访复盘表。"));
+    expect(messages[1].content).not.toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "image_url" }),
+    ]));
   });
 
   it("allows an experience share without prompt to approve as ai_practice_reflection", async () => {
