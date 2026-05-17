@@ -97,7 +97,7 @@ describe("daily-checkin-v1 template", () => {
     expect(cardJson).toContain("🌱 课外好资源");
   });
 
-  test("each button carries action name + itemCode (H2 uses form instead)", () => {
+  test("each submit button uses current form callback values", () => {
     const state = emptyDailyCheckinState({
       periodNumber: 1,
       postedAt: "2026-04-10T09:00:00.000Z",
@@ -111,13 +111,13 @@ describe("daily-checkin-v1 template", () => {
     expect(cardJson).toContain("daily_checkin_c1_submit");
     expect(cardJson).toContain("daily_checkin_c3_submit");
     expect(cardJson).toContain("daily_checkin_g2_submit");
-    // Non-H2 items carry itemCode in plain button value
     const nonH2Codes: DailyCheckinItemCode[] = ["K3", "K4", "C1", "C3", "G2"];
     for (const code of nonH2Codes) {
-      expect(cardJson).toContain(`"itemCode":"${code}"`);
+      const lower = code.toLowerCase();
+      expect(cardJson).toContain(`daily_checkin_${lower}_submit`);
+      expect(cardJson).toContain(`\${${lower}_text.value}`);
     }
-    // H2 uses a form — no plain itemCode in its value object
-    expect(cardJson).not.toContain('"itemCode":"H2"');
+    expect(cardJson).not.toContain('"itemCode":');
   });
 
   test("approved members appear with ✓ marker", () => {

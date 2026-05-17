@@ -46,6 +46,8 @@ import type { AutoReplyDeps } from "./auto-reply.js";
 import type { ScoringItemCode } from "../../domain/v2/scoring-items-config.js";
 import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 import { buildPraisePrompt } from "./chat-bot/persona.js";
+import type { AiBootConfig } from "./ai-boot/config.js";
+import type { AiBootOrchestrator } from "./ai-boot/orchestrator.js";
 
 // ============================================================================
 // Keyword definitions
@@ -135,6 +137,10 @@ export interface MessageCommandDeps {
   };
   /** 文档文本提取器（可选，默认使用本地 pdf-parse + mammoth） */
   documentExtractor?: DocumentTextExtractor;
+  /** AI Boot v3 scoring config. Legacy mode keeps the v2 auto-capture path. */
+  aiBootConfig?: AiBootConfig;
+  /** AI Boot v3 orchestrator for shadow/live scoring modes. */
+  aiBootOrchestrator?: Pick<AiBootOrchestrator, "handleMessage">;
 }
 
 export function createMessageCommandHandler(deps: MessageCommandDeps) {
@@ -232,6 +238,19 @@ async function handleAutoCapture(
   }
   if (member.roleType === "operator" || member.roleType === "trainer") {
     return;
+  }
+
+  if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode === "v3_live") {
+    await deps.aiBootOrchestrator.handleMessage(message);
+    return;
+  }
+
+  if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode === "v3_shadow") {
+    try {
+      await deps.aiBootOrchestrator.handleMessage(message);
+    } catch (err) {
+      console.error("[AutoCapture] AI Boot v3 shadow sidecar failed:", err);
+    }
   }
 
   // Step 1: K1 签到始终直接给（不需要 LLM）

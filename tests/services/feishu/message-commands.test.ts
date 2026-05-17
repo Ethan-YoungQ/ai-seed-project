@@ -285,3 +285,110 @@ describe("message-commands chat bot recent context", () => {
     }));
   });
 });
+
+describe("message-commands AI Boot v3 routing", () => {
+  function buildDeps(
+    overrides: Partial<MessageCommandDeps> = {},
+  ): MessageCommandDeps {
+    return {
+      feishuClient: {
+        sendTextMessage: vi.fn().mockResolvedValue({ messageId: "msg-id" }),
+        sendCardMessage: vi.fn().mockResolvedValue({ messageId: "card-id" }),
+      } as any,
+      lifecycle: {} as any,
+      cardDeps: {
+        repo: {
+          findMemberByOpenId: vi.fn().mockReturnValue({
+            id: "member-001",
+            displayName: "测试学员",
+            roleType: "student",
+            isParticipant: true,
+            isExcludedFromBoard: false,
+            currentLevel: 1,
+          }),
+        },
+      } as any,
+      ingestor: {
+        ingest: vi.fn().mockReturnValue({ accepted: true }),
+      },
+      aiBootConfig: {
+        engineMode: "v3_live",
+        allowGroupPraise: false,
+        allowDailyDigest: false,
+      },
+      aiBootOrchestrator: {
+        handleMessage: vi.fn().mockResolvedValue(undefined),
+      },
+      ...overrides,
+    };
+  }
+
+  it("routes v3_live auto-capture messages to AI Boot v3 and skips legacy ingestor scoring", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+    const msg = makeMsg({ rawText: "我用 AI 完成了一张客户沟通海报。" });
+
+    await handler(msg);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).toHaveBeenCalledWith(msg);
+    expect(deps.ingestor?.ingest).not.toHaveBeenCalled();
+  });
+
+  it("runs v3_shadow as a sidecar while keeping legacy auto-capture scoring", async () => {
+    const deps = buildDeps({
+      aiBootConfig: {
+        engineMode: "v3_shadow",
+        allowGroupPraise: false,
+        allowDailyDigest: false,
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+    const msg = makeMsg({
+      rawText: "我完成视频学习了，分享一个 prompt 模板给大家 https://example.com",
+    });
+
+    await handler(msg);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).toHaveBeenCalledWith(msg);
+    const ingestCalls = (deps.ingestor!.ingest as ReturnType<typeof vi.fn>).mock.calls;
+    expect(ingestCalls).toEqual(
+      expect.arrayContaining([
+        [expect.objectContaining({ itemCode: "K1", sourceRef: `msg:${msg.messageId}:K1` })],
+        [expect.objectContaining({ itemCode: "H3", sourceRef: `msg:${msg.messageId}:H3` })],
+        [expect.objectContaining({ itemCode: "G2", sourceRef: `msg:${msg.messageId}:G2` })],
+      ]),
+    );
+  });
+
+  it("keeps @Bot chat path ahead of AI Boot v3 routing", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "这是聊天回复。",
+      used: "llm",
+      latencyMs: 1,
+    });
+    const deps = buildDeps({
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 这个怎么提交？",
+      cleanedText: "这个怎么提交？",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+});

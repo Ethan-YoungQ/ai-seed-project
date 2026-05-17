@@ -16,8 +16,12 @@ function fakeCtx(overrides: Partial<CardActionContext> = {}): CardActionContext 
   return {
     operatorOpenId: "ou-op-1",
     triggerId: "t-1",
-    actionName: "member_toggle_hidden",
-    actionPayload: { action: "member_toggle_hidden", memberId: "m-1", hidden: true },
+    actionName: "member_mgmt_confirm",
+    actionPayload: {
+      action: "member_mgmt_confirm",
+      member_mgmt_select_member: "m-1",
+      member_mgmt_select_action: "hide"
+    },
     messageId: "om-1",
     chatId: "oc-op-dm",
     receivedAt: "2026-04-10T12:00:00.000Z",
@@ -115,7 +119,11 @@ describe("memberToggleHiddenHandler", () => {
   test("toggle hidden happy path: calls patchMember, returns updated card", async () => {
     const deps = fakeDeps();
     const ctx = fakeCtx({
-      actionPayload: { action: "member_toggle_hidden", memberId: "m-2", hidden: true }
+      actionPayload: {
+        action: "member_mgmt_confirm",
+        member_mgmt_select_member: "m-2",
+        member_mgmt_select_action: "hide"
+      }
     });
 
     const result = await memberToggleHiddenHandler(ctx, deps);
@@ -123,15 +131,19 @@ describe("memberToggleHiddenHandler", () => {
     expect(deps.adminApiClient.patchMember).toHaveBeenCalledWith("m-2", {
       hiddenFromBoard: true
     });
-    expect(deps.adminApiClient.listMembers).toHaveBeenCalledOnce();
-    expect(result.newCardJson).toBeDefined();
-    expect(result.toast).toBeUndefined();
+    expect(deps.adminApiClient.listMembers).not.toHaveBeenCalled();
+    expect(result.newCardJson).toBeUndefined();
+    expect(result.toast?.type).toBe("success");
   });
 
   test("non-operator gets error toast, patchMember not called", async () => {
     const deps = fakeDeps({}, studentMember());
     const ctx = fakeCtx({
-      actionPayload: { action: "member_toggle_hidden", memberId: "m-2", hidden: true }
+      actionPayload: {
+        action: "member_mgmt_confirm",
+        member_mgmt_select_member: "m-2",
+        member_mgmt_select_action: "hide"
+      }
     });
 
     const result = await memberToggleHiddenHandler(ctx, deps);
@@ -143,7 +155,10 @@ describe("memberToggleHiddenHandler", () => {
   test("missing memberId returns error toast", async () => {
     const deps = fakeDeps();
     const ctx = fakeCtx({
-      actionPayload: { action: "member_toggle_hidden", hidden: true }
+      actionPayload: {
+        action: "member_mgmt_confirm",
+        member_mgmt_select_action: "hide"
+      }
     });
 
     const result = await memberToggleHiddenHandler(ctx, deps);
@@ -159,8 +174,12 @@ describe("memberChangeRoleHandler", () => {
   test("change role happy path: calls patchMember with new roleType, returns updated card", async () => {
     const deps = fakeDeps();
     const ctx = fakeCtx({
-      actionName: "member_change_role",
-      actionPayload: { action: "member_change_role", memberId: "m-2", roleType: "trainer" }
+      actionName: "member_mgmt_confirm",
+      actionPayload: {
+        action: "member_mgmt_confirm",
+        member_mgmt_select_member: "m-2",
+        member_mgmt_select_action: "role_trainer"
+      }
     });
 
     const result = await memberChangeRoleHandler(ctx, deps);
@@ -168,14 +187,19 @@ describe("memberChangeRoleHandler", () => {
     expect(deps.adminApiClient.patchMember).toHaveBeenCalledWith("m-2", {
       roleType: "trainer"
     });
-    expect(result.newCardJson).toBeDefined();
+    expect(result.newCardJson).toBeUndefined();
+    expect(result.toast?.type).toBe("success");
   });
 
   test("invalid role type returns error toast without calling patchMember", async () => {
     const deps = fakeDeps();
     const ctx = fakeCtx({
-      actionName: "member_change_role",
-      actionPayload: { action: "member_change_role", memberId: "m-2", roleType: "superadmin" }
+      actionName: "member_mgmt_confirm",
+      actionPayload: {
+        action: "member_mgmt_confirm",
+        member_mgmt_select_member: "m-2",
+        member_mgmt_select_action: "role_superadmin"
+      }
     });
 
     const result = await memberChangeRoleHandler(ctx, deps);

@@ -18,6 +18,20 @@ describe("buildPraisePrompt", () => {
     const prompt = buildPraisePrompt("学员", ["C1"], 5);
     expect(prompt).toMatch(/网感|彩虹屁|绝绝子|yyds|天花板|杀疯了|封神|拿捏|这波操作|秀/i);
   });
+
+  it("does not pressure students to share prompts for image or artifact praise", () => {
+    const prompt = buildPraisePrompt("学员", ["ai_artifact"], 5);
+    expect(prompt).not.toMatch(/快分享\s*prompt|share\s+prompt|抄作业|用 ChatGPT 设计的\?/i);
+    expect(prompt).not.toMatch(/大家.*围观|小伙伴们快来围观|欢迎其他同学/i);
+  });
+
+  it("uses separate praise examples for artifact, reflection, method sharing, and peer help", () => {
+    const prompt = buildPraisePrompt("学员", ["ai_artifact", "peer_help"], 7);
+    expect(prompt).toContain("AI 产物");
+    expect(prompt).toContain("实践复盘");
+    expect(prompt).toContain("方法分享");
+    expect(prompt).toContain("同伴互助");
+  });
 });
 
 describe("buildSystemPrompt", () => {

@@ -22,6 +22,14 @@ import type {
 } from "../domain/types.js";
 import type { DimensionScoreRow } from "../domain/v2/rank-context.js";
 import type { ScoringDimension } from "../domain/v2/scoring-items-config.js";
+import type {
+  AiBootDecisionStatus,
+  AiBootEventRecord,
+  AiBootEventStatus,
+  AiBootNotificationEventRecord,
+  AiBootScoreCategory,
+  AiBootScoreEventRecord
+} from "../domain/v3/ai-boot-types.js";
 
 // ---------------------------------------------------------------------------
 // Inlined from domain/ranking.ts (deleted as part of v1 legacy cleanup)
@@ -356,6 +364,88 @@ CREATE INDEX IF NOT EXISTS idx_v2_scoring_events_member_period_status
   ON v2_scoring_item_events (member_id, period_id, status);
 CREATE INDEX IF NOT EXISTS idx_v2_scoring_events_status_decided
   ON v2_scoring_item_events (status, decided_at);
+
+CREATE TABLE IF NOT EXISTS ai_boot_events (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  source_message_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  raw_text TEXT NOT NULL DEFAULT '',
+  sanitized_text TEXT NOT NULL DEFAULT '',
+  attachment_json TEXT NOT NULL DEFAULT '[]',
+  evidence_json TEXT NOT NULL DEFAULT '{}',
+  content_hash TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT 'received',
+  engine_version TEXT NOT NULL,
+  ruleset_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(camp_id, source_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_events_member_created
+  ON ai_boot_events (member_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_events_content_hash
+  ON ai_boot_events (camp_id, content_hash);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_events_camp_created_id
+  ON ai_boot_events (camp_id, created_at, id);
+
+CREATE TABLE IF NOT EXISTS ai_boot_score_events (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  score_delta INTEGER NOT NULL,
+  confidence TEXT NOT NULL,
+  status TEXT NOT NULL,
+  notify_policy TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  evidence TEXT NOT NULL,
+  badges_json TEXT NOT NULL DEFAULT '[]',
+  model_provider TEXT NOT NULL DEFAULT '',
+  model_name TEXT NOT NULL DEFAULT '',
+  prompt_version TEXT NOT NULL DEFAULT '',
+  reviewed_by_op_id TEXT,
+  review_note TEXT,
+  decided_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_camp_member_status
+  ON ai_boot_score_events (camp_id, member_id, status);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_scores_status_decided
+  ON ai_boot_score_events (status, decided_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_boot_scores_event_id_unique
+  ON ai_boot_score_events (event_id);
+
+CREATE TABLE IF NOT EXISTS ai_boot_legacy_score_snapshots (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  total_score INTEGER NOT NULL,
+  dimension_json TEXT NOT NULL DEFAULT '{}',
+  source_note TEXT NOT NULL,
+  snapshot_at TEXT NOT NULL,
+  UNIQUE(camp_id, member_id)
+);
+
+CREATE TABLE IF NOT EXISTS ai_boot_notification_events (
+  id TEXT PRIMARY KEY,
+  score_event_id TEXT NOT NULL,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  chat_id TEXT NOT NULL,
+  topic_hash TEXT NOT NULL,
+  notify_policy TEXT NOT NULL,
+  sent_at TEXT NOT NULL,
+  text_hash TEXT NOT NULL,
+  UNIQUE(score_event_id)
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_member_sent
+  ON ai_boot_notification_events (camp_id, member_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_chat_sent
+  ON ai_boot_notification_events (camp_id, chat_id, sent_at);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_topic_sent
+  ON ai_boot_notification_events (camp_id, topic_hash, sent_at);
 
 CREATE TABLE IF NOT EXISTS v2_member_dimension_scores (
   member_id TEXT NOT NULL,
@@ -1277,6 +1367,592 @@ export class SqliteRepository {
     };
   }
 
+  insertAiBootEvent(input: AiBootEventRecord): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT INTO ai_boot_events
+          (id, camp_id, chat_id, member_id, source_message_id, event_type,
+           raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+           status, engine_version, ruleset_version, created_at)
+         VALUES
+          (@id, @campId, @chatId, @memberId, @sourceMessageId, @eventType,
+           @rawText, @sanitizedText, @attachmentJson, @evidenceJson, @contentHash,
+           @status, @engineVersion, @rulesetVersion, @createdAt)
+         ON CONFLICT(camp_id, source_message_id) DO NOTHING`
+      )
+      .run(input);
+    return result.changes > 0;
+  }
+
+  findAiBootEventByMessageId(
+    campId: string,
+    sourceMessageId: string
+  ): AiBootEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = ? AND source_message_id = ?
+         LIMIT 1`
+      )
+      .get(campId, sourceMessageId) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootEventRow(row) : undefined;
+  }
+
+  findAiBootEventByContentHash(
+    campId: string,
+    contentHash: string,
+    excludeEventId?: string
+  ): AiBootEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = ? AND content_hash = ?
+           AND (? IS NULL OR id != ?)
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`
+      )
+      .get(campId, contentHash, excludeEventId ?? null, excludeEventId ?? null) as
+        | Record<string, unknown>
+        | undefined;
+    return row ? this.mapAiBootEventRow(row) : undefined;
+  }
+
+  findPreviousAiBootEventByContentHash(input: {
+    campId: string;
+    contentHash: string;
+    beforeCreatedAt: string;
+    beforeEventId: string;
+  }): AiBootEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = @campId
+           AND content_hash = @contentHash
+           AND (
+             created_at < @beforeCreatedAt OR
+             (created_at = @beforeCreatedAt AND id < @beforeEventId)
+           )
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`
+      )
+      .get(input) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootEventRow(row) : undefined;
+  }
+
+  listAiBootEventsForReplay(input: {
+    campId: string;
+    since: string;
+    limit: number;
+  }): AiBootEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, camp_id, chat_id, member_id, source_message_id, event_type,
+                raw_text, sanitized_text, attachment_json, evidence_json, content_hash,
+                status, engine_version, ruleset_version, created_at
+         FROM ai_boot_events
+         WHERE camp_id = @campId
+           AND created_at >= @since
+         ORDER BY created_at ASC, id ASC
+         LIMIT @limit`
+      )
+      .all(input) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapAiBootEventRow(row));
+  }
+
+  insertAiBootScoreEvent(input: AiBootScoreEventRecord): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT INTO ai_boot_score_events
+          (id, event_id, camp_id, member_id, category, score_delta, confidence,
+           status, notify_policy, reason, evidence, badges_json, model_provider,
+           model_name, prompt_version, reviewed_by_op_id, review_note, decided_at)
+         VALUES
+          (@id, @eventId, @campId, @memberId, @category, @scoreDelta, @confidence,
+           @status, @notifyPolicy, @reason, @evidence, @badgesJson, @modelProvider,
+           @modelName, @promptVersion, @reviewedByOpId, @reviewNote, @decidedAt)
+         ON CONFLICT(event_id) DO NOTHING`
+      )
+      .run(input);
+    return result.changes > 0;
+  }
+
+  findAiBootScoreEventById(id: string): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
+                status, notify_policy, reason, evidence, badges_json, model_provider,
+                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
+         FROM ai_boot_score_events WHERE id = ? LIMIT 1`
+      )
+      .get(id) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  getAiBootScoreEvent(id: string): AiBootScoreEventRecord | undefined {
+    return this.findAiBootScoreEventById(id);
+  }
+
+  listAiBootReviewQueue(input: {
+    campId: string;
+    limit: number;
+    offset: number;
+  }): AiBootScoreEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
+                status, notify_policy, reason, evidence, badges_json, model_provider,
+                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
+         FROM ai_boot_score_events
+         WHERE camp_id = @campId
+           AND status = 'review_required'
+           AND confidence = 'low'
+         ORDER BY CASE confidence
+                    WHEN 'low' THEN 0
+                    WHEN 'medium' THEN 1
+                    ELSE 2
+                  END ASC,
+                  decided_at ASC,
+                  id ASC
+         LIMIT @limit OFFSET @offset`
+      )
+      .all(input) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapAiBootScoreEventRow(row));
+  }
+
+  updateAiBootScoreDecision(input: {
+    id: string;
+    status: AiBootDecisionStatus;
+    reviewedByOpId: string;
+    reviewNote: string;
+    scoreDelta?: number;
+    category?: AiBootScoreCategory;
+    reason?: string;
+  }): boolean {
+    const result = this.db
+      .prepare(
+        `UPDATE ai_boot_score_events
+         SET status = @status,
+             reviewed_by_op_id = @reviewedByOpId,
+             review_note = @reviewNote,
+             score_delta = COALESCE(@scoreDelta, score_delta),
+             category = COALESCE(@category, category),
+             reason = COALESCE(@reason, reason)
+         WHERE id = @id
+           AND status = 'review_required'
+           AND confidence = 'low'`
+      )
+      .run({
+        id: input.id,
+        status: input.status,
+        reviewedByOpId: input.reviewedByOpId,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta ?? null,
+        category: input.category ?? null,
+        reason: input.reason ?? null,
+      });
+    return result.changes > 0;
+  }
+
+  findAiBootScoreEventByEventId(eventId: string): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
+                status, notify_policy, reason, evidence, badges_json, model_provider,
+                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
+         FROM ai_boot_score_events WHERE event_id = ? LIMIT 1`
+      )
+      .get(eventId) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  findApprovedAiBootScoreEventByContentHash(
+    campId: string,
+    contentHash: string,
+    excludeEventId?: string
+  ): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.event_id, s.camp_id, s.member_id, s.category, s.score_delta,
+                s.confidence, s.status, s.notify_policy, s.reason, s.evidence,
+                s.badges_json, s.model_provider, s.model_name, s.prompt_version,
+                s.reviewed_by_op_id, s.review_note, s.decided_at
+         FROM ai_boot_score_events s
+         INNER JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE e.camp_id = ? AND e.content_hash = ? AND s.status = 'approved'
+           AND (? IS NULL OR e.id != ?)
+         ORDER BY s.decided_at DESC, s.id DESC
+         LIMIT 1`
+      )
+      .get(campId, contentHash, excludeEventId ?? null, excludeEventId ?? null) as
+        | Record<string, unknown>
+        | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  findPreviousApprovedAiBootScoreEventByContentHash(input: {
+    campId: string;
+    contentHash: string;
+    beforeCreatedAt: string;
+    beforeEventId: string;
+  }): AiBootScoreEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT s.id, s.event_id, s.camp_id, s.member_id, s.category, s.score_delta,
+                s.confidence, s.status, s.notify_policy, s.reason, s.evidence,
+                s.badges_json, s.model_provider, s.model_name, s.prompt_version,
+                s.reviewed_by_op_id, s.review_note, s.decided_at
+         FROM ai_boot_score_events s
+         INNER JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE e.camp_id = @campId
+           AND e.content_hash = @contentHash
+           AND s.status = 'approved'
+           AND (
+             e.created_at < @beforeCreatedAt OR
+             (e.created_at = @beforeCreatedAt AND e.id < @beforeEventId)
+           )
+         ORDER BY e.created_at DESC, e.id DESC, s.decided_at DESC, s.id DESC
+         LIMIT 1`
+      )
+      .get(input) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootScoreEventRow(row) : undefined;
+  }
+
+  countApprovedAiBootScoreEvents(input: {
+    campId: string;
+    memberId: string;
+    category: AiBootScoreCategory;
+    decidedAtFrom: string;
+    decidedAtTo: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE camp_id = ?
+           AND member_id = ?
+           AND category = ?
+           AND status = 'approved'
+           AND decided_at >= ?
+           AND decided_at < ?`
+      )
+      .get(
+        input.campId,
+        input.memberId,
+        input.category,
+        input.decidedAtFrom,
+        input.decidedAtTo
+      ) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countApprovedAiBootScoreEventsBefore(input: {
+    campId: string;
+    memberId: string;
+    category: AiBootScoreCategory;
+    decidedAtFrom: string;
+    decidedAtTo: string;
+    beforeDecidedAt: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE camp_id = ?
+           AND member_id = ?
+           AND category = ?
+           AND status = 'approved'
+           AND decided_at >= ?
+           AND decided_at < ?
+           AND decided_at < ?`
+      )
+      .get(
+        input.campId,
+        input.memberId,
+        input.category,
+        input.decidedAtFrom,
+        input.decidedAtTo,
+        input.beforeDecidedAt
+      ) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countApprovedAiBootScoreEventsForMember(campId: string, memberId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE camp_id = ? AND member_id = ? AND status = 'approved'`
+      )
+      .get(campId, memberId) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  sumApprovedAiBootScore(campId: string, memberId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(score_delta), 0) AS total
+         FROM ai_boot_score_events
+         WHERE camp_id = ? AND member_id = ? AND status = 'approved'`
+      )
+      .get(campId, memberId) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
+  countAiBootLegacyScoreSnapshots(campId?: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_legacy_score_snapshots
+         WHERE (? IS NULL OR camp_id = ?)`
+      )
+      .get(campId ?? null, campId ?? null) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countMissingAiBootLegacyScoreSnapshots(campId: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM members m
+         LEFT JOIN ai_boot_legacy_score_snapshots s
+           ON s.camp_id = m.camp_id AND s.member_id = m.id
+         WHERE m.camp_id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+           AND s.member_id IS NULL`
+      )
+      .get(campId) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  hasCompleteAiBootLegacyScoreSnapshots(campId: string): boolean {
+    return this.countMissingAiBootLegacyScoreSnapshots(campId) === 0;
+  }
+
+  countStaleAiBootReviewRequired(input: {
+    campId?: string;
+    nowIso: string;
+    olderThanHours: number;
+  }): number {
+    const cutoff = new Date(
+      new Date(input.nowIso).getTime() - input.olderThanHours * 60 * 60 * 1000
+    ).toISOString();
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE status = 'review_required'
+           AND decided_at < @cutoff
+           AND (@campId IS NULL OR camp_id = @campId)`
+      )
+      .get({ campId: input.campId ?? null, cutoff }) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countAiBootScoreEventsMissingAuditText(campId?: string): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE (TRIM(reason) = '' OR TRIM(evidence) = '')
+           AND (? IS NULL OR camp_id = ?)`
+      )
+      .get(campId ?? null, campId ?? null) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countAiBootGroupPraiseNotificationsForDay(input: {
+    campId?: string;
+    dayStartIso: string;
+    dayEndIso: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE status = 'approved'
+           AND confidence = 'high'
+           AND notify_policy = 'group_praise'
+           AND score_delta > 0
+           AND category IN (
+             'ai_artifact',
+             'ai_practice_reflection',
+             'prompt_or_method',
+             'resource_recommendation',
+             'peer_help',
+             'formal_task'
+           )
+           AND decided_at >= @dayStartIso
+           AND decided_at < @dayEndIso
+           AND (@campId IS NULL OR camp_id = @campId)`
+      )
+      .get({
+        campId: input.campId ?? null,
+        dayStartIso: input.dayStartIso,
+        dayEndIso: input.dayEndIso,
+      }) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  insertAiBootNotificationEvent(input: AiBootNotificationEventRecord): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT INTO ai_boot_notification_events
+          (id, score_event_id, camp_id, member_id, chat_id, topic_hash,
+           notify_policy, sent_at, text_hash)
+         VALUES
+          (@id, @scoreEventId, @campId, @memberId, @chatId, @topicHash,
+           @notifyPolicy, @sentAt, @textHash)
+         ON CONFLICT(score_event_id) DO NOTHING`
+      )
+      .run(input);
+    return result.changes > 0;
+  }
+
+  countAiBootNotificationEventsForMember(input: {
+    campId: string;
+    memberId: string;
+    from: string;
+    to: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_notification_events
+         WHERE camp_id = @campId
+           AND member_id = @memberId
+           AND sent_at >= @from
+           AND sent_at < @to`
+      )
+      .get(input) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  countAiBootNotificationEventsForChat(input: {
+    campId: string;
+    chatId: string;
+    from: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_notification_events
+         WHERE camp_id = @campId
+           AND chat_id = @chatId
+           AND sent_at >= @from`
+      )
+      .get(input) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
+  findRecentAiBootNotificationByTopicHash(input: {
+    campId: string;
+    topicHash: string;
+    since: string;
+  }): AiBootNotificationEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, score_event_id, camp_id, member_id, chat_id, topic_hash,
+                notify_policy, sent_at, text_hash
+         FROM ai_boot_notification_events
+         WHERE camp_id = @campId
+           AND topic_hash = @topicHash
+           AND sent_at >= @since
+         ORDER BY sent_at DESC, id DESC
+         LIMIT 1`
+      )
+      .get(input) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootNotificationEventRow(row) : undefined;
+  }
+
+  findAiBootNotificationEventByScoreEventId(
+    scoreEventId: string
+  ): AiBootNotificationEventRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT id, score_event_id, camp_id, member_id, chat_id, topic_hash,
+                notify_policy, sent_at, text_hash
+         FROM ai_boot_notification_events
+         WHERE score_event_id = ?
+         LIMIT 1`
+      )
+      .get(scoreEventId) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootNotificationEventRow(row) : undefined;
+  }
+
+  private mapAiBootEventRow(row: Record<string, unknown>): AiBootEventRecord {
+    return {
+      id: String(row.id),
+      campId: String(row.camp_id),
+      chatId: String(row.chat_id),
+      memberId: String(row.member_id),
+      sourceMessageId: String(row.source_message_id),
+      eventType: String(row.event_type) as AiBootEventRecord["eventType"],
+      rawText: String(row.raw_text),
+      sanitizedText: String(row.sanitized_text),
+      attachmentJson: String(row.attachment_json),
+      evidenceJson: String(row.evidence_json),
+      contentHash: String(row.content_hash),
+      status: String(row.status) as AiBootEventStatus,
+      engineVersion: String(row.engine_version),
+      rulesetVersion: String(row.ruleset_version),
+      createdAt: String(row.created_at)
+    };
+  }
+
+  private mapAiBootScoreEventRow(row: Record<string, unknown>): AiBootScoreEventRecord {
+    return {
+      id: String(row.id),
+      eventId: String(row.event_id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      category: String(row.category) as AiBootScoreEventRecord["category"],
+      scoreDelta: Number(row.score_delta),
+      confidence: String(row.confidence) as AiBootScoreEventRecord["confidence"],
+      status: String(row.status) as AiBootDecisionStatus,
+      notifyPolicy: String(row.notify_policy) as AiBootScoreEventRecord["notifyPolicy"],
+      reason: String(row.reason),
+      evidence: String(row.evidence),
+      badgesJson: String(row.badges_json),
+      modelProvider: String(row.model_provider),
+      modelName: String(row.model_name),
+      promptVersion: String(row.prompt_version),
+      reviewedByOpId:
+        row.reviewed_by_op_id === null || row.reviewed_by_op_id === undefined
+          ? null
+          : String(row.reviewed_by_op_id),
+      reviewNote:
+        row.review_note === null || row.review_note === undefined
+          ? null
+          : String(row.review_note),
+      decidedAt: String(row.decided_at)
+    };
+  }
+
+  private mapAiBootNotificationEventRow(
+    row: Record<string, unknown>
+  ): AiBootNotificationEventRecord {
+    return {
+      id: String(row.id),
+      scoreEventId: String(row.score_event_id),
+      campId: String(row.camp_id),
+      memberId: String(row.member_id),
+      chatId: String(row.chat_id),
+      topicHash: String(row.topic_hash),
+      notifyPolicy: String(row.notify_policy) as AiBootNotificationEventRecord["notifyPolicy"],
+      sentAt: String(row.sent_at),
+      textHash: String(row.text_hash)
+    };
+  }
+
   incrementMemberDimensionScore(input: {
     memberId: string;
     periodId: string;
@@ -1332,6 +2008,163 @@ export class SqliteRepository {
       result[row.dimension] = Number(row.period_score);
     }
     return result;
+  }
+
+  fetchAiBootLegacyDimensionScoreTotals(campId: string, memberId: string): {
+    totalScore: number;
+    dimensions: { K: number; H: number; C: number; S: number; G: number };
+  } {
+    const totalRow = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(ds.period_score), 0) AS total
+         FROM v2_member_dimension_scores ds
+         INNER JOIN v2_periods p ON p.id = ds.period_id
+         WHERE p.camp_id = ? AND ds.member_id = ?`
+      )
+      .get(campId, memberId) as { total: number } | undefined;
+
+    const rows = this.db
+      .prepare(
+        `SELECT ds.dimension, COALESCE(SUM(ds.period_score), 0) AS total
+         FROM v2_member_dimension_scores ds
+         INNER JOIN v2_periods p ON p.id = ds.period_id
+         WHERE p.camp_id = ? AND ds.member_id = ?
+         GROUP BY ds.dimension`
+      )
+      .all(campId, memberId) as Array<{ dimension: string; total: number }>;
+
+    const dimensions = { K: 0, H: 0, C: 0, S: 0, G: 0 };
+    for (const row of rows) {
+      if (row.dimension in dimensions) {
+        dimensions[row.dimension as keyof typeof dimensions] = Number(row.total);
+      }
+    }
+
+    return {
+      totalScore: Number(totalRow?.total ?? 0),
+      dimensions
+    };
+  }
+
+  upsertAiBootLegacyScoreSnapshot(input: {
+    id: string;
+    campId: string;
+    memberId: string;
+    totalScore: number;
+    dimensionJson: string;
+    sourceNote: string;
+    snapshotAt: string;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO ai_boot_legacy_score_snapshots
+          (id, camp_id, member_id, total_score, dimension_json, source_note, snapshot_at)
+         VALUES (@id, @campId, @memberId, @totalScore, @dimensionJson, @sourceNote, @snapshotAt)
+         ON CONFLICT(camp_id, member_id) DO UPDATE SET
+           id = excluded.id,
+           total_score = excluded.total_score,
+           dimension_json = excluded.dimension_json,
+           source_note = excluded.source_note,
+           snapshot_at = excluded.snapshot_at`
+      )
+      .run(input);
+  }
+
+  getAiBootLegacyScoreSnapshot(
+    campId: string,
+    memberId: string
+  ): { totalScore: number; dimensionJson: string; snapshotAt: string } | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT total_score, dimension_json, snapshot_at
+         FROM ai_boot_legacy_score_snapshots
+         WHERE camp_id = ? AND member_id = ?`
+      )
+      .get(campId, memberId) as Record<string, unknown> | undefined;
+
+    if (!row) {
+      return undefined;
+    }
+
+    return {
+      totalScore: Number(row.total_score),
+      dimensionJson: String(row.dimension_json),
+      snapshotAt: String(row.snapshot_at)
+    };
+  }
+
+  getAiBootLegacyScoreSnapshotSourceNote(
+    campId: string,
+    memberId: string
+  ): string | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT source_note
+         FROM ai_boot_legacy_score_snapshots
+         WHERE camp_id = ? AND member_id = ?`
+      )
+      .get(campId, memberId) as { source_note: string } | undefined;
+
+    return row?.source_note;
+  }
+
+  listAiBootLegacyFreezeCandidates(campId: string): Array<{
+    id: string;
+    campId: string;
+    roleType: MemberProfile["roleType"];
+    isParticipant: boolean;
+    isExcludedFromBoard: boolean;
+  }> {
+    // Freeze preserves historical carryover. Display filters such as member
+    // status and hidden_from_board are applied by later ranking/read paths.
+    const rows = this.db
+      .prepare(
+        `SELECT id, camp_id, role_type, is_participant, is_excluded_from_board
+         FROM members
+         WHERE camp_id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+         ORDER BY id ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      id: String(row.id),
+      campId: String(row.camp_id),
+      roleType: row.role_type as MemberProfile["roleType"],
+      isParticipant: asBoolean(Number(row.is_participant)),
+      isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board))
+    }));
+  }
+
+  listAiBootLegacyOrphanDimensionScoreRows(campId: string): Array<{
+    memberId: string;
+    periodId: string;
+    dimension: string;
+    periodScore: number;
+  }> {
+    const rows = this.db
+      .prepare(
+        `SELECT ds.member_id, ds.period_id, ds.dimension, ds.period_score
+         FROM v2_member_dimension_scores ds
+         INNER JOIN members m ON m.id = ds.member_id
+         LEFT JOIN v2_periods p ON p.id = ds.period_id
+         WHERE m.camp_id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+           AND p.id IS NULL
+         ORDER BY ds.member_id ASC, ds.period_id ASC, ds.dimension ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      memberId: String(row.member_id),
+      periodId: String(row.period_id),
+      dimension: String(row.dimension),
+      periodScore: Number(row.period_score)
+    }));
+  }
+
+  runAiBootLegacyFreezeTransaction<T>(work: () => T): T {
+    return this.db.transaction(work).immediate();
   }
 
   fetchDimensionCumulativeForRanking(

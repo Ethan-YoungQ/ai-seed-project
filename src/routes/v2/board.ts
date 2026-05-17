@@ -8,6 +8,7 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { V2Runtime } from "../../app.js";
+import { combineLegacyAndV3Score } from "../../domain/v3/scorebook.js";
 import type { FeishuApiClient } from "../../services/feishu/client.js";
 
 // 内存缓存：群组名称极少变动，避免每次请求调用飞书 API
@@ -18,6 +19,52 @@ const GROUP_NAME_CACHE_TTL_MS = 10 * 60 * 1000; // 10 分钟
 export interface BoardRouteDeps {
   feishuApiClient?: FeishuApiClient;
   botChatId?: string;
+}
+
+type AdditiveScoreFields = {
+  legacyScore: number;
+  v3Score: number;
+  totalScore: number;
+};
+
+function resolveAdditiveScoreFields(
+  deps: V2Runtime,
+  campId: string,
+  memberId: string
+): AdditiveScoreFields | undefined {
+  if (!isAdditiveAggregationEnabled(deps, campId)) {
+    return undefined;
+  }
+
+  const legacySnapshot = deps.repository.getAiBootLegacyScoreSnapshot(campId, memberId);
+  const legacyScore = legacySnapshot?.totalScore ?? 0;
+  const v3Score = deps.repository.sumApprovedAiBootScore(campId, memberId);
+  const approvedV3ScoreEventCount = deps.repository.countApprovedAiBootScoreEventsForMember(
+    campId,
+    memberId
+  );
+
+  if (!legacySnapshot && approvedV3ScoreEventCount === 0) {
+    return undefined;
+  }
+
+  return {
+    legacyScore,
+    v3Score,
+    totalScore: combineLegacyAndV3Score({
+      legacyTotal: legacyScore,
+      approvedV3Total: v3Score,
+    }),
+  };
+}
+
+function isAdditiveAggregationEnabled(deps: V2Runtime, campId: string): boolean {
+  return deps.aiBootConfig?.engineMode === "v3_live" &&
+    deps.repository.hasCompleteAiBootLegacyScoreSnapshots(campId);
+}
+
+function effectiveRankingScore(row: { cumulativeAq: number; totalScore?: number }): number {
+  return row.totalScore ?? row.cumulativeAq;
 }
 
 async function resolveGroupName(boardDeps: BoardRouteDeps): Promise<string | null> {
@@ -59,7 +106,38 @@ export function registerV2BoardRoutes(
     }
 
     try {
-      const rows = deps.repository.fetchRankingByCamp(campId);
+      let currentRank = 1;
+      let lastScore: number | null = null;
+      const rows = deps.repository
+        .fetchRankingByCamp(campId)
+        .map((row) => {
+          const scoreFields = resolveAdditiveScoreFields(deps, campId, row.memberId);
+          if (!scoreFields) {
+            return row;
+          }
+
+          return {
+            ...row,
+            cumulativeAq: scoreFields.totalScore,
+            ...scoreFields,
+          };
+        })
+        .sort((left, right) => {
+          const scoreDiff = effectiveRankingScore(right) - effectiveRankingScore(left);
+          if (scoreDiff !== 0) {
+            return scoreDiff;
+          }
+          return left.memberName.localeCompare(right.memberName);
+        })
+        .map((row, index) => {
+          const score = effectiveRankingScore(row);
+          if (lastScore !== null && score < lastScore) {
+            currentRank = index + 1;
+          }
+          lastScore = score;
+
+          return { ...row, rank: currentRank };
+        });
       const groupName = boardDeps
         ? await resolveGroupName(boardDeps)
         : null;
@@ -88,16 +166,21 @@ export function registerV2BoardRoutes(
       // Transform to match front-end MemberBoardDetail type
       const latestDims = raw.dimensionSeries[raw.dimensionSeries.length - 1];
       const latestSnap = raw.windowSnapshots[raw.windowSnapshots.length - 1];
+      const member = deps.repository.getMember(params.id);
+      const scoreFields = member
+        ? resolveAdditiveScoreFields(deps, member.campId, raw.memberId)
+        : undefined;
 
       const detail = {
         memberId: raw.memberId,
         memberName: raw.memberName,
         avatarUrl: raw.avatarUrl,
         currentLevel: raw.currentLevel,
-        cumulativeAq: latestSnap?.cumulativeAq ?? 0,
+        cumulativeAq: scoreFields?.totalScore ?? latestSnap?.cumulativeAq ?? 0,
         dimensions: latestDims
           ? { K: latestDims.K, H: latestDims.H, C: latestDims.C, S: latestDims.S, G: latestDims.G }
           : { K: 0, H: 0, C: 0, S: 0, G: 0 },
+        dimensionSeries: raw.dimensionSeries,
         windowSnapshots: raw.windowSnapshots.map((s) => ({
           windowId: s.windowId,
           aq: s.windowAq,
@@ -109,6 +192,7 @@ export function registerV2BoardRoutes(
           ...p,
           reason: "",
         })),
+        ...(scoreFields ?? {}),
       };
 
       return reply.send({ ok: true, detail });

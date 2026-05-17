@@ -11,6 +11,9 @@ import type { FeishuApiClient } from "./services/feishu/client.js";
 import { LarkFeishuApiClient } from "./services/feishu/client.js";
 import type { FeishuConfig } from "./services/feishu/config.js";
 import { readFeishuConfig, withResolvedFeishuConfig } from "./services/feishu/config.js";
+import { readAiBootConfig } from "./services/feishu/ai-boot/config.js";
+import type { AiBootConfig } from "./services/feishu/ai-boot/config.js";
+import { createAiBootOrchestrator } from "./services/feishu/ai-boot/orchestrator.js";
 import type { FeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { LarkFeishuWsRuntime, NoopFeishuWsRuntime } from "./services/feishu/ws-runtime.js";
 import { readLlmProviderConfig } from "./services/llm/provider-config.js";
@@ -23,6 +26,7 @@ import { registerV2BoardRoutes } from "./routes/v2/board.js";
 import { registerV2AdminReviewRoutes } from "./routes/v2/admin-review.js";
 import { registerV2AdminMembersRoutes } from "./routes/v2/admin-members.js";
 import { registerV2LlmStatusRoute } from "./routes/v2/llm-status.js";
+import { registerV3AiBootAdminRoutes } from "./routes/v3/ai-boot-admin.js";
 import { feishuCardsPlugin, resolveCardType as resolveCardTypeFromAction } from "./services/feishu/cards/router.js";
 import { CardActionDispatcher } from "./services/feishu/cards/card-action-dispatcher.js";
 import {
@@ -110,6 +114,7 @@ export function requireAdmin(repository: SqliteRepository) {
 
 export interface V2Runtime {
   repository: SqliteRepository;
+  aiBootConfig?: AiBootConfig;
   ingestor: unknown;
   aggregator: unknown;
   periodLifecycle: unknown;
@@ -168,6 +173,7 @@ export async function createApp(options?: {
       : undefined;
 
   const cardRepoDeps = cardRepoAdapter(repository);
+  const aiBootConfig = readAiBootConfig(process.env);
 
   // Dashboard URL：优先 FEISHU_LEADERBOARD_URL，其次 PUBLIC_HOST，最后硬编码
   const dashboardUrl =
@@ -204,6 +210,23 @@ export async function createApp(options?: {
             }
           })
         }
+      : undefined;
+
+  const llmConfigForAiBoot = readLlmProviderConfig(process.env);
+  const aiBootOrchestrator =
+    feishuApiClient && aiBootConfig.engineMode !== "legacy"
+      ? createAiBootOrchestrator({
+          repo: repository,
+          memberResolver: cardRepoDeps,
+          llmClient: llmConfigForAiBoot.enabled
+            ? new OpenAiCompatibleLlmScoringClient(llmConfigForAiBoot)
+            : undefined,
+          botOpenId: botOpenId || undefined,
+          feishuClient: feishuApiClient,
+          config: aiBootConfig,
+          now: () => new Date().toISOString(),
+          uuid: () => crypto.randomUUID(),
+        })
       : undefined;
 
   const wsRuntime = options?.wsRuntime ?? (feishuApiClient
@@ -269,6 +292,8 @@ export async function createApp(options?: {
               },
               chatBot,
               semanticScoring: readSemanticScoringConfig(process.env),
+              aiBootConfig,
+              aiBootOrchestrator,
             });
             await handler(message);
           } else {
@@ -413,6 +438,11 @@ export async function createApp(options?: {
         maxInputChars: llmConfig.maxInputChars,
         concurrency: llmConfig.concurrency
       },
+      aiBoot: {
+        engineMode: aiBootConfig.engineMode,
+        allowGroupPraise: aiBootConfig.allowGroupPraise,
+        allowDailyDigest: aiBootConfig.allowDailyDigest,
+      },
       groupMessageReadAccess: groupMessageReadProbe?.ok ?? null,
       groupMessageReadProbe
     };
@@ -423,6 +453,7 @@ export async function createApp(options?: {
   // ---------------------------------------------------------------------------
   const v2: V2Runtime = {
     repository,
+    aiBootConfig,
     ingestor: options?.ingestor ?? null,
     aggregator: options?.aggregator ?? null,
     periodLifecycle: options?.periodLifecycle ?? null,
@@ -444,6 +475,10 @@ export async function createApp(options?: {
   registerV2AdminReviewRoutes(app, v2);
   registerV2AdminMembersRoutes(app, v2);
   registerV2LlmStatusRoute(app, v2);
+  registerV3AiBootAdminRoutes(app, {
+    repository,
+    requireAdmin: requireAdmin(repository),
+  });
 
   // ---------------------------------------------------------------------------
   // Sub-project 2: Feishu card protocol

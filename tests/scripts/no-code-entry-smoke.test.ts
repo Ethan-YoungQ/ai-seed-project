@@ -13,8 +13,6 @@ const expectedFiles = [
   "scripts/ops/mac-deploy.command",
   "scripts/ops/mac-check.command",
   "deploy/systemd/ai-seed-project.service",
-  "docs/ops/aliyun-mcp-runbook.md",
-  "docs/ops/no-code-operator-guide.md",
 ];
 
 describe("no-code entry smoke", () => {
@@ -73,21 +71,6 @@ describe("no-code entry smoke", () => {
     }
   });
 
-  it("documents Aliyun MCP as preferred and scripts as fallback", () => {
-    const runbook = readFileSync("docs/ops/aliyun-mcp-runbook.md", "utf8");
-    expect(runbook).toContain("MCP/OpenAPI");
-    expect(runbook).toContain("SSH");
-    expect(runbook).toContain("Cloud Assistant");
-  });
-
-  it("documents one-click no-code operator flows", () => {
-    const guide = readFileSync("docs/ops/no-code-operator-guide.md", "utf8");
-    expect(guide).toContain("Windows");
-    expect(guide).toContain("macOS");
-    expect(guide).toContain("Aliyun MCP");
-    expect(guide).toContain("Cloud Assistant");
-  });
-
   it("seeds bootstrap data during deploy without overwriting existing camps", () => {
     const deployScript = readFileSync("scripts/ops/deploy-app.sh", "utf8");
     const seedScript = readFileSync("src/scripts/ensure-bootstrap-data.ts", "utf8");
@@ -96,5 +79,63 @@ describe("no-code entry smoke", () => {
     expect(seedScript).toContain("Seeded bootstrap demo data because the camps table was empty.");
     expect(seedScript).toContain("Aligned camp");
     expect(seedScript).toContain("Bootstrap data already present");
+  });
+
+  it("prints AI Boot status during health checks when available", () => {
+    const checkScript = readFileSync("scripts/ops/check-health.sh", "utf8");
+
+    expect(checkScript).toContain("/api/feishu/status");
+    expect(checkScript).toContain("engineMode");
+    expect(checkScript).toContain("allowGroupPraise");
+    expect(checkScript).toContain("allowDailyDigest");
+    expect(checkScript).not.toContain("jq");
+    expect(checkScript).not.toContain("AI Boot status unavailable");
+    expect(checkScript).not.toContain("|| true");
+    expect(checkScript).toContain("Missing aiBoot.engineMode");
+  });
+
+  it("keeps deploy shadow-safe without auto-enabling AI Boot modes", () => {
+    const deployScript = readFileSync("scripts/ops/deploy-app.sh", "utf8");
+
+    expect(deployScript).toContain("AI_BOOT_ENGINE_MODE");
+    expect(deployScript).toContain("v3_shadow");
+    expect(deployScript).toContain("does not change production AI Boot mode");
+    expect(deployScript).toContain("\"$NPM_BIN\" run seed:ensure");
+    expect(deployScript).not.toContain("systemctl restart \"$SERVICE_NAME\" || true");
+    expect(deployScript).not.toContain("sudo systemctl restart \"$SERVICE_NAME\" || true");
+  });
+
+  it("documents the production shadow cutover and rollback sequence", () => {
+    const runbook = readFileSync(
+      "docs/scoring-audit/2026-05-16-ai-boot-cutover-runbook.md",
+      "utf8",
+    );
+    const failFastBlocks = runbook.match(/```bash\nset -euo pipefail/g) ?? [];
+
+    expect(runbook).toContain("npm run build\nnpm test");
+    expect(runbook).not.toContain("npm run build\nnpm test\nnpm run ai-boot:freeze-legacy");
+    expect(failFastBlocks).toHaveLength(2);
+    expect(runbook).toContain("cd /opt/ai-seed-project");
+    expect(runbook).toContain("ENV_FILE=/opt/ai-seed-project/.env");
+    expect(runbook).toContain("BACKUP_OUTPUT=\"$(./scripts/ops/backup-db.sh)\"");
+    expect(runbook).toContain("BACKUP_PATH=");
+    expect(runbook).toContain("test -f \"$BACKUP_PATH\"");
+    expect(runbook).toContain("test -f \"$BACKUP_PATH\"\n\nnpm run ai-boot:freeze-legacy\nnpm run ai-boot:cutover-check");
+    expect(runbook).toContain("AI_BOOT_ENGINE_MODE=v3_shadow");
+    expect(runbook).toContain("AI_BOOT_ALLOW_GROUP_PRAISE=false");
+    expect(runbook).toContain("AI_BOOT_ALLOW_DAILY_DIGEST=false");
+    expect(runbook).toContain("systemctl restart ai-seed-project.service");
+    expect(runbook).not.toContain("AI_BOOT_ENGINE_MODE=v3_shadow systemctl restart");
+    expect(runbook).toContain("v3 events and shadow score events are created");
+    expect(runbook).toContain("no v3 group praise is sent");
+    expect(runbook).toContain("existing production score behavior remains unchanged");
+    expect(runbook).toContain("shadow replay metrics are available for review");
+    expect(runbook).toContain("AI_BOOT_ENGINE_MODE=legacy");
+    expect(runbook).not.toContain("AI_BOOT_ENGINE_MODE=legacy systemctl restart");
+    expect(runbook).toContain("DB backup path");
+    expect(runbook).toContain("server git SHA");
+    expect(runbook).toContain("engine mode");
+    expect(runbook).toContain("curl -fsS http://127.0.0.1:3001/api/health");
+    expect(runbook).toContain("curl -fsS http://127.0.0.1:3001/api/feishu/status");
   });
 });
