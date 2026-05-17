@@ -17,6 +17,28 @@ export interface CardActionResponse {
   card?: Record<string, unknown>;
 }
 
+interface NormalizedCardActionTrigger {
+  action: Record<string, any>;
+  operatorId: string;
+  messageId: string;
+  chatId: string;
+}
+
+export function normalizeCardActionTriggerData(data: unknown): NormalizedCardActionTrigger {
+  const raw = (data ?? {}) as any;
+  const event = raw?.event && typeof raw.event === "object" ? raw.event : raw;
+  const action = (event?.action ?? {}) as Record<string, any>;
+  const operator = event?.operator ?? {};
+  const context = event?.context ?? {};
+
+  return {
+    action,
+    operatorId: operator?.open_id ?? event?.open_id ?? raw?.open_id ?? "",
+    messageId: context?.open_message_id ?? event?.open_message_id ?? raw?.open_message_id ?? "",
+    chatId: context?.open_chat_id ?? event?.open_chat_id ?? raw?.open_chat_id ?? "",
+  };
+}
+
 export interface FeishuWsRuntime {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -90,11 +112,10 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
       },
 
       "card.action.trigger": async (data: unknown) => {
-        const d = data as any;
-        const action = d?.action ?? {};
-        const operator = d?.operator ?? {};
+        const normalizedAction = normalizeCardActionTriggerData(data);
+        const action = normalizedAction.action;
         const tag = action.tag ?? "";
-        const operatorId = operator?.open_id ?? d?.open_id ?? "";
+        const operatorId = normalizedAction.operatorId;
 
         // select_static: cache value, return undefined (plain ACK, no toast)
         if (tag === "select_static") {
@@ -140,8 +161,8 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
           actionName: action.name ?? "",
           actionValue,
           formValue: action.form_value,
-          messageId: d?.open_message_id ?? "",
-          chatId: d?.open_chat_id ?? "",
+          messageId: normalizedAction.messageId,
+          chatId: normalizedAction.chatId,
         };
 
         console.log(`[CardAction] Button: action="${input.actionName}", value=${JSON.stringify(input.actionValue).slice(0, 200)}`);

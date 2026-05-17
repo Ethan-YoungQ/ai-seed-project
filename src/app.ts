@@ -50,6 +50,11 @@ import {
 import type { DashboardPinState } from "./services/feishu/cards/templates/dashboard-pin-v1.js";
 import { manualAdjustConfirmHandler } from "./services/feishu/cards/handlers/manual-adjust-handler.js";
 import { memberMgmtConfirmHandler } from "./services/feishu/cards/handlers/member-mgmt-handler.js";
+import {
+  reviewApproveHandler,
+  reviewPageHandler,
+  reviewRejectHandler,
+} from "./services/feishu/cards/handlers/review-queue-handler.js";
 import { createChatEngine } from "./services/feishu/chat-bot/chat-engine.js";
 import { createConversationMemory } from "./services/feishu/chat-bot/conversation-memory.js";
 import { createRateLimiter } from "./services/feishu/chat-bot/rate-limiter.js";
@@ -600,6 +605,11 @@ export async function createApp(options?: {
   // 成员管理处理器
   cardDispatcher.register("member_mgmt", "member_mgmt_confirm", memberMgmtConfirmHandler);
 
+  // 审核队列处理器
+  cardDispatcher.register("review_queue", "review_approve", reviewApproveHandler);
+  cardDispatcher.register("review_queue", "review_reject", reviewRejectHandler);
+  cardDispatcher.register("review_queue", "review_page", reviewPageHandler);
+
   await app.register(feishuCardsPlugin, {
     dispatcher: cardDispatcher,
     currentVersion: currentVersionFor
@@ -609,8 +619,10 @@ export async function createApp(options?: {
   wsRuntime.setCardActionHandler(async (input) => {
     const actionValue = input.actionValue ?? {};
     const formValue = input.formValue ?? {};
-    const actionName = input.actionName ||
-      ((actionValue.action as string) ?? "");
+    const actionName =
+      (typeof actionValue.action === "string" && actionValue.action.trim())
+        ? actionValue.action
+        : input.actionName;
 
     console.log(`[CardAction:app] Received: action="${actionName}", formValue=${JSON.stringify(formValue)}, actionValue=${JSON.stringify(actionValue).slice(0, 200)}`);
 

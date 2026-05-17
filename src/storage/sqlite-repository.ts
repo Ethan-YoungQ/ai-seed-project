@@ -90,6 +90,36 @@ function buildBoardRanking(input: BuildBoardRankingInput): BoardRankingEntry[] {
     }));
 }
 
+function buildReviewTextExcerpt(
+  rawPromptText: unknown,
+  rawSourceRef: unknown
+): string {
+  const promptText =
+    rawPromptText === null || rawPromptText === undefined
+      ? ""
+      : String(rawPromptText);
+  const marker = '学员提交:\n"""';
+  let excerpt = promptText;
+  const markerIndex = promptText.indexOf(marker);
+  if (markerIndex >= 0) {
+    excerpt = promptText.slice(markerIndex + marker.length);
+    const closingIndex = excerpt.indexOf('\n"""');
+    if (closingIndex >= 0) {
+      excerpt = excerpt.slice(0, closingIndex);
+    }
+  }
+
+  excerpt = excerpt.replace(/\s+/g, " ").trim();
+  if (!excerpt) {
+    excerpt =
+      rawSourceRef === null || rawSourceRef === undefined
+        ? ""
+        : String(rawSourceRef).trim();
+  }
+  if (!excerpt) return "(无提交摘录)";
+  return excerpt.length > 120 ? excerpt.slice(0, 120) : excerpt;
+}
+
 // ---------------------------------------------------------------------------
 // Inlined from domain/warnings.ts (deleted as part of v1 legacy cleanup)
 // ---------------------------------------------------------------------------
@@ -708,6 +738,7 @@ export interface ReviewRequiredEventRow {
   sourceType: string;
   sourceRef: string;
   llmTaskId: string | null;
+  textExcerpt: string;
   /**
    * The `reason` field parsed out of the latest `llm_scoring_tasks.result_json`
    * for this event. `null` if no task is linked or the task has no parsed
@@ -1276,6 +1307,7 @@ export class SqliteRepository {
            e.source_type   AS source_type,
            e.source_ref    AS source_ref,
            e.llm_task_id   AS llm_task_id,
+           t.prompt_text    AS llm_prompt_text,
            t.result_json   AS llm_result_json,
            e.created_at    AS created_at
          FROM v2_scoring_item_events e
@@ -1343,6 +1375,7 @@ export class SqliteRepository {
         row.llm_task_id === null || row.llm_task_id === undefined
           ? null
           : String(row.llm_task_id),
+      textExcerpt: buildReviewTextExcerpt(row.llm_prompt_text, row.source_ref),
       llmReason,
       createdAt: String(row.created_at)
     };

@@ -10,6 +10,23 @@ export interface HomeworkCardState {
   submitterCount: number;
 }
 
+function singleButtonRow(button: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        weight: 1,
+        vertical_align: "center",
+        elements: [button],
+      },
+    ],
+  };
+}
+
 export function buildHomeworkSubmitCard(state: HomeworkCardState): FeishuCardJson {
   return {
     schema: "2.0",
@@ -23,17 +40,13 @@ export function buildHomeworkSubmitCard(state: HomeworkCardState): FeishuCardJso
           tag: "markdown",
           content: `**${state.title}**\n\n⏰ 截止时间：${state.deadline}\n👥 已提交：${state.submitterCount} 人`
         },
-        {
-          tag: "action",
-          actions: [
-            {
-              tag: "button",
-              text: { tag: "plain_text", content: "提交作业 📤" },
-              type: "primary",
-              value: { action: "homework_submit", sessionId: state.sessionId }
-            }
-          ]
-        }
+        singleButtonRow({
+          tag: "button",
+          name: "homework_submit",
+          text: { tag: "plain_text", content: "提交作业 📤" },
+          type: "primary",
+          value: { action: "homework_submit", sessionId: state.sessionId }
+        })
       ]
     }
   };

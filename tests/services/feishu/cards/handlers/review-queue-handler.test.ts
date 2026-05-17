@@ -40,6 +40,17 @@ function operatorMember(): MemberLite {
   };
 }
 
+function trainerMember(): MemberLite {
+  return {
+    id: "m-trainer-1",
+    displayName: "讲师甲",
+    roleType: "trainer",
+    isParticipant: false,
+    isExcludedFromBoard: true,
+    currentLevel: 0
+  };
+}
+
 function studentMember(): MemberLite {
   return {
     id: "m-stu-1",
@@ -140,6 +151,16 @@ describe("reviewApproveHandler", () => {
 
     expect(result.toast?.type).toBe("error");
     expect(deps.aggregator.applyDecision).not.toHaveBeenCalled();
+  });
+
+  test("trainer can approve because trainers can open the review queue card", async () => {
+    const deps = fakeDeps({}, trainerMember());
+    const ctx = fakeCtx({ actionPayload: { action: "review_approve", eventId: "evt-1" } });
+
+    const result = await reviewApproveHandler(ctx, deps);
+
+    expect(result.toast?.type).toBe("success");
+    expect(deps.aggregator.applyDecision).toHaveBeenCalledWith("evt-1", "approved");
   });
 
   test("double-review 409: InvalidDecisionStateError maps to error toast, does NOT throw", async () => {

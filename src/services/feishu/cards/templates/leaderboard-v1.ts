@@ -24,6 +24,23 @@ function renderRankLine(
   return `${medal} **${entry.displayName}** ${badge} · AQ ${entry.cumulativeAq}`;
 }
 
+function singleButtonRow(button: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        weight: 1,
+        vertical_align: "center",
+        elements: [button],
+      },
+    ],
+  };
+}
+
 export function buildLeaderboardCard(state: LeaderboardState): FeishuCardJson {
   const rankLines = state.topN.map((entry, i) => renderRankLine(i + 1, entry));
   const content = rankLines.join("\n");
@@ -43,17 +60,13 @@ export function buildLeaderboardCard(state: LeaderboardState): FeishuCardJson {
     });
   }
 
-  elements.push({
-    tag: "action",
-    actions: [
-      {
-        tag: "button",
-        text: { tag: "plain_text", content: "🔄 刷新排行榜" },
-        type: "default",
-        value: { action: "leaderboard_refresh" }
-      }
-    ]
-  });
+  elements.push(singleButtonRow({
+    tag: "button",
+    name: "leaderboard_refresh",
+    text: { tag: "plain_text", content: "🔄 刷新排行榜" },
+    type: "default",
+    value: { action: "leaderboard_refresh" }
+  }));
 
   return {
     schema: "2.0",

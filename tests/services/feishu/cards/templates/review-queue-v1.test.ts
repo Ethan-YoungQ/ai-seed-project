@@ -70,25 +70,31 @@ describe("review-queue-v1 template", () => {
     const state = makeState([event]);
     const card = buildReviewQueueCard(state);
 
-    const elements = card.body.elements;
-    const actionBlock = elements.find(
-      (el) =>
-        el.tag === "action" &&
-        Array.isArray(el.actions) &&
-        (el.actions as Array<Record<string, unknown>>).some(
-          (a) =>
-            typeof a.value === "object" &&
-            a.value !== null &&
-            (a.value as Record<string, unknown>).action === "review_approve"
+    const buttonRows = card.body.elements.filter((el) => el.tag === "column_set");
+    const buttons = buttonRows.flatMap((row) =>
+      ((row.columns as Array<Record<string, unknown>>) ?? []).flatMap((column) =>
+        ((column.elements as Array<Record<string, unknown>>) ?? []).filter(
+          (el) => el.tag === "button"
         )
+      )
     );
-    expect(actionBlock).toBeDefined();
-    const approveBtn = (actionBlock!.actions as Array<Record<string, unknown>>).find(
-      (a) =>
-        typeof a.value === "object" &&
-        (a.value as Record<string, unknown>).action === "review_approve"
+    const approveBtn = buttons.find(
+      (button) =>
+        typeof button.value === "object" &&
+        button.value !== null &&
+        (button.value as Record<string, unknown>).action === "review_approve"
     );
+    expect(approveBtn).toBeDefined();
     expect((approveBtn!.value as Record<string, unknown>).eventId).toBe(event.eventId);
+  });
+
+  test("uses schema 2.0 column_set button rows instead of deprecated action tag", () => {
+    const state = makeState([makeEvent(1)], 2, 3, 25);
+    const card = buildReviewQueueCard(state);
+
+    expect(card.schema).toBe("2.0");
+    expect(card.body.elements.some((el) => el.tag === "action")).toBe(false);
+    expect(card.body.elements.some((el) => el.tag === "column_set")).toBe(true);
   });
 
   test("pagination prev/next buttons appear when totalPages > 1", () => {

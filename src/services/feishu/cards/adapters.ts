@@ -94,11 +94,29 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
       r.updateLiveCardState(id, stateJson, patchedAt);
     },
 
+    listReviewRequiredEvents: async (opts) => {
+      const campId = r.getDefaultCampId() ?? "default";
+      const rows = r.listReviewRequiredEvents({
+        campId,
+        limit: opts?.limit ?? 10,
+        offset: opts?.offset ?? 0,
+      });
+      return rows.map((row) => ({
+        eventId: row.eventId,
+        memberId: row.memberId,
+        memberName: row.memberName,
+        itemCode: row.itemCode,
+        scoreDelta: row.scoreDelta,
+        textExcerpt: row.textExcerpt,
+        llmReason: row.llmReason ?? "暂无 LLM 理由",
+        createdAt: row.createdAt,
+      }));
+    },
+
     // Remaining methods — partially implemented
     insertLiveCard: notImpl,
     closeLiveCard: notImpl,
     findEventById: notImpl,
-    listReviewRequiredEvents: notImpl,
 
     listPriorQuizSelections: async (memberId: string, questionId: string) => {
       try {

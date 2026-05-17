@@ -143,8 +143,12 @@ export const feishuCardsPlugin: FastifyPluginAsync<FeishuCardsPluginOptions> =
         }
       }
       const { event } = parsed.data;
-      const actionName = event.action.name;
       const actionValue = event.action.value;
+      const embeddedAction = actionValue["action"];
+      const actionName =
+        typeof embeddedAction === "string" && embeddedAction.trim().length > 0
+          ? embeddedAction
+          : event.action.name;
 
       const cardType = resolveCardType(actionName, actionValue);
       if (!cardType) {

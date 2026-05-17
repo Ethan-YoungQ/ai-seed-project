@@ -25,6 +25,23 @@ export interface LlmDecisionCardState {
   decidedAt: string;
 }
 
+function singleButtonRow(button: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: [
+      {
+        tag: "column",
+        width: "weighted",
+        weight: 1,
+        vertical_align: "center",
+        elements: [button],
+      },
+    ],
+  };
+}
+
 // ============================================================================
 // Card builder
 // ============================================================================
@@ -58,17 +75,13 @@ export function buildLlmDecisionCard(
   ];
 
   if (!isApproved) {
-    elements.push({
-      tag: "action",
-      actions: [
-        {
-          tag: "button",
-          text: { tag: "plain_text", content: "我要申诉" },
-          type: "danger",
-          value: { action: "llm_decision_appeal", eventId: state.eventId }
-        }
-      ]
-    });
+    elements.push(singleButtonRow({
+      tag: "button",
+      name: "llm_decision_appeal",
+      text: { tag: "plain_text", content: "我要申诉" },
+      type: "danger",
+      value: { action: "llm_decision_appeal", eventId: state.eventId }
+    }));
   }
 
   return {

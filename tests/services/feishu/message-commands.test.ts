@@ -286,6 +286,154 @@ describe("message-commands chat bot recent context", () => {
   });
 });
 
+describe("message-commands operator command routing", () => {
+  function buildDeps(
+    overrides: Partial<MessageCommandDeps> = {},
+  ): MessageCommandDeps {
+    const repo = {
+      findMemberByOpenId: vi.fn().mockReturnValue({
+        id: "operator-001",
+        displayName: "运营员",
+        roleType: "operator",
+        isParticipant: false,
+        isExcludedFromBoard: true,
+        currentLevel: 1,
+      }),
+      countReviewRequiredEvents: vi.fn().mockResolvedValue(1),
+      listReviewRequiredEvents: vi.fn().mockResolvedValue([
+        {
+          eventId: "evt-review-001",
+          memberId: "member-001",
+          memberName: "学员甲",
+          itemCode: "H2",
+          scoreDelta: 3,
+          textExcerpt: "我用 AI 生成了客户沟通图片并分享了复盘。",
+          llmReason: "需要人工确认图片内容是否满足实操分享",
+          createdAt: "2026-05-17T08:00:00.000Z",
+        },
+      ]),
+    };
+
+    return {
+      feishuClient: {
+        sendTextMessage: vi.fn().mockResolvedValue({ messageId: "msg-id" }),
+        sendCardMessage: vi.fn().mockResolvedValue({ messageId: "card-id" }),
+      } as any,
+      lifecycle: {
+        getActivePeriod: vi.fn().mockResolvedValue({ number: 2, id: "p2" }),
+        getActiveWindow: vi.fn().mockResolvedValue({ code: "W1", settlementState: "open" }),
+        countMembers: vi.fn().mockResolvedValue({ total: 18, activeStudents: 15 }),
+      } as any,
+      cardDeps: { repo } as any,
+      memberListProvider: {
+        listAllMembers: vi.fn(() => [
+          {
+            id: "operator-001",
+            displayName: "运营员",
+            roleType: "operator",
+            isParticipant: false,
+            isExcludedFromBoard: true,
+            currentLevel: 1,
+          },
+          {
+            id: "member-001",
+            displayName: "学员甲",
+            roleType: "student",
+            isParticipant: true,
+            isExcludedFromBoard: false,
+            currentLevel: 2,
+          },
+        ]),
+      } as any,
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: {
+          reply: vi.fn().mockResolvedValue({
+            replyText: "这是聊天回复。",
+            used: "llm",
+            latencyMs: 1,
+          }),
+        },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+      ...overrides,
+    };
+  }
+
+  it("routes @Bot 管理 to the admin card instead of chat reply", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 管理",
+      cleanedText: "管理",
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    expect(JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson))
+      .toContain("管理员面板");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
+  it("routes @Bot 审核 to the review queue card instead of chat reply", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 审核",
+      cleanedText: "审核",
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.cardDeps.repo.listReviewRequiredEvents).toHaveBeenCalledWith({
+      limit: 10,
+      offset: 0,
+    });
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain("复核队列");
+    expect(cardJson).toContain("学员甲");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
+  it("routes bare 审核 to the review queue card", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({ rawText: "审核", cleanedText: "审核" }));
+
+    expect(deps.cardDeps.repo.listReviewRequiredEvents).toHaveBeenCalledWith({
+      limit: 10,
+      offset: 0,
+    });
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    expect(deps.chatBot?.contextProvider?.record).not.toHaveBeenCalled();
+  });
+
+  it("routes 成员管理 to member management, not the generic admin panel", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 成员管理",
+      cleanedText: "成员管理",
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.memberListProvider?.listAllMembers).toHaveBeenCalledOnce();
+    expect(deps.lifecycle.countMembers).not.toHaveBeenCalled();
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain("成员管理");
+    expect(cardJson).toContain("学员甲");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+});
+
 describe("message-commands AI Boot v3 routing", () => {
   function buildDeps(
     overrides: Partial<MessageCommandDeps> = {},

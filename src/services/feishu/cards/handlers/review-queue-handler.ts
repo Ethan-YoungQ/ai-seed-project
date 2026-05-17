@@ -6,7 +6,7 @@
  *   review_reject   — reject a review_required event
  *   review_page     — load page N from the review queue
  *
- * All actions require operator role.
+ * All actions require operator or trainer role.
  */
 
 import { InvalidDecisionStateError } from "../../../../domain/v2/errors.js";
@@ -29,7 +29,7 @@ const PAGE_SIZE = 10;
 // Helpers
 // ============================================================================
 
-function requireOperator(
+function requireOperatorOrTrainer(
   deps: CardHandlerDeps,
   openId: string
 ): CardActionResult | null {
@@ -37,8 +37,8 @@ function requireOperator(
   if (!member) {
     return { toast: { type: "error", content: "未找到对应成员,请联系管理员" } };
   }
-  if (member.roleType !== "operator") {
-    return { toast: { type: "error", content: "仅运营人员可执行此操作" } };
+  if (member.roleType !== "operator" && member.roleType !== "trainer") {
+    return { toast: { type: "error", content: "仅运营或讲师可执行此操作" } };
   }
   return null;
 }
@@ -64,7 +64,7 @@ export const reviewApproveHandler: CardHandler = async (
   ctx: CardActionContext,
   deps: CardHandlerDeps
 ): Promise<CardActionResult> => {
-  const denied = requireOperator(deps, ctx.operatorOpenId);
+  const denied = requireOperatorOrTrainer(deps, ctx.operatorOpenId);
   if (denied) return denied;
 
   const eventId = ctx.actionPayload.eventId;
@@ -107,7 +107,7 @@ export const reviewRejectHandler: CardHandler = async (
   ctx: CardActionContext,
   deps: CardHandlerDeps
 ): Promise<CardActionResult> => {
-  const denied = requireOperator(deps, ctx.operatorOpenId);
+  const denied = requireOperatorOrTrainer(deps, ctx.operatorOpenId);
   if (denied) return denied;
 
   const eventId = ctx.actionPayload.eventId;
@@ -150,7 +150,7 @@ export const reviewPageHandler: CardHandler = async (
   ctx: CardActionContext,
   deps: CardHandlerDeps
 ): Promise<CardActionResult> => {
-  const denied = requireOperator(deps, ctx.operatorOpenId);
+  const denied = requireOperatorOrTrainer(deps, ctx.operatorOpenId);
   if (denied) return denied;
 
   const pageRaw = ctx.actionPayload.page;

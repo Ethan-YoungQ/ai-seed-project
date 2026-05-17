@@ -133,19 +133,17 @@ describe("feishuCardsPlugin routes", () => {
 
   test("POST /api/v2/feishu/card-action resolves card type from action.value.action fallback", async () => {
     const app = await buildApp();
-    // When action name has no known prefix, fallback checks action.value.action field.
-    // "bare_action" has no prefix match → fallback to action.value.action = "quiz_submit"
-    // → resolves to cardType "quiz". The handler is registered for ("quiz", "bare_action")
-    // which doesn't exist so we get a toast error — but the card TYPE was resolved correctly
-    // (400 would only happen if cardType is truly unresolvable).
+    // Feishu may send a component name that is unique per button. The routing
+    // action is the stable action.value.action field; dispatch must use that
+    // canonical action name, not the component name.
     const response = await app.inject({
       method: "POST",
       url: "/api/v2/feishu/card-action",
-      payload: makeCardActionPayload("bare_action", { action: "quiz_submit" })
+      payload: makeCardActionPayload("quiz_select_q1_a1", { action: "quiz_submit" })
     });
-    // cardType resolves via fallback → reaches dispatcher → unknown action → toast error
     expect(response.statusCode).toBe(200);
-    expect(response.json().toast?.type).toBe("error");
+    expect(response.json().card?.type).toBe("raw");
+    expect(response.json().card?.data?.schema).toBe("2.0");
     await app.close();
   });
 

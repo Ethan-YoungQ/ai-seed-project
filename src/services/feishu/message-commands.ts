@@ -25,6 +25,7 @@ import {
   buildDashboardPinCard,
   type DashboardPinState,
 } from "./cards/templates/dashboard-pin-v1.js";
+import { buildReviewQueueCard } from "./cards/templates/review-queue-v1.js";
 import { buildManualAdjustCard, type ManualAdjustState } from "./cards/templates/manual-adjust-v1.js";
 import { buildMemberMgmtCard, type MemberMgmtState } from "./cards/templates/member-mgmt-v1.js";
 import type { ChatEngine } from "./chat-bot/chat-engine.js";
@@ -55,11 +56,13 @@ import type { AiBootOrchestrator } from "./ai-boot/orchestrator.js";
 
 /** Keywords that trigger the admin panel card */
 const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
+const REVIEW_QUEUE_KEYWORDS = ["审核", "审核队列", "待审核", "复核", "复核队列"];
 const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
 const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
 const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板", "天梯榜"];
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
 const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
+const REVIEW_QUEUE_PAGE_SIZE = 10;
 
 /**
  * 清洗指令文本：去除 @mention、全角/半角空格、零宽字符、标点符号
@@ -150,38 +153,22 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
     // Only process group chat messages (not DMs)
     if (message.chatType !== "group") return;
 
-    const chatContextProvider = deps.chatBot?.contextProvider ?? defaultRecentChatContextProvider;
     const isChatBotMention = Boolean(
       deps.chatBot &&
       message.mentionedBotIds.includes(deps.chatBot.botOpenId) &&
       message.messageType === "text"
     );
-    if (deps.chatBot && !isChatBotMention) {
-      chatContextProvider.record(message);
-    }
 
-    // 第 0 步：@Bot 问答分支（最高优先级，return 后不走评分）
-    // handleChatBotMention 内部 fire-and-forget，handler 立即返回
-    if (isChatBotMention) {
-      // 排行榜关键词走卡片推送，不走 chatbot
-      const cleaned = cleanCommandText(message.rawText);
-      if (DASHBOARD_KEYWORDS.some((kw) => cleaned.includes(kw))) {
-        console.log(`[MsgHandler] → DASHBOARD_PIN (via @Bot)`);
-        await handleDashboardPinTrigger(message, deps);
-      } else {
-        handleChatBotMention(message, deps);
-      }
-      return;
-    }
-
-    // Trainer/admin keyword triggers: text OR post messages
+    // Trainer/admin keyword triggers: text OR post messages.
+    // These must run before @Bot chat; otherwise "@Bot 管理/审核" is consumed
+    // as a generic question and never sends the operational card.
     if (message.messageType === "text" || message.messageType === "post") {
-      const text = cleanCommandText(message.rawText);
+      const text = cleanCommandText(message.cleanedText || message.rawText);
       console.log(`[MsgHandler] cmd match: raw="${message.rawText.slice(0, 80)}" → cleaned="${text}"`);
 
-      if (ADMIN_PANEL_KEYWORDS.some((kw) => text.includes(kw))) {
-        console.log(`[MsgHandler] → ADMIN_PANEL`);
-        await handleAdminPanelTrigger(message, deps);
+      if (REVIEW_QUEUE_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → REVIEW_QUEUE`);
+        await handleReviewQueueTrigger(message, deps);
         return;
       }
       if (QUIZ_KEYWORDS.some((kw) => text.includes(kw))) {
@@ -205,6 +192,28 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
         await handleMemberMgmtTrigger(message, deps);
         return;
       }
+      if (ADMIN_PANEL_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → ADMIN_PANEL`);
+        await handleAdminPanelTrigger(message, deps);
+        return;
+      }
+      if (isChatBotMention && DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
+        console.log(`[MsgHandler] → DASHBOARD_PIN (via @Bot)`);
+        await handleDashboardPinTrigger(message, deps);
+        return;
+      }
+    }
+
+    const chatContextProvider = deps.chatBot?.contextProvider ?? defaultRecentChatContextProvider;
+    if (deps.chatBot && !isChatBotMention) {
+      chatContextProvider.record(message);
+    }
+
+    // @Bot chat branch. handleChatBotMention runs fire-and-forget; handler returns
+    // immediately so Feishu does not retry slow LLM responses.
+    if (isChatBotMention) {
+      handleChatBotMention(message, deps);
+      return;
     }
 
     // Auto-capture: ALL message types (text, image, file, media, sticker)
@@ -846,6 +855,51 @@ async function handleAdminPanelTrigger(
       cardJson: cardJson as unknown as Record<string, unknown>,
     });
     console.log("[AdminPanel] Card sent");
+  }
+}
+
+// ============================================================================
+// Review queue trigger
+// ============================================================================
+
+async function handleReviewQueueTrigger(
+  message: NormalizedFeishuMessage,
+  deps: MessageCommandDeps,
+): Promise<void> {
+  const member = deps.cardDeps.repo.findMemberByOpenId(message.memberId);
+  if (!member || (member.roleType !== "operator" && member.roleType !== "trainer")) {
+    console.log("[ReviewQueue] Denied: not operator/trainer");
+    return;
+  }
+  if (!message.chatId) return;
+
+  try {
+    const [events, totalEvents] = await Promise.all([
+      deps.cardDeps.repo.listReviewRequiredEvents({
+        limit: REVIEW_QUEUE_PAGE_SIZE,
+        offset: 0,
+      }),
+      deps.cardDeps.repo.countReviewRequiredEvents(),
+    ]);
+    const cardJson = buildReviewQueueCard({
+      currentPage: 1,
+      totalPages: Math.max(1, Math.ceil(totalEvents / REVIEW_QUEUE_PAGE_SIZE)),
+      totalEvents,
+      events,
+    });
+
+    await deps.feishuClient.sendCardMessage({
+      chatId: message.chatId,
+      cardJson: cardJson as unknown as Record<string, unknown>,
+    });
+    console.log(`[ReviewQueue] Card sent, total=${totalEvents}`);
+  } catch (err) {
+    console.error("[ReviewQueue] Error:", err);
+    await deps.feishuClient.sendTextMessage({
+      receiveId: message.chatId,
+      receiveIdType: "chat_id",
+      text: "⚠️ 审核队列发送失败，请稍后重试",
+    });
   }
 }
 

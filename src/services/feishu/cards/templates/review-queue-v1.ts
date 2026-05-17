@@ -4,6 +4,8 @@
  * Renders a paginated list of review_required events with approve/reject
  * buttons per row. Orange header, up to 10 rows per page, prev/next
  * pagination controls.
+ *
+ * Schema 2.0 note: button rows use column_set, not the deprecated "action" tag.
  */
 
 import type { FeishuCardJson, ReviewQueueState, ReviewQueueEventRow } from "../types.js";
@@ -21,6 +23,25 @@ export { type ReviewQueueState };
 // Internal helpers
 // ============================================================================
 
+function buttonColumn(button: Record<string, unknown>): Record<string, unknown> {
+  return {
+    tag: "column",
+    width: "weighted",
+    weight: 1,
+    vertical_align: "center",
+    elements: [button],
+  };
+}
+
+function buttonRow(buttons: Array<Record<string, unknown>>): Record<string, unknown> {
+  return {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: buttons.map(buttonColumn),
+  };
+}
+
 function buildEventRow(event: ReviewQueueEventRow): Array<Record<string, unknown>> {
   const excerpt =
     event.textExcerpt.length > 40
@@ -36,23 +57,22 @@ function buildEventRow(event: ReviewQueueEventRow): Array<Record<string, unknown
         `LLM理由: ${event.llmReason}`
       ].join("\n")
     },
-    {
-      tag: "action",
-      actions: [
-        {
-          tag: "button",
-          text: { tag: "plain_text", content: "✅ 通过" },
-          type: "primary",
-          value: { action: "review_approve", eventId: event.eventId }
-        },
-        {
-          tag: "button",
-          text: { tag: "plain_text", content: "❌ 拒绝" },
-          type: "danger",
-          value: { action: "review_reject", eventId: event.eventId }
-        }
-      ]
-    }
+    buttonRow([
+      {
+        tag: "button",
+        name: "review_approve",
+        text: { tag: "plain_text", content: "✅ 通过" },
+        type: "primary",
+        value: { action: "review_approve", eventId: event.eventId }
+      },
+      {
+        tag: "button",
+        name: "review_reject",
+        text: { tag: "plain_text", content: "❌ 拒绝" },
+        type: "danger",
+        value: { action: "review_reject", eventId: event.eventId }
+      }
+    ])
   ];
 }
 
@@ -62,19 +82,21 @@ function buildPaginationRow(
 ): Record<string, unknown> | null {
   if (totalPages <= 1) return null;
 
-  const actions: Array<Record<string, unknown>> = [];
+  const buttons: Array<Record<string, unknown>> = [];
 
   if (currentPage > 1) {
-    actions.push({
+    buttons.push({
       tag: "button",
+      name: "review_page",
       text: { tag: "plain_text", content: "◀ 上一页" },
       type: "default",
       value: { action: "review_page", page: currentPage - 1 }
     });
   }
 
-  actions.push({
+  buttons.push({
     tag: "button",
+    name: "review_page",
     text: {
       tag: "plain_text",
       content: `第 ${currentPage} / ${totalPages} 页`
@@ -84,15 +106,16 @@ function buildPaginationRow(
   });
 
   if (currentPage < totalPages) {
-    actions.push({
+    buttons.push({
       tag: "button",
+      name: "review_page",
       text: { tag: "plain_text", content: "下一页 ▶" },
       type: "default",
       value: { action: "review_page", page: currentPage + 1 }
     });
   }
 
-  return { tag: "action", actions };
+  return buttonRow(buttons);
 }
 
 // ============================================================================
