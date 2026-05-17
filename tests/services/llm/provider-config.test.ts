@@ -98,7 +98,7 @@ describe("readLlmProviderConfig", () => {
 
     expect(config.provider).toBe("aliyun");
     expect(config.baseUrl).toBe("https://dashscope.aliyuncs.com/compatible-mode/v1");
-    expect(config.textModel).toBe("qwen3-flash");
+    expect(config.textModel).toBe("qwen3.5-flash");
     expect(config.fileModel).toBe("qwen-doc");
     expect(config.fileExtractor).toBe("openai_file_chat");
     expect(config.fileParserToolType).toBe("lite");
