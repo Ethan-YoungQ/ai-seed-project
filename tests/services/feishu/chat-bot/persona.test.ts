@@ -14,9 +14,16 @@ describe("buildPraisePrompt", () => {
     expect(prompt).not.toMatch(/该学员|展示|表现.*良好|值得表扬/i);
   });
 
-  it("instructs the bot to use internet-style praise", () => {
+  it("instructs the bot to use grounded operational praise", () => {
     const prompt = buildPraisePrompt("学员", ["C1"], 5);
-    expect(prompt).toMatch(/网感|彩虹屁|绝绝子|yyds|天花板|杀疯了|封神|拿捏|这波操作|秀/i);
+    expect(prompt).toMatch(/运营助教|具体亮点|学习价值|下一步/i);
+    expect(prompt).toMatch(/图片、流程、复盘、失败经验、工具用法、同伴答疑/);
+  });
+
+  it("bans high-repeat slang from proactive praise instructions", () => {
+    const prompt = buildPraisePrompt("学员", ["C1"], 5);
+    expect(prompt).toMatch(/禁止使用/);
+    expect(prompt).toMatch(/绝绝子、yyds、天花板、杀疯了、封神、拿捏、炸场、卷王、含金量拉满/);
   });
 
   it("does not pressure students to share prompts for image or artifact praise", () => {

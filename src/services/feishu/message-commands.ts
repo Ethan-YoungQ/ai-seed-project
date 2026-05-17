@@ -681,12 +681,12 @@ export function buildFallbackPraiseText(
 ): string {
   const focus = inferMessageFocus(rawText, highlights);
   const templates = [
-    `@${displayName} 这份${focus}有点炸场，关键思路被你拿捏住了，${totalScore} 分含金量拉满 🔥`,
-    `@${displayName} ${focus}这波太会了！有行动、有复盘、有分享，${totalScore} 分直接封神 👏`,
-    `@${displayName} 这次${focus}不是随便交差，细节和落地感都在线，${totalScore} 分很硬核！`,
-    `@${displayName} ${focus}的亮点很清楚，能把想法讲到可执行，这波 ${totalScore} 分拿得漂亮 ✨`,
-    `@${displayName} 你这段${focus}像把思路开了倍速，重点抓得准，${totalScore} 分稳稳入账！`,
-    `@${displayName} 这波${focus}有梗也有料，既能落地又能启发同学，${totalScore} 分实至名归！`,
+    `@${displayName} 这份${focus}把关键步骤讲清楚了，别人能顺着复用，${totalScore} 分记录下来。`,
+    `@${displayName} 这次${focus}有具体场景也有过程，学习价值比较明确，${totalScore} 分入账。`,
+    `@${displayName} 这段${focus}不是只晒结果，还补了思路和判断，${totalScore} 分给到位。`,
+    `@${displayName} ${focus}的亮点在于可执行，后面再补一点复盘会更完整，${totalScore} 分。`,
+    `@${displayName} 你把${focus}说到了能落地的层面，这种分享对同学有参考价值，${totalScore} 分。`,
+    `@${displayName} 这条${focus}信息量够，既有动作也有产出，${totalScore} 分先记上。`,
   ];
   return templates[stableIndex(seed || `${displayName}:${totalScore}:${rawText}`, templates.length)];
 }

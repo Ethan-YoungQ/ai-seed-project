@@ -828,6 +828,53 @@ describe("SqliteRepository v2 scoring_item_events", () => {
 
     repo.close();
   });
+
+  test("listReviewRequiredEvents falls back to member.name when display_name is empty", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "fallback-member";
+    const periodId = `period-${campId}-2`;
+
+    repo.ensureMember(memberId, campId);
+    repo.updateMember(memberId, { displayName: "" });
+    const member = repo.getMember(memberId);
+    expect(member?.name).toBeTruthy();
+    expect(member?.displayName).toBe("");
+
+    repo.insertPeriod({
+      id: periodId,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    });
+
+    repo.insertScoringItemEvent({
+      id: randomUUID(),
+      memberId,
+      periodId,
+      itemCode: "K3",
+      dimension: "K",
+      scoreDelta: 3,
+      sourceType: "message",
+      sourceRef: "msg-k3-001",
+      status: "review_required",
+      llmTaskId: null,
+      createdAt: "2026-04-11T12:00:00.000Z",
+      decidedAt: null
+    });
+
+    const queue = repo.listReviewRequiredEvents({ campId, limit: 10, offset: 0 });
+    expect(queue).toHaveLength(1);
+    expect(queue[0].memberName).toBe(member?.name);
+    expect(queue[0].memberName).not.toBe("");
+
+    repo.close();
+  });
 });
 
 describe("SqliteRepository v2 member_dimension_scores", () => {

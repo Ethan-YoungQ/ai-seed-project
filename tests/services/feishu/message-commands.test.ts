@@ -130,7 +130,8 @@ describe("message-commands fallback praise", () => {
     // Verify praise contains a score value
     expect(praiseText).toMatch(/(\d+) 分/);
     expect(praiseText.length).toBeLessThanOrEqual(120);
-    expect(praiseText).toMatch(/AI|prompt|链接|分享|实战|作品|作业|流程|亮点|脑洞|拿捏|封神|炸场|绝|秀|硬核/i);
+    expect(praiseText).toMatch(/AI|prompt|链接|分享|实战|作品|作业|流程|亮点|步骤|复用|复盘|价值|入账/i);
+    expect(praiseText).not.toMatch(/绝绝子|yyds|天花板|杀疯|封神|拿捏|炸场|卷王|含金量拉满/i);
     expect(praiseText).not.toContain("多个维度全面开花");
 
     // Verify praise sends to the correct group chat (not a DM)
@@ -142,7 +143,7 @@ describe("message-commands fallback praise", () => {
 
   it("uses LLM-generated praise after semantic scoring accepts a high-score contribution", async () => {
     vi.setSystemTime(new Date("2026-04-29T12:03:00Z"));
-    const chat = vi.fn().mockResolvedValue("@测试学员 这份 AI 流程设计太会抓重点了，业务痛点被你一把拿捏，6 分含金量拉满！");
+    const chat = vi.fn().mockResolvedValue("@测试学员 这份 AI 流程设计抓住了业务痛点，也有清楚的执行路径，后面补一段复盘会更完整。");
     const deps = buildDeps({
       semanticScoring: {
         enabled: true,
@@ -178,6 +179,7 @@ describe("message-commands fallback praise", () => {
     );
     expect(praiseCalls.length).toBe(1);
     expect(praiseCalls[0][0].text).toContain("业务痛点");
+    expect(praiseCalls[0][0].text).not.toMatch(/绝绝子|yyds|天花板|杀疯|封神|拿捏|炸场|卷王|含金量拉满/i);
     expect(praiseCalls[0][0].replyMessageId).toBeUndefined();
   });
 

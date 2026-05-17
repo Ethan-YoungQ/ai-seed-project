@@ -1299,7 +1299,11 @@ export class SqliteRepository {
         `SELECT
            e.id            AS event_id,
            e.member_id     AS member_id,
-           m.display_name  AS member_name,
+           CASE
+             WHEN TRIM(COALESCE(m.display_name, '')) != '' THEN m.display_name
+             WHEN TRIM(COALESCE(m.name, '')) != '' THEN m.name
+             ELSE '(未知学员)'
+           END             AS member_name,
            e.period_id     AS period_id,
            e.item_code     AS item_code,
            e.dimension     AS dimension,
@@ -1358,7 +1362,7 @@ export class SqliteRepository {
       }
     }
     const memberName =
-      row.member_name === null || row.member_name === undefined
+      row.member_name === null || row.member_name === undefined || String(row.member_name).trim() === ""
         ? "(未知学员)"
         : String(row.member_name);
     return {
