@@ -37,6 +37,20 @@ describe("continuous promotion", () => {
     });
   });
 
+  it("does not promote through the Lv2 main path when 24 AQ has no C/S/G signal", () => {
+    expect(evaluateContinuousPromotion({
+      currentLevel: 1,
+      cumulativeAq: 24,
+      dimensions: { K: 12, H: 12, C: 0, S: 0, G: 0 },
+    })).toEqual({
+      promoted: false,
+      fromLevel: 1,
+      toLevel: 1,
+      threshold: 32,
+      cumulativeAq: 24,
+    });
+  });
+
   it("promotes Lv1 students through the Lv2 strong-practice path with 32 AQ and one 8-point dimension", () => {
     expect(evaluateContinuousPromotion({
       currentLevel: 1,
@@ -50,6 +64,20 @@ describe("continuous promotion", () => {
     });
   });
 
+  it("does not promote through the Lv2 strong-practice path when 32 AQ has no 8-point dimension or C/S/G signal", () => {
+    expect(evaluateContinuousPromotion({
+      currentLevel: 1,
+      cumulativeAq: 32,
+      dimensions: { K: 7, H: 7, C: 0, S: 0, G: 0 },
+    })).toEqual({
+      promoted: false,
+      fromLevel: 1,
+      toLevel: 1,
+      threshold: 32,
+      cumulativeAq: 32,
+    });
+  });
+
   it("promotes Lv1 students through the Lv2 multidimensional path with 20 AQ, two 5-point dimensions, and one C/S/G dimension", () => {
     expect(evaluateContinuousPromotion({
       currentLevel: 1,
@@ -60,6 +88,20 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 2,
       threshold: 32,
+    });
+  });
+
+  it("does not promote through the Lv2 multidimensional path with fewer than two 5-point dimensions", () => {
+    expect(evaluateContinuousPromotion({
+      currentLevel: 1,
+      cumulativeAq: 20,
+      dimensions: { K: 4, H: 4, C: 5, S: 4, G: 3 },
+    })).toEqual({
+      promoted: false,
+      fromLevel: 1,
+      toLevel: 1,
+      threshold: 32,
+      cumulativeAq: 20,
     });
   });
 
