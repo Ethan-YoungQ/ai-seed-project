@@ -512,6 +512,41 @@ describe("message-commands operator command routing", () => {
     expect(cardJson).toContain("学员甲");
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
   });
+
+  it("routes 调分 to the manual adjust card", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 调分",
+      cleanedText: "调分",
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.memberListProvider?.listAllMembers).toHaveBeenCalledOnce();
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain("手动调分");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
+  it("routes @Bot 排行榜 to the dashboard card", async () => {
+    const deps = buildDeps({
+      dashboardPin: { dashboardUrl: "https://orz.md/dashboard/" },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 排行榜",
+      cleanedText: "排行榜",
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain("https://orz.md/dashboard/");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
 });
 
 describe("message-commands operations intent routing", () => {
@@ -583,6 +618,44 @@ describe("message-commands operations intent routing", () => {
     vi.useRealTimers();
   });
 
+  it("recognizes each score opt-out phrase without entering chat or auto-capture", async () => {
+    for (const phrase of ["不用加分", "纯瞎聊"]) {
+      const reply = vi.fn().mockResolvedValue({
+        replyText: "闲聊回复",
+        used: "llm",
+        latencyMs: 1,
+      });
+      const ingestor = { ingest: vi.fn().mockReturnValue({ accepted: true }) };
+      const deps: MessageCommandDeps = {
+        feishuClient: {
+          sendTextMessage: vi.fn().mockResolvedValue({ messageId: "msg-id" }),
+          sendCardMessage: vi.fn().mockResolvedValue({ messageId: "card-id" }),
+        } as any,
+        lifecycle: {} as any,
+        cardDeps: { repo: { findMemberByOpenId: vi.fn() } } as any,
+        ingestor,
+        chatBot: {
+          botOpenId: "ou_bot",
+          engine: { reply },
+          contextProvider: {
+            record: vi.fn(),
+            resolveMentionContext: vi.fn().mockResolvedValue([]),
+          },
+        },
+      };
+      const handler = createMessageCommandHandler(deps);
+
+      await handler(makeMsg({
+        rawText: `@_user_1 ${phrase}`,
+        cleanedText: phrase,
+        mentionedBotIds: ["ou_bot"],
+      }));
+
+      expect(reply).not.toHaveBeenCalled();
+      expect(ingestor.ingest).not.toHaveBeenCalled();
+    }
+  });
+
   it("separates score candidates from learner questions", () => {
     expect(classifyOperationsIntent(makeMsg({
       messageType: "image",
@@ -603,6 +676,22 @@ describe("message-commands operations intent routing", () => {
     expect(classifyOperationsIntent(makeMsg({
       rawText: "@_user_1 怎么提交作业？规则是什么",
       cleanedText: "怎么提交作业？规则是什么",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "learner_qa",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 帮我看下这个作业",
+      cleanedText: "帮我看下这个作业",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "learner_qa",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 分享一下优秀案例",
+      cleanedText: "分享一下优秀案例",
       mentionedBotIds: ["ou_bot"],
     }), { botOpenId: "ou_bot" })).toMatchObject({
       kind: "learner_qa",

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  buildOperationsDigest,
   buildGroupPromotionDigest,
   buildOperatorDigest,
   type OperationsDigestInput,
@@ -66,6 +67,30 @@ describe("operations digest", () => {
     expect(digest.text).not.toContain("om-poster-1");
   });
 
+  it("calculates Lv1 near-promotion gaps using the relaxed continuous promotion paths", () => {
+    const digest = buildGroupPromotionDigest(input({
+      ranking: [
+        {
+          memberId: "m-csg",
+          memberName: "有实践信号",
+          currentLevel: 1,
+          cumulativeAq: 23,
+          dimensions: { K: 10, H: 10, C: 3, S: 0, G: 0 },
+        },
+      ],
+      suspectedMissedScores: [],
+      slowImageTasks: [],
+    }));
+
+    expect(digest.shouldSend).toBe(true);
+    expect(digest.nearPromotions[0]).toMatchObject({
+      memberName: "有实践信号",
+      nextLevel: 2,
+      pointsRemaining: 1,
+    });
+    expect(digest.text).toContain("还差 1 分");
+  });
+
   it("builds an operator digest with missed scores, slow image tasks, zero C/S/G and near promotions", () => {
     const digest = buildOperatorDigest(input());
 
@@ -77,5 +102,15 @@ describe("operations digest", () => {
     expect(digest.text).toContain("陈三");
     expect(digest.text).toContain("临近晋升");
     expect(digest.nearPromotions.map((item) => item.memberName)).toEqual(["林一", "周二"]);
+  });
+
+  it("returns the combined groupNudge and operatorDigest shape used by callers", () => {
+    const digest = buildOperationsDigest(input());
+
+    expect(digest.groupNudge).toContain("临近晋升");
+    expect(digest.groupNudge).not.toContain("疑似漏分");
+    expect(digest.operatorDigest).toContain("疑似漏分");
+    expect(digest.operatorDigest).toContain("慢图片任务");
+    expect(digest.operatorDigest).toContain("C/S/G 为 0");
   });
 });

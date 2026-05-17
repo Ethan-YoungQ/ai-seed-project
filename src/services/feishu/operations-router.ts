@@ -40,6 +40,8 @@ const SCORE_CANDIDATE_RE =
   /(AI实践|AI实战|海报|复盘|提示词|prompt|作品|作业|生成了|做了|分享)/i;
 const LEARNER_QA_RE =
   /(怎么|如何|规则|提交|作业|任务|在哪|哪里|什么时候|多少分|为什么|能不能|可以吗|咋)/;
+const MENTIONED_BOT_REQUEST_RE =
+  /(帮我|帮忙|请你|麻烦|看下|看看|分析|讲一下|讲讲|解释|分享一下|推荐|给我|能否|可以帮)/;
 
 export function classifyOperationsIntent(
   message: NormalizedFeishuMessage,
@@ -61,7 +63,7 @@ export function classifyOperationsIntent(
     return { kind: "score_opt_out", reason: "explicit_opt_out" };
   }
 
-  if (mentionedBot && LEARNER_QA_RE.test(text)) {
+  if (mentionedBot && (LEARNER_QA_RE.test(text) || MENTIONED_BOT_REQUEST_RE.test(text))) {
     return { kind: "learner_qa", reason: "learner_question" };
   }
 
