@@ -281,7 +281,11 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     // 参考：https://docs.z.ai/guides/capabilities/thinking-mode
     const target = this.requestTarget(messages.some(hasImageContent));
     const requestModel = target.model;
-    const isGlmModel = requestModel.toLowerCase().startsWith("glm-");
+    const normalizedModel = requestModel.toLowerCase();
+    const shouldDisableThinking =
+      normalizedModel.startsWith("glm-") ||
+      normalizedModel.startsWith("qwen3") ||
+      normalizedModel.startsWith("qwen-3");
 
     let response: Response;
     try {
@@ -296,7 +300,9 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
           messages,
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 800,
-          ...(isGlmModel ? { thinking: { type: "disabled" } } : {})
+          ...(shouldDisableThinking
+            ? { enable_thinking: false, thinking: { type: "disabled" } }
+            : {})
         }),
         signal: controller.signal
       });

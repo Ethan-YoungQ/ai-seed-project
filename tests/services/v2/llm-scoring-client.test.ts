@@ -487,4 +487,25 @@ describe("OpenAiCompatibleLlmScoringClient", () => {
       { role: "user", content: "some text" }
     ]);
   });
+
+  test("chat disables thinking for Qwen reasoning models", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => fetchOk({
+        choices: [{ message: { content: "ok" } }]
+      }));
+    const client = new OpenAiCompatibleLlmScoringClient({
+      ...makeConfig(),
+      textModel: "qwen3.5-flash",
+    });
+
+    await client.chat([{ role: "user", content: "hello" }], {
+      timeoutMs: 1000,
+    });
+
+    const [, init] = spy.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(init.body as string);
+    expect(parsed.enable_thinking).toBe(false);
+    expect(parsed.thinking).toEqual({ type: "disabled" });
+  });
 });
