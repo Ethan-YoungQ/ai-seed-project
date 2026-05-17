@@ -804,4 +804,70 @@ describe("message-commands AI Boot v3 routing", () => {
     expect(reply).toHaveBeenCalled();
     vi.useRealTimers();
   });
+
+  it("routes @Bot post questions to chat instead of auto-capture scoring", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "作业提交到群里即可。",
+      used: "llm",
+      latencyMs: 1,
+    });
+    const deps = buildDeps({
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      messageType: "post",
+      rawText: "@_user_1 怎么提交作业？",
+      cleanedText: "怎么提交作业？",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).not.toHaveBeenCalled();
+    expect(deps.ingestor?.ingest).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("keeps @Bot learner questions containing admin words in chat instead of cards", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "管理规则可以这样理解。",
+      used: "llm",
+      latencyMs: 1,
+    });
+    const deps = buildDeps({
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 怎么管理成员？审核规则是什么？",
+      cleanedText: "怎么管理成员？审核规则是什么？",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(deps.feishuClient.sendCardMessage).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
 });

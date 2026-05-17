@@ -54,7 +54,12 @@ export interface AiBootOrchestratorDeps {
     | "findAiBootNotificationEventByScoreEventId"
     | "findAiBootImageUnderstandingByContentHash"
     | "upsertAiBootImageUnderstanding"
-  >;
+  > & {
+    listAiBootImageOnlyEventsWithoutScore?(input: {
+      campId: string;
+      limit: number;
+    }): AiBootEventRecord[];
+  };
   campId: string;
   chatId?: string;
   memberResolver: {
@@ -85,7 +90,10 @@ export function createAiBootOrchestrator(
       now: deps.now,
     });
 
-  async function handleMessage(message: NormalizedFeishuMessage): Promise<void> {
+  async function handleMessage(
+    message: NormalizedFeishuMessage,
+    recoveredMember?: MemberLite,
+  ): Promise<void> {
       if (message.chatType !== "group") {
         return;
       }
@@ -102,7 +110,7 @@ export function createAiBootOrchestrator(
         return;
       }
 
-      const member = deps.memberResolver.findMemberByOpenId(message.memberId);
+      const member = recoveredMember ?? deps.memberResolver.findMemberByOpenId(message.memberId);
       if (!member) {
         return;
       }
@@ -284,9 +292,101 @@ export function createAiBootOrchestrator(
       });
     }
 
+  scheduleImageOnlyRecovery({
+    deps,
+    handleMessage,
+  });
+
   return {
     handleMessage,
   };
+}
+
+function scheduleImageOnlyRecovery(input: {
+  deps: AiBootOrchestratorDeps;
+  handleMessage: (message: NormalizedFeishuMessage, recoveredMember?: MemberLite) => Promise<void>;
+}): void {
+  if (!input.deps.repo.listAiBootImageOnlyEventsWithoutScore) {
+    return;
+  }
+
+  setTimeout(() => {
+    void recoverImageOnlyEventsWithoutScore(input).catch((err) => {
+      console.warn("[AiBoot] image-only recovery failed", err);
+    });
+  }, 0);
+}
+
+async function recoverImageOnlyEventsWithoutScore(input: {
+  deps: AiBootOrchestratorDeps;
+  handleMessage: (message: NormalizedFeishuMessage, recoveredMember?: MemberLite) => Promise<void>;
+}): Promise<void> {
+  const events = input.deps.repo.listAiBootImageOnlyEventsWithoutScore?.({
+    campId: input.deps.campId,
+    limit: 50,
+  }) ?? [];
+
+  for (const event of events) {
+    await input.handleMessage(
+      messageFromStoredEvent(event),
+      memberFromStoredEvent(event),
+    );
+  }
+}
+
+function messageFromStoredEvent(event: AiBootEventRecord): NormalizedFeishuMessage {
+  const evidence = parseEvidenceBundle(event.evidenceJson);
+  const attachments = evidence?.attachments ?? parseAttachmentJson(event.attachmentJson);
+  const fileKey = attachments.find((attachment) => attachment.type === "image")?.fileKey;
+  const messageType = event.eventType === "image" ? "image" : event.eventType;
+
+  return {
+    messageId: event.sourceMessageId,
+    memberId: event.memberId,
+    chatId: event.chatId,
+    chatType: "group",
+    senderType: "user",
+    messageType,
+    eventTime: event.createdAt,
+    rawText: event.rawText,
+    parsedTags: [],
+    attachmentCount: attachments.length,
+    attachmentTypes: attachments.map((attachment) => attachment.type),
+    fileKey,
+    documentText: "",
+    documentParseStatus: "not_applicable",
+    eventUrl: `feishu://message/${event.sourceMessageId}`,
+    mentionedBotIds: [],
+    cleanedText: event.sanitizedText,
+  };
+}
+
+function memberFromStoredEvent(event: AiBootEventRecord): MemberLite {
+  return {
+    id: event.memberId,
+    displayName: "同学",
+    roleType: "student",
+    isParticipant: true,
+    isExcludedFromBoard: false,
+    currentLevel: 1,
+  };
+}
+
+function parseAttachmentJson(value: string): Array<{ type: string; fileKey?: string }> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .filter((item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === "object" && typeof (item as Record<string, unknown>).type === "string",
+      )
+      .map((item) => ({
+        type: String(item.type),
+        fileKey: typeof item.fileKey === "string" ? item.fileKey : undefined,
+      }));
+  } catch {
+    return [];
+  }
 }
 
 function passesDurableNotificationCaps(input: {

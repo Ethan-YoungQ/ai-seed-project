@@ -45,12 +45,26 @@ describe("readLlmProviderConfig", () => {
       LLM_ENABLED: "true",
       LLM_PROVIDER: "openai_compatible",
       LLM_BASE_URL: "https://example.com/v1/",
-      LLM_API_KEY: "sk-demo"
+      LLM_API_KEY: "sk-demo",
+      LLM_TEXT_MODEL: "custom-model"
     });
 
     expect(config.enabled).toBe(true);
     expect(config.provider).toBe("openai_compatible");
     expect(config.baseUrl).toBe("https://example.com/v1");
+    expect(config.textModel).toBe("custom-model");
+  });
+
+  it("does not default openai-compatible endpoints to qwen models", () => {
+    const config = readLlmProviderConfig({
+      LLM_ENABLED: "true",
+      LLM_PROVIDER: "openai_compatible",
+      LLM_BASE_URL: "https://example.com/v1/",
+      LLM_API_KEY: "sk-demo"
+    });
+
+    expect(config.textModel).toBe("");
+    expect(config.enabled).toBe(false);
   });
 
   it("does not silently switch an old env to aliyun when provider is omitted", () => {

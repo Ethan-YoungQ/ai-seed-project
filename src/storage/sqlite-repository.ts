@@ -1522,6 +1522,32 @@ export class SqliteRepository {
     return rows.map((row) => this.mapAiBootEventRow(row));
   }
 
+  listAiBootImageOnlyEventsWithoutScore(input: {
+    campId: string;
+    limit: number;
+  }): AiBootEventRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT e.id, e.camp_id, e.chat_id, e.member_id, e.source_message_id, e.event_type,
+                e.raw_text, e.sanitized_text, e.attachment_json, e.evidence_json, e.content_hash,
+                e.status, e.engine_version, e.ruleset_version, e.created_at
+         FROM ai_boot_events e
+         LEFT JOIN ai_boot_score_events s ON s.event_id = e.id
+         WHERE e.camp_id = @campId
+           AND s.id IS NULL
+           AND e.raw_text = ''
+           AND e.sanitized_text = ''
+           AND (
+             e.event_type = 'image' OR
+             e.attachment_json LIKE '%"type":"image"%'
+           )
+         ORDER BY e.created_at ASC, e.id ASC
+         LIMIT @limit`
+      )
+      .all(input) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapAiBootEventRow(row));
+  }
+
   insertAiBootScoreEvent(input: AiBootScoreEventRecord): boolean {
     const result = this.db
       .prepare(

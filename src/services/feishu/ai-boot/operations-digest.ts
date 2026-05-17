@@ -172,8 +172,11 @@ function calculatePromotionGap(
       lv2PathGap(member, "lv2_multidimensional", 20, countDimensionsAtLeast(member.dimensions, 5) >= 2 && countCsgDimensionsAtLeast(member.dimensions, 5) >= 1),
     ].filter((item): item is Pick<NearPromotion, "threshold" | "pointsRemaining" | "pathTaken"> => item !== null);
 
+    if (candidates.some((candidate) => candidate.pointsRemaining <= 0)) {
+      return null;
+    }
+
     return candidates
-      .filter((candidate) => candidate.pointsRemaining > 0)
       .sort((left, right) => left.pointsRemaining - right.pointsRemaining)[0] ?? null;
   }
 

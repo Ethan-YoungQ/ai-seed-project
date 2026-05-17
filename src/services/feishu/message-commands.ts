@@ -156,9 +156,12 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
 
     const isChatBotMention = Boolean(
       deps.chatBot &&
-      message.mentionedBotIds.includes(deps.chatBot.botOpenId) &&
-      message.messageType === "text"
+      message.mentionedBotIds.includes(deps.chatBot.botOpenId)
     );
+
+    const operationsIntent = classifyOperationsIntent(message, {
+      botOpenId: deps.chatBot?.botOpenId,
+    });
 
     // Trainer/admin keyword triggers: text OR post messages.
     // These must run before @Bot chat; otherwise "@Bot 管理/审核" is consumed
@@ -167,33 +170,34 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       const text = cleanCommandText(message.cleanedText || message.rawText);
       console.log(`[MsgHandler] cmd match: raw="${message.rawText.slice(0, 80)}" → cleaned="${text}"`);
 
-      if (REVIEW_QUEUE_KEYWORDS.some((kw) => text.includes(kw))) {
+      const learnerQuestion = operationsIntent.kind === "learner_qa";
+      if (!learnerQuestion && REVIEW_QUEUE_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → REVIEW_QUEUE`);
         await handleReviewQueueTrigger(message, deps);
         return;
       }
-      if (QUIZ_KEYWORDS.some((kw) => text.includes(kw))) {
+      if (!learnerQuestion && QUIZ_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → QUIZ`);
         await handleQuizTrigger(message, deps);
         return;
       }
-      if (PEER_REVIEW_KEYWORDS.some((kw) => text.includes(kw))) {
+      if (!learnerQuestion && PEER_REVIEW_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → PEER_REVIEW`);
         await handlePeerReviewTrigger(message, deps);
         return;
       }
       // 排行榜/天梯榜必须 @Bot 触发，不走普通关键词
-      if (MANUAL_ADJUST_KEYWORDS.some((kw) => text.includes(kw))) {
+      if (!learnerQuestion && MANUAL_ADJUST_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → MANUAL_ADJUST`);
         await handleManualAdjustTrigger(message, deps);
         return;
       }
-      if (MEMBER_MGMT_KEYWORDS.some((kw) => text.includes(kw))) {
+      if (!learnerQuestion && MEMBER_MGMT_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → MEMBER_MGMT`);
         await handleMemberMgmtTrigger(message, deps);
         return;
       }
-      if (ADMIN_PANEL_KEYWORDS.some((kw) => text.includes(kw))) {
+      if (!learnerQuestion && ADMIN_PANEL_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → ADMIN_PANEL`);
         await handleAdminPanelTrigger(message, deps);
         return;
@@ -204,10 +208,6 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
         return;
       }
     }
-
-    const operationsIntent = classifyOperationsIntent(message, {
-      botOpenId: deps.chatBot?.botOpenId,
-    });
 
     if (operationsIntent.kind === "score_opt_out") {
       if (message.chatId && isChatBotMention) {

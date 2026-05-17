@@ -83,23 +83,34 @@ function readFileParserToolType(value: string | undefined): GlmFileParserToolTyp
   return value === "expert" || value === "prime" ? value : "lite";
 }
 
+function defaultTextModel(provider: LlmProvider): string {
+  if (provider === "glm") return "glm-4.7";
+  if (provider === "aliyun") return "qwen3.5-flash";
+  return "";
+}
+
+function defaultFileModel(provider: LlmProvider): string {
+  if (provider === "aliyun") return "qwen-doc";
+  return "";
+}
+
 export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): LlmProviderConfig {
   const provider = readProvider(env.LLM_PROVIDER);
   const apiKey = env.LLM_API_KEY?.trim() || undefined;
   const baseUrl = resolveBaseUrl(provider, env.LLM_BASE_URL);
   const requestedEnabled = readBoolean(env.LLM_ENABLED, false);
   const textModel =
-    env.LLM_TEXT_MODEL?.trim() || (provider === "glm" ? "glm-4.7" : "qwen3.5-flash");
+    env.LLM_TEXT_MODEL?.trim() || defaultTextModel(provider);
   const visionModel = env.LLM_VISION_MODEL?.trim() || (provider === "aliyun" ? "qwen3.5-flash" : "");
   const visionBaseUrl = env.LLM_VISION_BASE_URL?.trim()
     ? env.LLM_VISION_BASE_URL.trim().replace(/\/+$/, "")
     : undefined;
   const visionApiKey = env.LLM_VISION_API_KEY?.trim() || undefined;
-  const fileModel = env.LLM_FILE_MODEL?.trim() || (provider === "glm" ? "" : "qwen-doc");
+  const fileModel = env.LLM_FILE_MODEL?.trim() || defaultFileModel(provider);
   const concurrency = readInteger(env.LLM_CONCURRENCY, 3);
 
   return {
-    enabled: requestedEnabled && Boolean(apiKey) && Boolean(baseUrl),
+    enabled: requestedEnabled && Boolean(apiKey) && Boolean(baseUrl) && Boolean(textModel),
     provider,
     baseUrl,
     apiKey,

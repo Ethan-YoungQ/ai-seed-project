@@ -528,6 +528,85 @@ describe("createAiBootOrchestrator", () => {
     vi.useRealTimers();
   });
 
+  it("recovers image-only events without score after restart", async () => {
+    vi.useFakeTimers();
+    const llmClient = makeLlmClient(approvedArtifact);
+    const existingEvent: AiBootEventRecord = {
+      id: "evt-existing-image",
+      campId: "default",
+      chatId: "chat-1",
+      memberId: "member-1",
+      sourceMessageId: "om-existing-image",
+      eventType: "image",
+      rawText: "",
+      sanitizedText: "",
+      attachmentJson: JSON.stringify([{ type: "image", fileKey: "img-key-1" }]),
+      evidenceJson: JSON.stringify({
+        sanitizedText: "",
+        urls: [],
+        attachments: [{ type: "image", fileKey: "img-key-1" }],
+        documentText: "",
+        extractionStatus: "not_applicable",
+        extractionReason: "non_file_message",
+        contentHash: "hash-existing-image",
+      }),
+      contentHash: "hash-existing-image",
+      status: "extracted",
+      engineVersion: "ai-boot-v3.0.0",
+      rulesetVersion: "2026-05-17",
+      createdAt: "2026-05-16T08:59:00.000Z",
+    };
+    const cachedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "img-key-1",
+      messageId: "om-existing-image",
+      contentHash: "hash-existing-image",
+      modelName: "qwen3.5-flash",
+      caption: "截图展示了一个 AI 生成的客户拜访复盘表。",
+      scoreHint: "可按 ai_artifact 审核。",
+      latencyMs: 40,
+      status: "succeeded",
+      errorReason: "",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:00:00.000Z",
+    };
+    let cached: AiBootImageUnderstandingRecord | null = null;
+    const imageUnderstandingService = {
+      getCachedUnderstanding: vi.fn(() => cached),
+      enqueueUnderstanding: vi.fn(),
+      understandImage: vi.fn().mockImplementation(async () => {
+        cached = cachedUnderstanding;
+        return cachedUnderstanding;
+      }),
+    };
+    const deps = makeDeps({
+      llmClient,
+      imageUnderstandingService,
+    } as Partial<AiBootOrchestratorDeps>);
+    deps.events.push(existingEvent);
+    (deps.repo as any).listAiBootImageOnlyEventsWithoutScore = vi.fn(() => [existingEvent]);
+
+    createAiBootOrchestrator(deps);
+
+    await vi.runOnlyPendingTimersAsync();
+    await vi.runOnlyPendingTimersAsync();
+
+    expect((deps.repo as any).listAiBootImageOnlyEventsWithoutScore).toHaveBeenCalledWith({
+      campId: "default",
+      limit: 50,
+    });
+    expect(imageUnderstandingService.understandImage).toHaveBeenCalledTimes(1);
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      eventId: "evt-existing-image",
+      memberId: "member-1",
+      status: "approved",
+      category: "ai_artifact",
+      notifyPolicy: "silent",
+    });
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
   it("scores image messages from cached captions without passing the raw image to the scoring model", async () => {
     const llmClient = makeLlmClient(approvedArtifact, {
       visionModel: "glm-4.6v",

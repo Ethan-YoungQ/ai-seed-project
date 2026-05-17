@@ -91,6 +91,25 @@ describe("operations digest", () => {
     expect(digest.text).toContain("还差 1 分");
   });
 
+  it("does not list members who already satisfy a relaxed Lv2 promotion path", () => {
+    const digest = buildGroupPromotionDigest(input({
+      ranking: [
+        {
+          memberId: "m-promoted",
+          memberName: "已达标",
+          currentLevel: 1,
+          cumulativeAq: 21,
+          dimensions: { K: 10, H: 0, C: 5, S: 0, G: 6 },
+        },
+      ],
+      suspectedMissedScores: [],
+      slowImageTasks: [],
+    }));
+
+    expect(digest.shouldSend).toBe(false);
+    expect(digest.nearPromotions).toEqual([]);
+  });
+
   it("builds an operator digest with missed scores, slow image tasks, zero C/S/G and near promotions", () => {
     const digest = buildOperatorDigest(input());
 

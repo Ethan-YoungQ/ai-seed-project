@@ -52,6 +52,14 @@ export function classifyOperationsIntent(
     context.botOpenId && message.mentionedBotIds.includes(context.botOpenId),
   );
 
+  if (
+    mentionedBot &&
+    !isExactAdminCommand(text) &&
+    (LEARNER_QA_RE.test(text) || MENTIONED_BOT_REQUEST_RE.test(text))
+  ) {
+    return { kind: "learner_qa", reason: "learner_question" };
+  }
+
   for (const candidate of ADMIN_COMMANDS) {
     if (candidate.requiresBotMention && !mentionedBot) continue;
     if (candidate.keywords.some((keyword) => text.includes(keyword))) {
@@ -72,6 +80,12 @@ export function classifyOperationsIntent(
   }
 
   return { kind: "none" };
+}
+
+function isExactAdminCommand(text: string): boolean {
+  return ADMIN_COMMANDS.some((candidate) =>
+    candidate.keywords.some((keyword) => text === cleanIntentText(keyword)),
+  );
 }
 
 function isScoreCandidateMessage(

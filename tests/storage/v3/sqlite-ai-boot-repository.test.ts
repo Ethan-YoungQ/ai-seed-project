@@ -175,6 +175,73 @@ describe("SqliteRepository ai boot v3", () => {
     r.close();
   });
 
+  it("lists image-only ai boot events that do not have score events for recovery", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({
+      id: "evt-image-pending",
+      sourceMessageId: "om-image-pending",
+      eventType: "image",
+      rawText: "",
+      sanitizedText: "",
+      attachmentJson: JSON.stringify([{ type: "image", fileKey: "img-1" }]),
+      evidenceJson: JSON.stringify({
+        sanitizedText: "",
+        urls: [],
+        attachments: [{ type: "image", fileKey: "img-1" }],
+        documentText: "",
+        extractionStatus: "not_applicable",
+        extractionReason: "non_file_message",
+        contentHash: "hash-image-pending",
+      }),
+      contentHash: "hash-image-pending",
+    }));
+    r.insertAiBootEvent(event({
+      id: "evt-image-scored",
+      sourceMessageId: "om-image-scored",
+      eventType: "image",
+      rawText: "",
+      sanitizedText: "",
+      attachmentJson: JSON.stringify([{ type: "image", fileKey: "img-2" }]),
+      evidenceJson: JSON.stringify({
+        sanitizedText: "",
+        urls: [],
+        attachments: [{ type: "image", fileKey: "img-2" }],
+        documentText: "",
+        extractionStatus: "not_applicable",
+        extractionReason: "non_file_message",
+        contentHash: "hash-image-scored",
+      }),
+      contentHash: "hash-image-scored",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-image-scored",
+      eventId: "evt-image-scored",
+    }));
+    r.insertAiBootEvent(event({
+      id: "evt-text-pending",
+      sourceMessageId: "om-text-pending",
+      eventType: "text",
+      rawText: "普通文字",
+      sanitizedText: "普通文字",
+      attachmentJson: "[]",
+      evidenceJson: JSON.stringify({
+        sanitizedText: "普通文字",
+        urls: [],
+        attachments: [],
+        documentText: "",
+        extractionStatus: "not_applicable",
+        extractionReason: "non_file_message",
+        contentHash: "hash-text-pending",
+      }),
+      contentHash: "hash-text-pending",
+    }));
+
+    const rows = r.listAiBootImageOnlyEventsWithoutScore({ campId: "default", limit: 10 });
+
+    expect(rows.map((row) => row.id)).toEqual(["evt-image-pending"]);
+    r.close();
+  });
+
   it("inserts score events and sums approved v3 score", () => {
     const r = repo();
     expect(r.insertAiBootScoreEvent(scoreEvent())).toBe(true);
