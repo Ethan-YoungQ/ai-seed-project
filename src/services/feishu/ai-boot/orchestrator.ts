@@ -85,8 +85,7 @@ export function createAiBootOrchestrator(
       now: deps.now,
     });
 
-  return {
-    async handleMessage(message: NormalizedFeishuMessage): Promise<void> {
+  async function handleMessage(message: NormalizedFeishuMessage): Promise<void> {
       if (message.chatType !== "group") {
         return;
       }
@@ -116,13 +115,14 @@ export function createAiBootOrchestrator(
       }
       const originalEvidence = evidence;
       const imageOnlyMessage = isImageOnlyMessage(message, originalEvidence);
-      const imageUnderstandingPending = prepareImageUnderstanding({
+      const imageUnderstanding = prepareImageUnderstanding({
         service: imageUnderstandingService,
         message,
         evidence,
+        enqueue: !imageOnlyMessage,
       });
-      if (imageUnderstandingPending.cached) {
-        evidence = appendImageUnderstandingEvidence(evidence, imageUnderstandingPending.cached);
+      if (imageUnderstanding.cached) {
+        evidence = appendImageUnderstandingEvidence(evidence, imageUnderstanding.cached);
       }
 
       if (!event) {
@@ -150,6 +150,16 @@ export function createAiBootOrchestrator(
         if (!inserted) {
           evidence = parseEvidenceBundle(event.evidenceJson) ?? evidence;
         }
+      }
+
+      if (imageOnlyMessage && !imageUnderstanding.cached) {
+        scheduleImageOnlyUnderstandingReplay({
+          service: imageUnderstandingService,
+          message,
+          evidence: originalEvidence,
+          replay: () => handleMessage(message),
+        });
+        return;
       }
 
       const duplicateApprovedScore = deps.repo.findApprovedAiBootScoreEventByContentHash(
@@ -185,23 +195,21 @@ export function createAiBootOrchestrator(
         return;
       }
 
-      const rawDecision = imageUnderstandingPending.pending && imageOnlyMessage
-        ? pendingImageUnderstandingDecision(evidence)
-        : guardOutcome.kind === "continue"
-          ? enforcePostLlmGuards(
-              await decideContribution({ deps, evidence, member }),
-              {
-                dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
-                  campId: deps.campId,
-                  memberId: member.id,
-                  category: "daily_participation",
-                  decidedAtFrom: dailyWindow.start,
-                  decidedAtTo: dailyWindow.end,
-                }) > 0,
-                evidence,
-              },
-            )
-          : decisionFromGuard(guardOutcome, evidence);
+      const rawDecision = guardOutcome.kind === "continue"
+        ? enforcePostLlmGuards(
+            await decideContribution({ deps, evidence, member }),
+            {
+              dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
+                campId: deps.campId,
+                memberId: member.id,
+                category: "daily_participation",
+                decidedAtFrom: dailyWindow.start,
+                decidedAtTo: dailyWindow.end,
+              }) > 0,
+              evidence,
+            },
+          )
+        : decisionFromGuard(guardOutcome, evidence);
       const decision = imageOnlyMessage
         ? forceSilentImageOnlyDecision(rawDecision, evidence)
         : rawDecision;
@@ -274,7 +282,10 @@ export function createAiBootOrchestrator(
         sentAt: scoreEvent.decidedAt,
         textHash: stableTextHash(praiseText),
       });
-    },
+    }
+
+  return {
+    handleMessage,
   };
 }
 
@@ -492,6 +503,7 @@ function prepareImageUnderstanding(input: {
   service: AiBootImageUnderstandingService;
   message: NormalizedFeishuMessage;
   evidence: EvidenceBundle;
+  enqueue: boolean;
 }): {
   cached: ReturnType<AiBootImageUnderstandingService["getCachedUnderstanding"]>;
   pending: boolean;
@@ -505,11 +517,37 @@ function prepareImageUnderstanding(input: {
     return { cached, pending: false };
   }
 
-  input.service.enqueueUnderstanding({
-    message: input.message,
-    evidence: input.evidence,
-  });
+  if (input.enqueue) {
+    input.service.enqueueUnderstanding({
+      message: input.message,
+      evidence: input.evidence,
+    });
+  }
   return { cached: null, pending: true };
+}
+
+function scheduleImageOnlyUnderstandingReplay(input: {
+  service: AiBootImageUnderstandingService;
+  message: NormalizedFeishuMessage;
+  evidence: EvidenceBundle;
+  replay: () => Promise<void>;
+}): void {
+  setTimeout(() => {
+    void input.service
+      .understandImage({
+        message: input.message,
+        evidence: input.evidence,
+      })
+      .then((record) => {
+        if (record.status === "succeeded") {
+          return input.replay();
+        }
+        return undefined;
+      })
+      .catch((err) => {
+        console.warn("[AiBoot] image understanding replay failed", err);
+      });
+  }, 0);
 }
 
 function appendImageUnderstandingEvidence(
@@ -539,19 +577,6 @@ function isImageOnlyMessage(
     (message.rawText || message.cleanedText || evidence.sanitizedText).trim().length === 0 &&
     evidence.documentText.trim().length === 0 &&
     evidence.urls.length === 0;
-}
-
-function pendingImageUnderstandingDecision(evidence: EvidenceBundle): ScoringDecision {
-  return parseScoringDecision({
-    status: "review_required",
-    category: "formal_task",
-    scoreDelta: 1,
-    confidence: "low",
-    notifyPolicy: "silent",
-    reason: "image_understanding_pending",
-    evidence: `Image understanding is pending for content hash ${evidence.contentHash}.`,
-    badges: ["image_understanding_pending"],
-  });
 }
 
 function forceSilentImageOnlyDecision(

@@ -41,6 +41,8 @@ export function createAiBootImageUnderstandingService(deps: {
   now: () => string;
   onError?: (error: unknown) => void;
 }): AiBootImageUnderstandingService {
+  const activeJobs = new Map<string, Promise<AiBootImageUnderstandingRecord>>();
+
   function getCachedUnderstanding(evidence: EvidenceBundle): AiBootImageUnderstandingRecord | null {
     const cached = deps.repo.findAiBootImageUnderstandingByContentHash(evidence.contentHash);
     if (cached?.status === "succeeded" && cached.caption.trim().length > 0) {
@@ -50,6 +52,24 @@ export function createAiBootImageUnderstandingService(deps: {
   }
 
   async function understandImage(input: {
+    message: NormalizedFeishuMessage;
+    evidence: EvidenceBundle;
+  }): Promise<AiBootImageUnderstandingRecord> {
+    const active = activeJobs.get(input.evidence.contentHash);
+    if (active) {
+      return active;
+    }
+
+    const job = runUnderstandImage(input);
+    activeJobs.set(input.evidence.contentHash, job);
+    try {
+      return await job;
+    } finally {
+      activeJobs.delete(input.evidence.contentHash);
+    }
+  }
+
+  async function runUnderstandImage(input: {
     message: NormalizedFeishuMessage;
     evidence: EvidenceBundle;
   }): Promise<AiBootImageUnderstandingRecord> {

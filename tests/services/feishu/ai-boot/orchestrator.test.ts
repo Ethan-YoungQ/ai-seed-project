@@ -465,13 +465,33 @@ describe("createAiBootOrchestrator", () => {
     });
   });
 
-  it("does not synchronously download or group-praise an image-only cache miss", async () => {
+  it("defers an image-only cache miss, then scores from the async cached caption without group praise", async () => {
+    vi.useFakeTimers();
+    const llmClient = makeLlmClient(approvedArtifact);
+    const cachedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "img-key-1",
+      messageId: "om-1",
+      contentHash: "hash-image-1",
+      modelName: "qwen3.5-flash",
+      caption: "截图展示了一个 AI 生成的客户拜访复盘表。",
+      scoreHint: "可按 ai_artifact 审核。",
+      latencyMs: 40,
+      status: "succeeded",
+      errorReason: "",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:00:00.000Z",
+    };
+    let cached: AiBootImageUnderstandingRecord | null = null;
     const imageUnderstandingService = {
-      getCachedUnderstanding: vi.fn().mockReturnValue(null),
+      getCachedUnderstanding: vi.fn(() => cached),
       enqueueUnderstanding: vi.fn(),
+      understandImage: vi.fn().mockImplementation(async () => {
+        cached = cachedUnderstanding;
+        return cachedUnderstanding;
+      }),
     };
     const deps = makeDeps({
-      llmClient: makeLlmClient(approvedArtifact),
+      llmClient,
       imageUnderstandingService,
     } as Partial<AiBootOrchestratorDeps>);
     const orchestrator = createAiBootOrchestrator(deps);
@@ -485,17 +505,27 @@ describe("createAiBootOrchestrator", () => {
       fileKey: "img-key-1",
     }));
 
-    expect(deps.scoreEvents[0]).toMatchObject({
-      status: "review_required",
-      category: "formal_task",
-      scoreDelta: 1,
-      notifyPolicy: "silent",
-      reason: "image_understanding_pending",
-    });
-    expect(imageUnderstandingService.enqueueUnderstanding).toHaveBeenCalledTimes(1);
+    expect(deps.events).toHaveLength(1);
+    expect(deps.scoreEvents).toHaveLength(0);
+    expect(imageUnderstandingService.enqueueUnderstanding).not.toHaveBeenCalled();
     expect(deps.llmClient?.chat).not.toHaveBeenCalled();
     expect(deps.feishuClient.getMessageFile).not.toHaveBeenCalled();
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect(imageUnderstandingService.understandImage).toHaveBeenCalledTimes(1);
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 5,
+      notifyPolicy: "silent",
+    });
+    expect(llmClient.chat).toHaveBeenCalledTimes(1);
+    expect(deps.feishuClient.getMessageFile).not.toHaveBeenCalled();
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   it("scores image messages from cached captions without passing the raw image to the scoring model", async () => {
