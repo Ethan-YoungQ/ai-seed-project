@@ -28,10 +28,10 @@ describe("buildScoringPrompt", () => {
       memberName: "王静Effie",
     });
 
-    expect(AI_BOOT_PROMPT_VERSION).toBe("2026-05-16-v1");
+    expect(AI_BOOT_PROMPT_VERSION).toBe("2026-05-17-v1");
     expect(prompt).toContain("王静Effie");
     expect(prompt).toContain("我用 AI 做了一个客户拜访复盘表");
-    expect(prompt).toContain("AI_BOOT_PROMPT_VERSION: 2026-05-16-v1");
+    expect(prompt).toContain("AI_BOOT_PROMPT_VERSION: 2026-05-17-v1");
     expect(prompt).toContain("AI_BOOT_RULESET_VERSION");
 
     expect(prompt).toContain("daily_participation: 1");
@@ -51,12 +51,24 @@ describe("buildScoringPrompt", () => {
     });
 
     expect(prompt).toContain("prompt is not required except prompt_or_method");
+    expect(prompt).toContain("Prompt 是可选项");
     expect(prompt).toContain("prompt 不是必需项，除非分类为 prompt_or_method");
     expect(prompt).toContain("AI image");
     expect(prompt).toContain("AI artifact");
     expect(prompt).toContain("workflow result");
     expect(prompt).toContain("practice reflection");
     expect(prompt).toContain("可以在未分享 prompt 时得分");
+  });
+
+  it("spells out relaxed C/S/G scoring opportunities", () => {
+    const prompt = buildScoringPrompt({
+      evidence: evidence(),
+      memberName: "学员",
+    });
+
+    expect(prompt).toContain("C 可以来自 AI 图片、AI 海报、AI 工作流、客户演示、内部工作产物");
+    expect(prompt).toContain("S 可以来自回答同伴问题、纠错、测试结果");
+    expect(prompt).toContain("G 支持 2-3 句具体复盘");
   });
 
   it("defines no-score boundaries and JSON-only ScoringDecision output", () => {

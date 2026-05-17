@@ -3,10 +3,11 @@ import { parseScoringDecision } from "../../../domain/v3/scoring-decision.js";
 import {
   AI_BOOT_RULESET_VERSION,
   CATEGORY_SCORE_RANGES,
+  CSG_SCORE_OPPORTUNITIES,
 } from "../../../domain/v3/scoring-rules.js";
 import type { EvidenceBundle } from "./content-extractor.js";
 
-export const AI_BOOT_PROMPT_VERSION = "2026-05-16-v1";
+export const AI_BOOT_PROMPT_VERSION = "2026-05-17-v1";
 
 export interface AiBootLlmClient {
   provider: string;
@@ -56,9 +57,13 @@ AI_BOOT_RULESET_VERSION: ${AI_BOOT_RULESET_VERSION}
 评分意图：
 - 鼓励有用的 AI 学习、实践、作品产出和群内贡献。
 - 不把「分享 prompt」当成合规要求；不要为了索要 prompt 而压低 AI 图片、AI 产物、工作流结果或实践复盘的分数。
+- Prompt 是可选项；除 prompt_or_method 外，不要求学员必须分享 prompt。
 - English contract: prompt is not required except prompt_or_method.
 - 中文规则：prompt 不是必需项，除非分类为 prompt_or_method。
 - AI image、AI artifact、workflow result、practice reflection 只要证据清楚，可以在未分享 prompt 时得分。
+- C 可以来自 ${CSG_SCORE_OPPORTUNITIES.C.join("、")}。
+- S 可以来自${CSG_SCORE_OPPORTUNITIES.S.join("、")}。
+- G 支持 ${CSG_SCORE_OPPORTUNITIES.G.join("、")}。
 
 分类与分值范围（必须严格遵守）：
 - daily_participation: ${CATEGORY_SCORE_RANGES.daily_participation.min}

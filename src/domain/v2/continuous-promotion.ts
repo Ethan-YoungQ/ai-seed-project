@@ -66,8 +66,9 @@ function meetsContinuousPromotion(
   dimensions: ContinuousDimensionTotals = { K: 0, H: 0, C: 0, S: 0, G: 0 },
 ): boolean {
   if (currentLevel === 1) {
-    return meetsLv2Primary(cumulativeAq, dimensions) ||
-      meetsLv2Alternate(cumulativeAq, dimensions);
+    return meetsLv2MainPath(cumulativeAq, dimensions) ||
+      meetsLv2StrongPracticePath(cumulativeAq, dimensions) ||
+      meetsLv2MultidimensionalPath(cumulativeAq, dimensions);
   }
   return cumulativeAq >= CONTINUOUS_PROMOTION_THRESHOLDS[(currentLevel + 1) as 3 | 4 | 5];
 }
@@ -79,7 +80,26 @@ function countDimensionsAtLeast(
   return Object.values(dimensions).filter((score) => score >= cutoff).length;
 }
 
-function meetsLv2Primary(
+function countCsgDimensionsAtLeast(
+  dimensions: ContinuousDimensionTotals,
+  cutoff: number,
+): number {
+  return [dimensions.C, dimensions.S, dimensions.G]
+    .filter((score) => score >= cutoff).length;
+}
+
+function hasAnyCsgSignal(dimensions: ContinuousDimensionTotals): boolean {
+  return dimensions.C > 0 || dimensions.S > 0 || dimensions.G > 0;
+}
+
+function meetsLv2MainPath(
+  cumulativeAq: number,
+  dimensions: ContinuousDimensionTotals,
+): boolean {
+  return cumulativeAq >= 24 && hasAnyCsgSignal(dimensions);
+}
+
+function meetsLv2StrongPracticePath(
   cumulativeAq: number,
   dimensions: ContinuousDimensionTotals,
 ): boolean {
@@ -87,10 +107,11 @@ function meetsLv2Primary(
     countDimensionsAtLeast(dimensions, 8) >= 1;
 }
 
-function meetsLv2Alternate(
+function meetsLv2MultidimensionalPath(
   cumulativeAq: number,
   dimensions: ContinuousDimensionTotals,
 ): boolean {
-  return cumulativeAq >= 56 &&
-    countDimensionsAtLeast(dimensions, 5) >= 2;
+  return cumulativeAq >= 20 &&
+    countDimensionsAtLeast(dimensions, 5) >= 2 &&
+    countCsgDimensionsAtLeast(dimensions, 5) >= 1;
 }
