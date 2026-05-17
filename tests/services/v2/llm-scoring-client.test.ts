@@ -508,4 +508,28 @@ describe("OpenAiCompatibleLlmScoringClient", () => {
     expect(parsed.enable_thinking).toBe(false);
     expect(parsed.thinking).toEqual({ type: "disabled" });
   });
+
+  test("score and multiScore disable thinking for Qwen reasoning models", async () => {
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementationOnce(() => fetchOk({
+        choices: [{ message: { content: JSON.stringify({ pass: true, score: 1, reason: "ok" }) } }]
+      }))
+      .mockImplementationOnce(() => fetchOk({
+        choices: [{ message: { content: JSON.stringify({ items: [] }) } }]
+      }));
+    const client = new OpenAiCompatibleLlmScoringClient({
+      ...makeConfig(),
+      textModel: "qwen3.5-flash",
+    });
+
+    await client.score("score this", { timeoutMs: 1000 });
+    await client.multiScore("score many", { timeoutMs: 1000 });
+
+    for (const [, init] of spy.mock.calls as Array<[string, RequestInit]>) {
+      const parsed = JSON.parse(init.body as string);
+      expect(parsed.enable_thinking).toBe(false);
+      expect(parsed.thinking).toEqual({ type: "disabled" });
+    }
+  });
 });

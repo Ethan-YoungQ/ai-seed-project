@@ -185,6 +185,9 @@ export function createAiBootOrchestrator(
         config: deps.config,
         now: deps.now(),
         llmClient: guardOutcome.kind === "continue" ? deps.llmClient : undefined,
+        usedModelName: guardOutcome.kind === "continue"
+          ? resolveUsedModelName(deps.llmClient, evidence)
+          : undefined,
       });
       const insertedScore = deps.repo.insertAiBootScoreEvent(scoreEvent);
       if (!insertedScore) {
@@ -547,6 +550,7 @@ function buildScoreEvent(input: {
   config: AiBootConfig;
   now: string;
   llmClient?: AiBootLlmClient;
+  usedModelName?: string;
 }): AiBootScoreEventRecord {
   const decision = input.config.engineMode === "v3_shadow"
     ? {
@@ -570,10 +574,24 @@ function buildScoreEvent(input: {
     evidence: decision.evidence,
     badgesJson: JSON.stringify(decision.badges),
     modelProvider: input.llmClient?.provider ?? "deterministic",
-    modelName: input.llmClient?.model ?? "guards",
+    modelName: input.usedModelName ?? input.llmClient?.model ?? "guards",
     promptVersion: input.llmClient ? AI_BOOT_PROMPT_VERSION : "",
     reviewedByOpId: null,
     reviewNote: null,
     decidedAt: input.now,
   };
+}
+
+function resolveUsedModelName(
+  llmClient: AiBootLlmClient | undefined,
+  evidence: EvidenceBundle,
+): string | undefined {
+  if (!llmClient) {
+    return undefined;
+  }
+  const hasImage = evidence.attachments.some((attachment) => attachment.type === "image");
+  if (hasImage && llmClient.visionModel) {
+    return llmClient.visionModel;
+  }
+  return llmClient.model;
 }

@@ -176,6 +176,19 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     };
   }
 
+  private shouldDisableThinking(model: string): boolean {
+    const normalizedModel = model.toLowerCase();
+    return normalizedModel.startsWith("glm-") ||
+      normalizedModel.startsWith("qwen3") ||
+      normalizedModel.startsWith("qwen-3");
+  }
+
+  private thinkingOptions(model: string): Record<string, unknown> {
+    return this.shouldDisableThinking(model)
+      ? { enable_thinking: false, thinking: { type: "disabled" } }
+      : {};
+  }
+
   async score(
     promptText: string,
     options: LlmScoringOptions
@@ -205,7 +218,8 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
         body: JSON.stringify({
           model: target.model,
           response_format: { type: "json_object" },
-          messages: [{ role: "user", content }]
+          messages: [{ role: "user", content }],
+          ...this.thinkingOptions(target.model),
         }),
         signal
       });
@@ -276,16 +290,8 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), options.timeoutMs);
 
-    // GLM-4.7 / GLM-5 默认启用思考模式（先推理再回答），这会显著增加延迟
-    // 和 token 成本。助教问答场景属于"lightweight requests"，官方推荐关闭。
-    // 参考：https://docs.z.ai/guides/capabilities/thinking-mode
     const target = this.requestTarget(messages.some(hasImageContent));
     const requestModel = target.model;
-    const normalizedModel = requestModel.toLowerCase();
-    const shouldDisableThinking =
-      normalizedModel.startsWith("glm-") ||
-      normalizedModel.startsWith("qwen3") ||
-      normalizedModel.startsWith("qwen-3");
 
     let response: Response;
     try {
@@ -300,9 +306,7 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
           messages,
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 800,
-          ...(shouldDisableThinking
-            ? { enable_thinking: false, thinking: { type: "disabled" } }
-            : {})
+          ...this.thinkingOptions(requestModel),
         }),
         signal: controller.signal
       });
@@ -374,7 +378,8 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
         body: JSON.stringify({
           model: target.model,
           response_format: { type: "json_object" },
-          messages: [{ role: "user", content }]
+          messages: [{ role: "user", content }],
+          ...this.thinkingOptions(target.model),
         }),
         signal
       });

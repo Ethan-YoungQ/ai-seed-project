@@ -258,6 +258,36 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("records the vision model name when image scoring uses a vision model", async () => {
+    const deps = makeDeps({
+      config: {
+        engineMode: "v3_shadow",
+        allowGroupPraise: false,
+        allowDailyDigest: false,
+      },
+      llmClient: makeLlmClient(approvedArtifact, {
+        model: "glm-4.7",
+        visionModel: "qwen-vl-max-latest",
+      }),
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      messageType: "image",
+      rawText: "",
+      cleanedText: "",
+      attachmentCount: 1,
+      attachmentTypes: ["image"],
+      fileKey: "img-key-1",
+    }));
+
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      modelProvider: "test-provider",
+      modelName: "qwen-vl-max-latest",
+    });
+  });
+
   it("writes v3 events into the configured production camp id", async () => {
     const deps = makeDeps({
       campId: "camp-demo",
