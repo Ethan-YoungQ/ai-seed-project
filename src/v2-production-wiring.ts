@@ -592,11 +592,13 @@ function buildContinuousPromotionRuntime(
       fromLevel: decision.fromLevel,
       toLevel: decision.toLevel,
       promoted: true,
-      pathTaken: "primary",
+      pathTaken: decision.pathTaken,
       reason: JSON.stringify({
         mode: "continuous",
         cumulativeAq: decision.cumulativeAq,
         threshold: decision.threshold,
+        pathTaken: decision.pathTaken,
+        dimensions: totals.dimensions,
       }),
     });
     repo.upsertMemberLevel({

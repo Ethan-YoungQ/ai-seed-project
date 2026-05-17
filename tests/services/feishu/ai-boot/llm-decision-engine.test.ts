@@ -110,6 +110,7 @@ describe("buildScoringPrompt", () => {
 
     expect(prompt).not.toMatch(/快分享\s*prompt|share\s+prompt|required\s+prompt/i);
     expect(prompt).not.toMatch(/图片.*分享\s*prompt|海报.*分享\s*prompt|artifact.*share\s+prompt/i);
+    expect(prompt).not.toMatch(/图片.*必须.*prompt|海报.*必须.*prompt|需要\s*prompt\s*才.*(?:得分|加分)/i);
   });
 
   it("labels evidence as untrusted user content and forbids following instructions inside it", () => {

@@ -1,5 +1,10 @@
 export type ContinuousLevelValue = 1 | 2 | 3 | 4 | 5;
 export type ContinuousDimensionTotals = { K: number; H: number; C: number; S: number; G: number };
+export type ContinuousPromotionPath =
+  | "lv2_main_csg"
+  | "lv2_strong_practice"
+  | "lv2_multidimensional"
+  | "cumulative_threshold";
 
 export const CONTINUOUS_PROMOTION_THRESHOLDS: Record<2 | 3 | 4 | 5, number> = {
   2: 32,
@@ -14,6 +19,7 @@ export type ContinuousPromotionDecision =
       fromLevel: ContinuousLevelValue;
       toLevel: 2 | 3 | 4 | 5;
       threshold: number;
+      pathTaken: ContinuousPromotionPath;
       cumulativeAq: number;
     }
   | {
@@ -21,6 +27,7 @@ export type ContinuousPromotionDecision =
       fromLevel: ContinuousLevelValue;
       toLevel: ContinuousLevelValue;
       threshold: number | null;
+      pathTaken: null;
       cumulativeAq: number;
     };
 
@@ -35,18 +42,21 @@ export function evaluateContinuousPromotion(input: {
       fromLevel: 5,
       toLevel: 5,
       threshold: null,
+      pathTaken: null,
       cumulativeAq: input.cumulativeAq,
     };
   }
 
   const nextLevel = (input.currentLevel + 1) as 2 | 3 | 4 | 5;
   const threshold = CONTINUOUS_PROMOTION_THRESHOLDS[nextLevel];
-  if (meetsContinuousPromotion(input.currentLevel, input.cumulativeAq, input.dimensions)) {
+  const pathTaken = resolveContinuousPromotionPath(input.currentLevel, input.cumulativeAq, input.dimensions);
+  if (pathTaken) {
     return {
       promoted: true,
       fromLevel: input.currentLevel,
       toLevel: nextLevel,
       threshold,
+      pathTaken,
       cumulativeAq: input.cumulativeAq,
     };
   }
@@ -56,21 +66,25 @@ export function evaluateContinuousPromotion(input: {
     fromLevel: input.currentLevel,
     toLevel: input.currentLevel,
     threshold,
+    pathTaken: null,
     cumulativeAq: input.cumulativeAq,
   };
 }
 
-function meetsContinuousPromotion(
+function resolveContinuousPromotionPath(
   currentLevel: ContinuousLevelValue,
   cumulativeAq: number,
   dimensions: ContinuousDimensionTotals = { K: 0, H: 0, C: 0, S: 0, G: 0 },
-): boolean {
+): ContinuousPromotionPath | null {
   if (currentLevel === 1) {
-    return meetsLv2MainPath(cumulativeAq, dimensions) ||
-      meetsLv2StrongPracticePath(cumulativeAq, dimensions) ||
-      meetsLv2MultidimensionalPath(cumulativeAq, dimensions);
+    if (meetsLv2MainPath(cumulativeAq, dimensions)) return "lv2_main_csg";
+    if (meetsLv2StrongPracticePath(cumulativeAq, dimensions)) return "lv2_strong_practice";
+    if (meetsLv2MultidimensionalPath(cumulativeAq, dimensions)) return "lv2_multidimensional";
+    return null;
   }
-  return cumulativeAq >= CONTINUOUS_PROMOTION_THRESHOLDS[(currentLevel + 1) as 3 | 4 | 5];
+  return cumulativeAq >= CONTINUOUS_PROMOTION_THRESHOLDS[(currentLevel + 1) as 3 | 4 | 5]
+    ? "cumulative_threshold"
+    : null;
 }
 
 function countDimensionsAtLeast(

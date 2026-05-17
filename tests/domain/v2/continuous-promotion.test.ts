@@ -19,6 +19,7 @@ describe("continuous promotion", () => {
         fromLevel: 1,
         toLevel: 1,
         threshold: 32,
+        pathTaken: null,
         cumulativeAq,
       });
     }
@@ -34,6 +35,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 2,
       threshold: 32,
+      pathTaken: "lv2_main_csg",
     });
   });
 
@@ -47,6 +49,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 1,
       threshold: 32,
+      pathTaken: null,
       cumulativeAq: 24,
     });
   });
@@ -61,6 +64,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 2,
       threshold: 32,
+      pathTaken: "lv2_strong_practice",
     });
   });
 
@@ -74,6 +78,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 1,
       threshold: 32,
+      pathTaken: null,
       cumulativeAq: 32,
     });
   });
@@ -88,6 +93,22 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 2,
       threshold: 32,
+      pathTaken: "lv2_multidimensional",
+    });
+  });
+
+  it("does not promote through the Lv2 multidimensional path below 20 AQ even with strong dimensions", () => {
+    expect(evaluateContinuousPromotion({
+      currentLevel: 1,
+      cumulativeAq: 19,
+      dimensions: { K: 5, H: 5, C: 5, S: 4, G: 0 },
+    })).toEqual({
+      promoted: false,
+      fromLevel: 1,
+      toLevel: 1,
+      threshold: 32,
+      pathTaken: null,
+      cumulativeAq: 19,
     });
   });
 
@@ -101,6 +122,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 1,
       threshold: 32,
+      pathTaken: null,
       cumulativeAq: 20,
     });
   });
@@ -115,6 +137,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 1,
       threshold: 32,
+      pathTaken: null,
       cumulativeAq: 20,
     });
   });
@@ -129,6 +152,7 @@ describe("continuous promotion", () => {
       fromLevel: 1,
       toLevel: 1,
       threshold: 32,
+      pathTaken: null,
       cumulativeAq: 15,
     });
   });
