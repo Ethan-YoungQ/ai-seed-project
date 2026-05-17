@@ -90,7 +90,7 @@ export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): Llm
   const requestedEnabled = readBoolean(env.LLM_ENABLED, false);
   const textModel =
     env.LLM_TEXT_MODEL?.trim() || (provider === "glm" ? "glm-4.7" : "qwen3.5-flash");
-  const visionModel = env.LLM_VISION_MODEL?.trim() || "";
+  const visionModel = env.LLM_VISION_MODEL?.trim() || (provider === "aliyun" ? "qwen3.5-flash" : "");
   const visionBaseUrl = env.LLM_VISION_BASE_URL?.trim()
     ? env.LLM_VISION_BASE_URL.trim().replace(/\/+$/, "")
     : undefined;
