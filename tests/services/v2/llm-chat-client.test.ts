@@ -51,6 +51,40 @@ describe("OpenAiCompatibleLlmScoringClient.chat", () => {
     expect(body.thinking).toEqual({ type: "disabled" });
   });
 
+  it("uses the configured vision model when chat messages include image content", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      status: 200,
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "图片看起来是 AI 海报" } }]
+      })
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const client = new OpenAiCompatibleLlmScoringClient({
+      ...config,
+      textModel: "glm-4.7",
+      visionModel: "glm-4.6v",
+    });
+    await client.chat(
+      [
+        {
+          role: "user",
+          content: [
+            { type: "text", text: "请判断这张图" },
+            { type: "image_url", image_url: { url: "data:image/png;base64,abc" } },
+          ],
+        },
+      ],
+      { timeoutMs: 5000 }
+    );
+
+    const body = JSON.parse(
+      (fetchMock.mock.calls[0][1] as RequestInit).body as string
+    );
+    expect(body.model).toBe("glm-4.6v");
+  });
+
   it("does not set thinking field for non-GLM models", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       status: 200,

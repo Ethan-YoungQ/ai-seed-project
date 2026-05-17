@@ -213,11 +213,32 @@ export async function createApp(options?: {
       : undefined;
 
   const llmConfigForAiBoot = readLlmProviderConfig(process.env);
+  const aiBootCampId =
+    (feishuConfig.botChatId ? repository.getCampByGroupId(feishuConfig.botChatId)?.id : undefined) ??
+    repository.getDefaultCampId() ??
+    "camp-demo";
   const aiBootOrchestrator =
     feishuApiClient && aiBootConfig.engineMode !== "legacy"
       ? createAiBootOrchestrator({
           repo: repository,
-          memberResolver: cardRepoDeps,
+          campId: aiBootCampId,
+          chatId: feishuConfig.botChatId,
+          memberResolver: {
+            findMemberByOpenId(openId: string) {
+              const member = repository.findMemberByFeishuOpenId(openId);
+              if (!member || member.campId !== aiBootCampId) {
+                return null;
+              }
+              return {
+                id: member.id,
+                displayName: member.displayName || member.name || "未知",
+                roleType: member.roleType,
+                isParticipant: member.isParticipant,
+                isExcludedFromBoard: member.isExcludedFromBoard,
+                currentLevel: 1,
+              };
+            },
+          },
           llmClient: llmConfigForAiBoot.enabled
             ? new OpenAiCompatibleLlmScoringClient(llmConfigForAiBoot)
             : undefined,

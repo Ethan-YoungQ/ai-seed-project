@@ -77,4 +77,43 @@ describe("LarkFeishuApiClient", () => {
     expect(file.fileExt).toBe("pdf");
     expect(file.bytes.toString()).toBe("demo-file");
   });
+
+  it("can download image message resources through messageResource.get", async () => {
+    messageResourceGet.mockResolvedValue({
+      getReadableStream: () => Readable.from([Buffer.from("demo-image")])
+    });
+
+    const client = new LarkFeishuApiClient({
+      enabled: true,
+      appId: "cli_test",
+      appSecret: "secret_test",
+      eventMode: "long_connection",
+      verificationToken: undefined,
+      encryptKey: undefined,
+      botChatId: "",
+      botReceiveIdType: "chat_id",
+      base: {
+        enabled: false,
+        appToken: undefined,
+        tables: {}
+      }
+    });
+
+    const file = await client.getMessageFile({
+      messageId: "om_image_001",
+      fileKey: "img_001",
+      resourceType: "image"
+    });
+
+    expect(messageResourceGet).toHaveBeenCalledWith({
+      path: {
+        message_id: "om_image_001",
+        file_key: "img_001"
+      },
+      params: {
+        type: "image"
+      }
+    });
+    expect(file.bytes.toString()).toBe("demo-image");
+  });
 });

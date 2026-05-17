@@ -68,6 +68,43 @@ describe("normalizeFeishuMessageEvent", () => {
     });
   });
 
+  it("treats rich text post images as image evidence", () => {
+    const normalized = normalizeFeishuMessageEvent({
+      event: {
+        sender: {
+          sender_type: "user",
+          sender_id: {
+            open_id: "user-alice"
+          }
+        },
+        message: {
+          message_id: "om_post_image_001",
+          chat_id: "chat-demo",
+          chat_type: "group",
+          create_time: "1775210400000",
+          message_type: "post",
+          content: JSON.stringify({
+            title: "AI 图片练习",
+            content: [
+              [
+                { tag: "text", text: "我用 AI 生成了一张培训海报" },
+                { tag: "img", image_key: "img_post_v3_example" }
+              ]
+            ]
+          })
+        }
+      }
+    });
+
+    expect(normalized).toMatchObject({
+      messageId: "om_post_image_001",
+      rawText: "AI 图片练习 我用 AI 生成了一张培训海报",
+      fileKey: "img_post_v3_example",
+      attachmentCount: 1,
+      attachmentTypes: ["image"]
+    });
+  });
+
   it("extracts file metadata from file messages and keeps document fields for later parsing", () => {
     const normalized = normalizeFeishuMessageEvent({
       event: {

@@ -11,8 +11,15 @@ export const AI_BOOT_PROMPT_VERSION = "2026-05-16-v1";
 export interface AiBootLlmClient {
   provider: string;
   model: string;
+  visionModel?: string;
   chat(
-    messages: Array<{ role: "system" | "user"; content: string }>,
+    messages: Array<{
+      role: "system" | "user";
+      content: string | Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+      >;
+    }>,
     options: { timeoutMs: number; temperature?: number; maxTokens?: number },
   ): Promise<string>;
 }
@@ -110,8 +117,15 @@ ${JSON.stringify(evidence, null, 2)}
 
 export async function decideWithLlm(
   client: AiBootLlmClient,
-  input: { evidence: EvidenceBundle; memberName: string },
+  input: { evidence: EvidenceBundle; memberName: string; imageDataUrl?: string },
 ): Promise<ScoringDecision> {
+  const prompt = buildScoringPrompt(input);
+  const userContent = input.imageDataUrl
+    ? [
+        { type: "text" as const, text: prompt },
+        { type: "image_url" as const, image_url: { url: input.imageDataUrl } },
+      ]
+    : prompt;
   const response = await client.chat(
     [
       {
@@ -121,7 +135,7 @@ export async function decideWithLlm(
       },
       {
         role: "user",
-        content: buildScoringPrompt(input),
+        content: userContent,
       },
     ],
     {

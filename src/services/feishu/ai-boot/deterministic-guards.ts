@@ -67,6 +67,10 @@ export function runDeterministicGuards(
     return { kind: "review_required", reason: "duplicate_content" };
   }
 
+  if (isEmptyEvidence(evidence)) {
+    return { kind: "no_score", reason: "empty_evidence" };
+  }
+
   if (isTrivialOnly(evidence.sanitizedText)) {
     if (context.dailyParticipationAlreadyScored) {
       return { kind: "ignore", reason: "trivial_chat_daily_cap_used" };
@@ -80,6 +84,13 @@ export function runDeterministicGuards(
   }
 
   return { kind: "continue" };
+}
+
+function isEmptyEvidence(evidence: EvidenceBundle): boolean {
+  return evidence.sanitizedText.trim().length === 0 &&
+    evidence.urls.length === 0 &&
+    evidence.attachments.length === 0 &&
+    evidence.documentText.trim().length === 0;
 }
 
 function isTrivialOnly(text: string): boolean {

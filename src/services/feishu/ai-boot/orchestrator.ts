@@ -25,7 +25,6 @@ import {
   decideNotification,
 } from "./notification-orchestrator.js";
 
-const DEFAULT_CAMP_ID = "default";
 const ENGINE_VERSION = "ai-boot-v3.0.0";
 const ROLLING_CHAT_WINDOW_MS = 60 * 60 * 1_000;
 const TOPIC_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -49,6 +48,8 @@ export interface AiBootOrchestratorDeps {
     | "findRecentAiBootNotificationByTopicHash"
     | "findAiBootNotificationEventByScoreEventId"
   >;
+  campId: string;
+  chatId?: string;
   memberResolver: {
     findMemberByOpenId(openId: string): MemberLite | null;
   };
@@ -74,9 +75,12 @@ export function createAiBootOrchestrator(
       if (message.chatType !== "group") {
         return;
       }
+      if (deps.chatId && message.chatId !== deps.chatId) {
+        return;
+      }
 
       let event = deps.repo.findAiBootEventByMessageId(
-        DEFAULT_CAMP_ID,
+        deps.campId,
         message.messageId,
       );
 
@@ -99,6 +103,7 @@ export function createAiBootOrchestrator(
       if (!event) {
         const proposedEvent = buildEvent({
           id: deps.uuid(),
+          campId: deps.campId,
           message,
           member,
           evidence,
@@ -107,7 +112,7 @@ export function createAiBootOrchestrator(
         const inserted = deps.repo.insertAiBootEvent(proposedEvent);
         event = inserted
           ? proposedEvent
-          : deps.repo.findAiBootEventByMessageId(DEFAULT_CAMP_ID, message.messageId);
+          : deps.repo.findAiBootEventByMessageId(deps.campId, message.messageId);
 
         if (!event) {
           return;
@@ -123,12 +128,12 @@ export function createAiBootOrchestrator(
       }
 
       const duplicateApprovedScore = deps.repo.findApprovedAiBootScoreEventByContentHash(
-        DEFAULT_CAMP_ID,
+        deps.campId,
         evidence.contentHash,
         event.id,
       );
       const duplicateEvent = deps.repo.findAiBootEventByContentHash(
-        DEFAULT_CAMP_ID,
+        deps.campId,
         evidence.contentHash,
         event.id,
       );
@@ -139,7 +144,7 @@ export function createAiBootOrchestrator(
         isExcludedFromBoard: member.isExcludedFromBoard,
         mentionedBot: Boolean(deps.botOpenId && message.mentionedBotIds.includes(deps.botOpenId)),
         dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
-          campId: DEFAULT_CAMP_ID,
+          campId: deps.campId,
           memberId: member.id,
           category: "daily_participation",
           decidedAtFrom: dailyWindow.start,
@@ -156,11 +161,24 @@ export function createAiBootOrchestrator(
       }
 
       const decision = guardOutcome.kind === "continue"
-        ? await decideContribution({ deps, evidence, member })
+        ? enforcePostLlmGuards(
+            await decideContribution({ deps, evidence, member, message }),
+            {
+              dailyParticipationAlreadyScored: deps.repo.countApprovedAiBootScoreEvents({
+                campId: deps.campId,
+                memberId: member.id,
+                category: "daily_participation",
+                decidedAtFrom: dailyWindow.start,
+                decidedAtTo: dailyWindow.end,
+              }) > 0,
+              evidence,
+            },
+          )
         : decisionFromGuard(guardOutcome, evidence);
 
       const scoreEvent = buildScoreEvent({
         id: deps.uuid(),
+        campId: deps.campId,
         eventId: event.id,
         memberId: member.id,
         decision,
@@ -320,6 +338,7 @@ function shanghaiBusinessDayBounds(nowIso: string): { start: string; end: string
 
 function buildEvent(input: {
   id: string;
+  campId: string;
   message: NormalizedFeishuMessage;
   member: MemberLite;
   evidence: EvidenceBundle;
@@ -329,7 +348,7 @@ function buildEvent(input: {
 
   return {
     id: input.id,
-    campId: DEFAULT_CAMP_ID,
+    campId: input.campId,
     chatId: message.chatId ?? "",
     memberId: member.id,
     sourceMessageId: message.messageId,
@@ -373,8 +392,9 @@ async function decideContribution(input: {
   deps: AiBootOrchestratorDeps;
   evidence: EvidenceBundle;
   member: MemberLite;
+  message: NormalizedFeishuMessage;
 }): Promise<ScoringDecision> {
-  const { deps, evidence, member } = input;
+  const { deps, evidence, member, message } = input;
 
   if (!deps.llmClient) {
     return parseScoringDecision({
@@ -389,10 +409,80 @@ async function decideContribution(input: {
     });
   }
 
-  return decideWithLlm(deps.llmClient, {
-    evidence,
-    memberName: member.displayName,
-  });
+  try {
+    return await decideWithLlm(deps.llmClient, {
+      evidence,
+      memberName: member.displayName,
+      imageDataUrl: await buildVisionImageDataUrl({ deps, message, evidence }),
+    });
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err);
+    return parseScoringDecision({
+      status: "review_required",
+      category: "formal_task",
+      scoreDelta: 1,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: `LLM scoring failed; operator review required: ${reason.slice(0, 160)}`,
+      evidence: summarizeEvidence(evidence),
+      badges: ["llm_error"],
+    });
+  }
+}
+
+async function buildVisionImageDataUrl(input: {
+  deps: AiBootOrchestratorDeps;
+  message: NormalizedFeishuMessage;
+  evidence: EvidenceBundle;
+}): Promise<string | undefined> {
+  if (!input.deps.llmClient || !("visionModel" in input.deps.llmClient)) {
+    return undefined;
+  }
+  if (!input.message.fileKey) {
+    return undefined;
+  }
+  if (!input.evidence.attachments.some((attachment) => attachment.type === "image")) {
+    return undefined;
+  }
+
+  try {
+    const file = await input.deps.feishuClient.getMessageFile({
+      messageId: input.message.messageId,
+      fileKey: input.message.fileKey,
+      resourceType: "image",
+    });
+    const mimeType = file.mimeType || "image/png";
+    return `data:${mimeType};base64,${file.bytes.toString("base64")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function enforcePostLlmGuards(
+  decision: ScoringDecision,
+  input: {
+    dailyParticipationAlreadyScored: boolean;
+    evidence: EvidenceBundle;
+  },
+): ScoringDecision {
+  if (
+    decision.status === "approved" &&
+    decision.category === "daily_participation" &&
+    input.dailyParticipationAlreadyScored
+  ) {
+    return parseScoringDecision({
+      status: "no_score",
+      category: "daily_participation",
+      scoreDelta: 0,
+      confidence: "high",
+      notifyPolicy: "silent",
+      reason: "daily_participation_cap_used",
+      evidence: summarizeEvidence(input.evidence),
+      badges: ["post_llm_guard"],
+    });
+  }
+
+  return decision;
 }
 
 function decisionFromGuard(
@@ -450,6 +540,7 @@ function summarizeEvidence(evidence: EvidenceBundle): string {
 
 function buildScoreEvent(input: {
   id: string;
+  campId: string;
   eventId: string;
   memberId: string;
   decision: ScoringDecision;
@@ -468,7 +559,7 @@ function buildScoreEvent(input: {
   return {
     id: input.id,
     eventId: input.eventId,
-    campId: DEFAULT_CAMP_ID,
+    campId: input.campId,
     memberId: input.memberId,
     category: decision.category,
     scoreDelta: decision.scoreDelta,

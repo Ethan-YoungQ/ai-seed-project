@@ -61,6 +61,7 @@ export interface FeishuMessageFileInput {
   messageId: string;
   fileKey: string;
   fileName?: string;
+  resourceType?: "file" | "image";
 }
 
 export interface FeishuChatCreateInput {
@@ -337,7 +338,7 @@ export class LarkFeishuApiClient implements FeishuApiClient {
               file_key: input.fileKey
             },
             params: {
-              type: "file"
+              type: input.resourceType ?? "file"
             }
           })
         : await this.client.im.file.get({

@@ -1654,6 +1654,17 @@ export class SqliteRepository {
     return Number(row.count ?? 0);
   }
 
+  countAiBootScoreEvents(input: { campId?: string }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(*) AS count
+         FROM ai_boot_score_events
+         WHERE (? IS NULL OR camp_id = ?)`
+      )
+      .get(input.campId ?? null, input.campId ?? null) as { count: number };
+    return Number(row.count ?? 0);
+  }
+
   countApprovedAiBootScoreEventsBefore(input: {
     campId: string;
     memberId: string;

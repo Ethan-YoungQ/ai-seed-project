@@ -56,13 +56,21 @@ export interface NormalizedFeishuMessage {
   cleanedText: string;
 }
 
-function inferAttachmentTypes(messageType: string | undefined, attachments: Array<{ type?: string }>) {
+function inferAttachmentTypes(
+  messageType: string | undefined,
+  attachments: Array<{ type?: string }>,
+  fileKey: string | undefined,
+) {
   if (attachments.length > 0) {
     return attachments.map((attachment) => attachment.type).filter((type): type is string => Boolean(type));
   }
 
   if (messageType === "image" || messageType === "file" || messageType === "media") {
     return [messageType];
+  }
+
+  if (fileKey && messageType === "post") {
+    return ["image"];
   }
 
   return [];
@@ -103,6 +111,18 @@ function extractPostText(body: { content: PostContentBlock[][]; title?: string }
   return fragments.join(" ");
 }
 
+function extractFirstPostImageKey(body: { content: PostContentBlock[][] }): string | undefined {
+  for (const row of body.content) {
+    for (const block of row) {
+      if (block.tag === "img" && block.image_key) {
+        return block.image_key;
+      }
+    }
+  }
+
+  return undefined;
+}
+
 function readMessageContent(content: string): {
   text: string;
   fileKey?: string;
@@ -113,6 +133,7 @@ function readMessageContent(content: string): {
     const parsed = JSON.parse(content) as {
       text?: string;
       file_key?: string;
+      image_key?: string;
       file_name?: string;
       mime_type?: string;
       content?: PostContentBlock[][];
@@ -123,7 +144,7 @@ function readMessageContent(content: string): {
     if (isPostContent(parsed)) {
       return {
         text: extractPostText(parsed),
-        fileKey: undefined,
+        fileKey: extractFirstPostImageKey(parsed),
         fileName: undefined,
         mimeType: undefined
       };
@@ -132,7 +153,7 @@ function readMessageContent(content: string): {
     // Standard text/file message format
     return {
       text: parsed.text ?? "",
-      fileKey: parsed.file_key,
+      fileKey: parsed.file_key ?? parsed.image_key,
       fileName: parsed.file_name,
       mimeType: parsed.mime_type
     };
@@ -193,7 +214,7 @@ export function normalizeFeishuMessageEvent(payload: unknown): NormalizedFeishuM
   const parsedContent = readMessageContent(content);
   const rawText = parsedContent.text;
   const attachments = raw.event?.message?.attachments ?? [];
-  const attachmentTypes = inferAttachmentTypes(messageType, attachments);
+  const attachmentTypes = inferAttachmentTypes(messageType, attachments, parsedContent.fileKey);
   const fileExt = inferDocumentFileExt({
     fileName: parsedContent.fileName,
     mimeType: parsedContent.mimeType

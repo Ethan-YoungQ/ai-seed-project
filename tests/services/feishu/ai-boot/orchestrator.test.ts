@@ -34,11 +34,15 @@ function message(overrides: Partial<NormalizedFeishuMessage> = {}): NormalizedFe
   };
 }
 
-function makeLlmClient(decision: Record<string, unknown>): AiBootLlmClient {
+function makeLlmClient(
+  decision: Record<string, unknown>,
+  overrides: Partial<AiBootLlmClient> = {},
+): AiBootLlmClient {
   return {
     provider: "test-provider",
     model: "test-model",
     chat: vi.fn().mockResolvedValue(JSON.stringify(decision)),
+    ...overrides,
   };
 }
 
@@ -177,9 +181,14 @@ function makeDeps(
       }),
     },
     feishuClient: {
-      getMessageFile: vi.fn(),
+      getMessageFile: vi.fn().mockResolvedValue({
+        fileKey: "img-key-1",
+        mimeType: "image/png",
+        bytes: Buffer.from("fake-image"),
+      }),
       sendTextMessage: vi.fn().mockResolvedValue({ messageId: "praise-1" }),
     },
+    campId: "default",
     config: {
       engineMode: "v3_live",
       allowGroupPraise: true,
@@ -209,6 +218,19 @@ const approvedArtifact = {
 };
 
 describe("createAiBootOrchestrator", () => {
+  it("ignores messages from non-bound chats", async () => {
+    const deps = makeDeps({
+      chatId: "chat-expected",
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({ chatId: "chat-other" }));
+
+    expect(deps.events).toHaveLength(0);
+    expect(deps.scoreEvents).toHaveLength(0);
+  });
+
   it("writes event and shadow score event in v3_shadow without approved leaderboard score or notification", async () => {
     const deps = makeDeps({
       config: {
@@ -234,6 +256,20 @@ describe("createAiBootOrchestrator", () => {
     });
     expect(deps.repo.sumApprovedAiBootScore("default", "member-1")).toBe(0);
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("writes v3 events into the configured production camp id", async () => {
+    const deps = makeDeps({
+      campId: "camp-demo",
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    expect(deps.events[0]).toMatchObject({ campId: "camp-demo" });
+    expect(deps.scoreEvents[0]).toMatchObject({ campId: "camp-demo" });
+    expect(deps.repo.findAiBootEventByMessageId).toHaveBeenCalledWith("camp-demo", "om-1");
   });
 
   it("writes approved score in v3_live and sends group praise when notification policy allows", async () => {
@@ -390,6 +426,37 @@ describe("createAiBootOrchestrator", () => {
     });
   });
 
+  it("passes image evidence to the configured vision model when an image key is available", async () => {
+    const llmClient = makeLlmClient(approvedArtifact, {
+      visionModel: "glm-4.6v",
+    });
+    const deps = makeDeps({ llmClient });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      messageType: "image",
+      rawText: "",
+      cleanedText: "",
+      attachmentCount: 1,
+      attachmentTypes: ["image"],
+      fileKey: "img-key-1",
+    }));
+
+    expect(deps.feishuClient.getMessageFile).toHaveBeenCalledWith({
+      messageId: "om-1",
+      fileKey: "img-key-1",
+      resourceType: "image",
+    });
+    const messages = (llmClient.chat as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(messages[1].content).toEqual([
+      expect.objectContaining({ type: "text" }),
+      {
+        type: "image_url",
+        image_url: { url: "data:image/png;base64,ZmFrZS1pbWFnZQ==" },
+      },
+    ]);
+  });
+
   it("allows an experience share without prompt to approve as ai_practice_reflection", async () => {
     const deps = makeDeps({
       llmClient: makeLlmClient({
@@ -440,6 +507,46 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("writes no-score without calling LLM when evidence is empty", async () => {
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      rawText: "",
+      cleanedText: "",
+    }));
+
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "no_score",
+      scoreDelta: 0,
+      reason: "empty_evidence",
+    });
+    expect(deps.llmClient?.chat).not.toHaveBeenCalled();
+  });
+
+  it("moves LLM failures into review_required instead of dropping the score event", async () => {
+    const llmClient: AiBootLlmClient = {
+      provider: "test-provider",
+      model: "test-model",
+      chat: vi.fn().mockRejectedValue(new Error("rate limited")),
+    };
+    const deps = makeDeps({ llmClient });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "review_required",
+      scoreDelta: 1,
+      notifyPolicy: "silent",
+    });
+    expect(deps.scoreEvents[0].reason).toContain("rate limited");
+  });
+
   it("does not repeat daily participation score after the member already has one for the Shanghai business day", async () => {
     const deps = makeDeps({
       now: () => "2026-05-16T15:30:00.000Z",
@@ -473,6 +580,55 @@ describe("createAiBootOrchestrator", () => {
 
     expect(deps.events).toHaveLength(1);
     expect(deps.scoreEvents).toHaveLength(1);
+  });
+
+  it("caps LLM-approved daily participation after one Shanghai business day score", async () => {
+    const deps = makeDeps({
+      now: () => "2026-05-16T15:30:00.000Z",
+      llmClient: makeLlmClient({
+        status: "approved",
+        category: "daily_participation",
+        scoreDelta: 1,
+        confidence: "high",
+        notifyPolicy: "silent",
+        reason: "LLM treated this as participation.",
+        evidence: "ordinary chat",
+        badges: ["daily"],
+      }),
+    });
+    deps.scoreEvents.push({
+      id: "existing-score",
+      eventId: "existing-event",
+      campId: "default",
+      memberId: "member-1",
+      category: "daily_participation",
+      scoreDelta: 1,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "silent",
+      reason: "trivial_chat",
+      evidence: "OK",
+      badgesJson: "[]",
+      modelProvider: "deterministic",
+      modelName: "guards",
+      promptVersion: "",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-15T16:01:00.000Z",
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      rawText: "今天 AI 课挺有启发",
+      cleanedText: "今天 AI 课挺有启发",
+    }));
+
+    expect(deps.scoreEvents.at(-1)).toMatchObject({
+      status: "no_score",
+      category: "daily_participation",
+      scoreDelta: 0,
+      reason: "daily_participation_cap_used",
+    });
   });
 
   it("ignores duplicate content when a previous event already has an approved score", async () => {

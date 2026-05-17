@@ -39,7 +39,7 @@ export type ChatRole = "system" | "user" | "assistant";
 
 export interface ChatMessage {
   role: ChatRole;
-  content: string;
+  content: MessageContent;
 }
 
 export interface ChatOptions {
@@ -139,6 +139,7 @@ type MessageContent =
 export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmChatClient {
   readonly provider: string;
   readonly model: string;
+  readonly visionModel: string;
   private readonly baseUrl: string;
   private readonly apiKey: string;
 
@@ -151,6 +152,7 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     }
     this.provider = config.provider;
     this.model = config.textModel;
+    this.visionModel = config.visionModel;
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
   }
@@ -181,7 +183,7 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
           authorization: `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.model,
+          model: options.imageUrl && this.visionModel ? this.visionModel : this.model,
           response_format: { type: "json_object" },
           messages: [{ role: "user", content }]
         }),
@@ -257,7 +259,10 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     // GLM-4.7 / GLM-5 默认启用思考模式（先推理再回答），这会显著增加延迟
     // 和 token 成本。助教问答场景属于"lightweight requests"，官方推荐关闭。
     // 参考：https://docs.z.ai/guides/capabilities/thinking-mode
-    const isGlmModel = this.model.toLowerCase().startsWith("glm-");
+    const requestModel = messages.some(hasImageContent) && this.visionModel
+      ? this.visionModel
+      : this.model;
+    const isGlmModel = requestModel.toLowerCase().startsWith("glm-");
 
     let response: Response;
     try {
@@ -268,7 +273,7 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
           authorization: `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.model,
+          model: requestModel,
           messages,
           temperature: options.temperature ?? 0.7,
           max_tokens: options.maxTokens ?? 800,
@@ -341,7 +346,7 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
           authorization: `Bearer ${this.apiKey}`
         },
         body: JSON.stringify({
-          model: this.model,
+          model: options.imageUrl && this.visionModel ? this.visionModel : this.model,
           response_format: { type: "json_object" },
           messages: [{ role: "user", content }]
         }),
@@ -418,6 +423,11 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
       `unexpected JSON format, raw: ${rawContent.slice(0, 300)}`
     );
   }
+}
+
+function hasImageContent(message: ChatMessage): boolean {
+  return Array.isArray(message.content) &&
+    message.content.some((part) => part.type === "image_url");
 }
 
 function anySignal(signals: AbortSignal[]): AbortSignal {

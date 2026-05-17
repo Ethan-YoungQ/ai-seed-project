@@ -10,7 +10,8 @@ describe("readLlmProviderConfig", () => {
       LLM_API_KEY: "sk-demo",
       LLM_TIMEOUT_MS: "15000",
       LLM_MAX_INPUT_CHARS: "6000",
-      LLM_CONCURRENCY: "3"
+      LLM_CONCURRENCY: "3",
+      LLM_RATE_LIMIT_PER_SEC: "1"
     });
 
     expect(config.enabled).toBe(true);
@@ -24,6 +25,19 @@ describe("readLlmProviderConfig", () => {
     expect(config.timeoutMs).toBe(15000);
     expect(config.maxInputChars).toBe(6000);
     expect(config.concurrency).toBe(3);
+    expect(config.rateLimitPerSec).toBe(1);
+  });
+
+  it("defaults LLM rate limit to concurrency when not provided", () => {
+    const config = readLlmProviderConfig({
+      LLM_ENABLED: "true",
+      LLM_PROVIDER: "glm",
+      LLM_API_KEY: "sk-demo",
+      LLM_CONCURRENCY: "2"
+    });
+
+    expect(config.concurrency).toBe(2);
+    expect(config.rateLimitPerSec).toBe(2);
   });
 
   it("keeps an openai-compatible provider when explicitly requested", () => {

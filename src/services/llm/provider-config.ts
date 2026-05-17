@@ -16,6 +16,7 @@ export interface LlmProviderConfig {
   timeoutMs: number;
   maxInputChars: number;
   concurrency: number;
+  rateLimitPerSec?: number;
 }
 
 const DEFAULT_ALIYUN_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
@@ -87,6 +88,7 @@ export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): Llm
     env.LLM_TEXT_MODEL?.trim() || (provider === "glm" ? "glm-4.7" : "qwen3-flash");
   const visionModel = env.LLM_VISION_MODEL?.trim() || "";
   const fileModel = env.LLM_FILE_MODEL?.trim() || (provider === "glm" ? "" : "qwen-doc");
+  const concurrency = readInteger(env.LLM_CONCURRENCY, 3);
 
   return {
     enabled: requestedEnabled && Boolean(apiKey) && Boolean(baseUrl),
@@ -100,6 +102,7 @@ export function readLlmProviderConfig(env: NodeJS.ProcessEnv = process.env): Llm
     fileParserToolType: readFileParserToolType(env.LLM_FILE_PARSER_TOOL_TYPE),
     timeoutMs: readInteger(env.LLM_TIMEOUT_MS, 15000),
     maxInputChars: readInteger(env.LLM_MAX_INPUT_CHARS, 6000),
-    concurrency: readInteger(env.LLM_CONCURRENCY, 3)
+    concurrency,
+    rateLimitPerSec: readInteger(env.LLM_RATE_LIMIT_PER_SEC, concurrency)
   };
 }

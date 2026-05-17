@@ -507,7 +507,7 @@ function buildLlmWorker(
 
   const workerConfig: WorkerConfig = {
     concurrency: llmConfig.concurrency,
-    rateLimitPerSec: llmConfig.concurrency,
+    rateLimitPerSec: llmConfig.rateLimitPerSec ?? llmConfig.concurrency,
     pollIntervalMs: 5000,
     taskTimeoutMs: llmConfig.timeoutMs,
     maxAttempts: 3,

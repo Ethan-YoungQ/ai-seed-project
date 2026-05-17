@@ -120,7 +120,7 @@ describe("buildScoringPrompt", () => {
 describe("decideWithLlm", () => {
   it("sends a system contract and user scoring prompt then parses the JSON response", async () => {
     const calls: Array<{
-      messages: Array<{ role: "system" | "user"; content: string }>;
+      messages: Parameters<AiBootLlmClient["chat"]>[0];
       options: { timeoutMs: number; temperature?: number; maxTokens?: number };
     }> = [];
     const client: AiBootLlmClient = {
@@ -161,7 +161,7 @@ describe("decideWithLlm", () => {
     expect(calls[0]?.messages[0]).toMatchObject({ role: "system" });
     expect(calls[0]?.messages[0]?.content).toContain("ScoringDecision");
     expect(calls[0]?.messages[1]).toMatchObject({ role: "user" });
-    expect(calls[0]?.messages[1]?.content).toContain("JSON-only");
+    expect(String(calls[0]?.messages[1]?.content)).toContain("JSON-only");
     expect(calls[0]?.options).toEqual({
       timeoutMs: 15000,
       temperature: 0.1,
@@ -175,7 +175,7 @@ describe("decideWithLlm", () => {
       provider: "test-provider",
       model: "test-model",
       async chat(messages) {
-        systemContent = messages[0]?.content ?? "";
+        systemContent = String(messages[0]?.content ?? "");
         return JSON.stringify({
           status: "approved",
           category: "ai_practice_reflection",
