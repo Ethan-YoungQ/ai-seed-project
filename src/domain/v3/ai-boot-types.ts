@@ -21,6 +21,7 @@ export type AiBootNotifyPolicy =
   | "group_praise"
   | "daily_digest";
 export type AiBootConfidence = "high" | "medium" | "low";
+export type AiBootImageUnderstandingStatus = "pending" | "running" | "succeeded" | "failed";
 
 export interface AiBootEventRecord {
   id: string;
@@ -71,4 +72,18 @@ export interface AiBootNotificationEventRecord {
   notifyPolicy: AiBootNotifyPolicy;
   sentAt: string;
   textHash: string;
+}
+
+export interface AiBootImageUnderstandingRecord {
+  fileKey: string;
+  messageId: string;
+  contentHash: string;
+  modelName: string;
+  caption: string;
+  scoreHint: string;
+  latencyMs: number;
+  status: AiBootImageUnderstandingStatus;
+  errorReason: string;
+  createdAt: string;
+  updatedAt: string;
 }

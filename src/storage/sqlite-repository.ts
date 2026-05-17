@@ -26,6 +26,7 @@ import type {
   AiBootDecisionStatus,
   AiBootEventRecord,
   AiBootEventStatus,
+  AiBootImageUnderstandingRecord,
   AiBootNotificationEventRecord,
   AiBootScoreCategory,
   AiBootScoreEventRecord
@@ -476,6 +477,22 @@ CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_chat_sent
   ON ai_boot_notification_events (camp_id, chat_id, sent_at);
 CREATE INDEX IF NOT EXISTS idx_ai_boot_notifications_topic_sent
   ON ai_boot_notification_events (camp_id, topic_hash, sent_at);
+
+CREATE TABLE IF NOT EXISTS ai_boot_image_understandings (
+  content_hash TEXT PRIMARY KEY,
+  file_key TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  model_name TEXT NOT NULL,
+  caption TEXT NOT NULL,
+  score_hint TEXT NOT NULL,
+  latency_ms INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  error_reason TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_boot_image_understandings_status
+  ON ai_boot_image_understandings (status, updated_at);
 
 CREATE TABLE IF NOT EXISTS v2_member_dimension_scores (
   member_id TEXT NOT NULL,
@@ -1934,6 +1951,61 @@ export class SqliteRepository {
       )
       .get(scoreEventId) as Record<string, unknown> | undefined;
     return row ? this.mapAiBootNotificationEventRow(row) : undefined;
+  }
+
+  upsertAiBootImageUnderstanding(input: AiBootImageUnderstandingRecord): void {
+    this.db
+      .prepare(
+        `INSERT INTO ai_boot_image_understandings
+          (content_hash, file_key, message_id, model_name, caption, score_hint,
+           latency_ms, status, error_reason, created_at, updated_at)
+         VALUES
+          (@contentHash, @fileKey, @messageId, @modelName, @caption, @scoreHint,
+           @latencyMs, @status, @errorReason, @createdAt, @updatedAt)
+         ON CONFLICT(content_hash) DO UPDATE SET
+           file_key = @fileKey,
+           message_id = @messageId,
+           model_name = @modelName,
+           caption = @caption,
+           score_hint = @scoreHint,
+           latency_ms = @latencyMs,
+           status = @status,
+           error_reason = @errorReason,
+           updated_at = @updatedAt`
+      )
+      .run(input);
+  }
+
+  findAiBootImageUnderstandingByContentHash(
+    contentHash: string
+  ): AiBootImageUnderstandingRecord | null {
+    const row = this.db
+      .prepare(
+        `SELECT content_hash, file_key, message_id, model_name, caption,
+                score_hint, latency_ms, status, error_reason, created_at, updated_at
+         FROM ai_boot_image_understandings
+         WHERE content_hash = ?`
+      )
+      .get(contentHash) as Record<string, unknown> | undefined;
+    return row ? this.mapAiBootImageUnderstandingRow(row) : null;
+  }
+
+  private mapAiBootImageUnderstandingRow(
+    row: Record<string, unknown>
+  ): AiBootImageUnderstandingRecord {
+    return {
+      fileKey: String(row.file_key),
+      messageId: String(row.message_id),
+      contentHash: String(row.content_hash),
+      modelName: String(row.model_name),
+      caption: String(row.caption),
+      scoreHint: String(row.score_hint),
+      latencyMs: Number(row.latency_ms),
+      status: String(row.status) as AiBootImageUnderstandingRecord["status"],
+      errorReason: String(row.error_reason),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at)
+    };
   }
 
   private mapAiBootEventRow(row: Record<string, unknown>): AiBootEventRecord {

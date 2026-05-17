@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 
 import type {
   AiBootEventRecord,
+  AiBootImageUnderstandingRecord,
   AiBootScoreEventRecord
 } from "../../../src/domain/v3/ai-boot-types.js";
 import { SqliteRepository } from "../../../src/storage/sqlite-repository.js";
@@ -60,7 +61,54 @@ function scoreEvent(overrides: Partial<AiBootScoreEventRecord> = {}): AiBootScor
   };
 }
 
+function imageUnderstanding(
+  overrides: Partial<AiBootImageUnderstandingRecord> = {}
+): AiBootImageUnderstandingRecord {
+  return {
+    fileKey: "img-001",
+    messageId: "om-001",
+    contentHash: "hash-image-001",
+    modelName: "qwen3.5-flash",
+    caption: "一张医疗主题 AI 海报",
+    scoreHint: "ai_artifact:4",
+    latencyMs: 74271,
+    status: "succeeded",
+    errorReason: "",
+    createdAt: "2026-05-17T10:00:00.000Z",
+    updatedAt: "2026-05-17T10:00:00.000Z",
+    ...overrides
+  };
+}
+
 describe("SqliteRepository ai boot v3", () => {
+  it("upserts and fetches image understanding records by content hash", () => {
+    const r = repo();
+    r.upsertAiBootImageUnderstanding(imageUnderstanding());
+
+    expect(r.findAiBootImageUnderstandingByContentHash("hash-image-001")).toMatchObject({
+      fileKey: "img-001",
+      caption: "一张医疗主题 AI 海报",
+      scoreHint: "ai_artifact:4",
+      status: "succeeded"
+    });
+
+    r.upsertAiBootImageUnderstanding(imageUnderstanding({
+      caption: "更新后的图片描述",
+      status: "failed",
+      errorReason: "vision timeout",
+      updatedAt: "2026-05-17T10:01:00.000Z"
+    }));
+
+    expect(r.findAiBootImageUnderstandingByContentHash("hash-image-001")).toMatchObject({
+      caption: "更新后的图片描述",
+      status: "failed",
+      errorReason: "vision timeout",
+      updatedAt: "2026-05-17T10:01:00.000Z"
+    });
+    expect(r.findAiBootImageUnderstandingByContentHash("missing")).toBeNull();
+    r.close();
+  });
+
   it("inserts and finds an event by source message id", () => {
     const r = repo();
     expect(r.insertAiBootEvent(event())).toBe(true);
