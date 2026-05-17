@@ -31,6 +31,7 @@ interface RecentChatContextProviderOptions {
   userContextHours?: number;
   groupContextMinutes?: number;
   maxUserMessages?: number;
+  maxTriggerUserMessages?: number;
   maxGroupMessages?: number;
   maxUserFiles?: number;
   maxFileTextChars?: number;
@@ -87,6 +88,7 @@ export function createRecentChatContextProvider(
   const userContextHours = options.userContextHours ?? 24;
   const groupContextMinutes = options.groupContextMinutes ?? 10;
   const maxUserMessages = options.maxUserMessages ?? 10;
+  const maxTriggerUserMessages = options.maxTriggerUserMessages ?? 5;
   const maxGroupMessages = options.maxGroupMessages ?? 15;
   const maxUserFiles = options.maxUserFiles ?? 2;
   const maxFileTextChars = options.maxFileTextChars ?? 12_000;
@@ -201,6 +203,16 @@ export function createRecentChatContextProvider(
           content: buildLines(
             sameUser.filter((message) => isTextLike(message) || message.messageType === "file"),
             maxUserMessages,
+          ),
+        });
+      }
+
+      if (sameUser.length > 0 && wantsDefaultGroupContext) {
+        blocks.push({
+          title: "触发用户最近发言",
+          content: buildLines(
+            sameUser.filter(isTextLike),
+            maxTriggerUserMessages,
           ),
         });
       }

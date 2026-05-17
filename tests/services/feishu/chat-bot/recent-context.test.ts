@@ -152,6 +152,43 @@ describe("createRecentChatContextProvider", () => {
     expect(groupContext?.content).toContain("4 分拿得漂亮");
   });
 
+  it("includes the trigger user's last five text messages for ordinary bot mentions", async () => {
+    const provider = createRecentChatContextProvider();
+
+    for (let i = 1; i <= 6; i += 1) {
+      provider.record(makeMsg({
+        messageId: `m-user-${i}`,
+        memberId: "u1",
+        eventTime: `2026-05-03T11:${String(40 + i).padStart(2, "0")}:00.000Z`,
+        rawText: `用户自己的第 ${i} 段发言`,
+      }));
+    }
+    provider.record(makeMsg({
+      messageId: "m-other",
+      memberId: "u2",
+      eventTime: "2026-05-03T11:50:30.000Z",
+      rawText: "其他人的发言不应该进入用户近期上下文",
+    }));
+
+    const blocks = await provider.resolveMentionContext({
+      currentMessage: makeMsg({
+        messageId: "m-mention",
+        eventTime: "2026-05-03T12:00:00.000Z",
+        cleanedText: "你觉得我刚才说的方向怎么样？",
+        rawText: "@_user_1 你觉得我刚才说的方向怎么样？",
+      }),
+      feishuClient: {} as any,
+    });
+
+    const userContext = blocks.find((block) => block.title === "触发用户最近发言");
+    expect(userContext).toBeDefined();
+    expect(userContext!.content).toContain("2026-05-03 11:42");
+    expect(userContext!.content).toContain("用户自己的第 2 段发言");
+    expect(userContext!.content).toContain("用户自己的第 6 段发言");
+    expect(userContext!.content).not.toContain("用户自己的第 1 段发言");
+    expect(userContext!.content).not.toContain("其他人的发言");
+  });
+
   it("keeps default context clean: latest 10 messages and 2 files only", async () => {
     const provider = createRecentChatContextProvider({
       documentExtractor: {

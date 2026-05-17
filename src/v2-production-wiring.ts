@@ -576,6 +576,7 @@ function buildContinuousPromotionRuntime(
     const decision = evaluateContinuousPromotion({
       currentLevel: level.currentLevel as ContinuousLevelValue,
       cumulativeAq: totals.totalScore,
+      dimensions: totals.dimensions,
     });
     if (!decision.promoted) {
       return;
@@ -629,7 +630,17 @@ function buildContinuousPromotionRuntime(
     },
 
     backfillEligible(): void {
-      for (const memberId of repo.listEligibleStudentIds(campId)) {
+      const rankedMemberIds = repo.listEligibleStudentIds(campId)
+        .map((memberId) => ({
+          memberId,
+          totalScore: repo.fetchAiBootLegacyDimensionScoreTotals(campId, memberId).totalScore,
+        }))
+        .sort((left, right) =>
+          right.totalScore - left.totalScore ||
+          left.memberId.localeCompare(right.memberId)
+        )
+        .map((row) => row.memberId);
+      for (const memberId of rankedMemberIds) {
         this.trigger(memberId);
       }
     },
@@ -865,7 +876,9 @@ export function wireV2Production(
   );
   const llmWorker = buildLlmWorker(repo, aggregator, continuousPromotion);
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
-  continuousPromotion.backfillEligible();
+  if (process.env.V2_CONTINUOUS_PROMOTION_BACKFILL === "true") {
+    continuousPromotion.backfillEligible();
+  }
 
   return { ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, adminPanelLifecycle: adminPanelLifecycleInstance };
 }
