@@ -183,6 +183,38 @@ describe("message-commands fallback praise", () => {
     expect(praiseCalls[0][0].replyMessageId).toBeUndefined();
   });
 
+  it("falls back to local praise when LLM praise contains banned repeated slang", async () => {
+    vi.setSystemTime(new Date("2026-04-29T12:06:00Z"));
+    const chat = vi.fn().mockResolvedValue("@测试学员 这波 AI 实践直接封神，含金量拉满！");
+    const deps = buildDeps({
+      semanticScoring: {
+        enabled: true,
+        llmClient: {
+          provider: "fake",
+          model: "fake",
+          multiScore: vi.fn().mockResolvedValue({
+            items: [{ code: "C1", score: 4, reason: "AI 工具实战" }],
+            raw: null,
+          }),
+          score: vi.fn(),
+          chat,
+        } as any,
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "我用 AI 做了一套拜访前客户资料整理流程，包含输入字段、检索步骤、摘要规则和输出模板，准备下周试用后继续复盘。",
+    }));
+    await vi.advanceTimersByTimeAsync(100);
+
+    const praiseCalls = sendTextMessage.mock.calls.filter(
+      (call: any[]) => typeof call[0]?.text === "string" && call[0].text.includes("@测试学员"),
+    );
+    expect(praiseCalls.length).toBe(1);
+    expect(praiseCalls[0][0].text).not.toMatch(/绝绝子|yyds|天花板|杀疯|封神|拿捏|炸场|卷王|含金量拉满/i);
+  });
+
   it("does NOT send praise when total score < 3", async () => {
     const deps = buildDeps();
     const handler = createMessageCommandHandler(deps);

@@ -697,6 +697,8 @@ function normalizePraiseText(text: string, displayName: string): string {
   return `@${displayName} ${cleaned}`.trim();
 }
 
+const BANNED_PRAISE_TERMS = /绝绝子|yyds|天花板|杀疯|封神|拿捏|炸场|卷王|含金量拉满/i;
+
 async function buildLlmPraiseText(input: {
   client: LlmScoringClient & LlmChatClient;
   displayName: string;
@@ -727,7 +729,9 @@ async function buildLlmPraiseText(input: {
     maxTokens: 180,
   });
   const normalized = normalizePraiseText(text, input.displayName);
-  return normalized.length <= 140 ? normalized : null;
+  if (normalized.length > 140) return null;
+  if (BANNED_PRAISE_TERMS.test(normalized)) return null;
+  return normalized;
 }
 
 async function sendProactivePraise(input: {

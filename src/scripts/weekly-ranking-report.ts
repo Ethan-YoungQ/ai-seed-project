@@ -56,9 +56,9 @@ export function buildReportCard(
   const top = top3[0];
   if (top) {
     const compliments = [
-      `🔥 @${top.memberName} 这周直接封神了！维度全能一把抓，${top.cumulativeAq}AQ 绝对实力碾压 🏆 小伙伴们还不快来膜拜！`,
-      `👑 @${top.memberName} 以 ${top.cumulativeAq}AQ 拿下本周冠军，这波操作简直太秀了！yyds！继续保持这个卷王节奏 💪`,
-      `⭐ @${top.memberName} 本周表现杀疯了！${top.cumulativeAq}AQ 的含金量懂得都懂 🎉 期待下周更精彩的操作！`,
+      `@${top.memberName} 本周以 ${top.cumulativeAq}AQ 排在第一，说明你在学习、实践和分享上都有持续投入，继续保持这个节奏。`,
+      `@${top.memberName} 这周的优势不只是分数高，而是多个维度都有记录，${top.cumulativeAq}AQ 是稳定参与换来的结果。`,
+      `@${top.memberName} 本周拿到 ${top.cumulativeAq}AQ，贡献比较持续。下一步可以多补一点复盘，让经验更容易被同学复用。`,
     ];
     text += `\n${compliments[Math.floor(Math.random() * compliments.length)]}\n`;
   }
@@ -70,9 +70,9 @@ export function buildReportCard(
   }
 
   const encouragements = [
-    `\n🌱 排名只是暂时的！这周的经验就是下周的 buff 🚀 下周就是你起飞的时候！`,
-    `\n💪 一时的落后不代表什么！AI 训练营是一场马拉松，稳住别方，下周冲就完了！`,
-    `\n🔥 乾坤未定，你我皆是黑马！这周积累的下周全爆发出来，干就完了！`,
+    `\n🌱 排名只是当前快照。下周可以先从一次作业提交、一次工具复盘或一次同伴答疑开始，把分数慢慢补起来。`,
+    `\n💪 暂时落后不代表跟不上。优先完成基础打卡，再补一条可复用的 AI 实践经验，会更容易追上节奏。`,
+    `\n📌 下一步很明确：少量但持续地提交、复盘、互助，天梯榜会更快反映你的进展。`,
   ];
   text += encouragements[Math.floor(Math.random() * encouragements.length)];
 
