@@ -37,6 +37,17 @@ interface ContinuousPromotionRuntime {
   backfillEligible(): void;
 }
 
+const AI_BOOT_V3_CATEGORY_DIMENSION: Record<string, "K" | "H" | "C" | "S" | "G"> = {
+  daily_participation: "K",
+  formal_task: "H",
+  ai_artifact: "C",
+  prompt_or_method: "C",
+  peer_help: "S",
+  ai_practice_reflection: "G",
+  resource_recommendation: "G",
+  operator_adjustment: "K",
+};
+
 function buildIngestorDeps(
   repo: SqliteRepository,
   campId: string,
@@ -527,6 +538,40 @@ function buildContinuousPromotionRuntime(
     );
   }
 
+  function fetchEffectivePromotionTotals(memberId: string): {
+    totalScore: number;
+    dimensions: { K: number; H: number; C: number; S: number; G: number };
+  } {
+    const totals = repo.fetchAiBootLegacyDimensionScoreTotals(campId, memberId);
+    const dimensions = { ...totals.dimensions };
+    const db = (repo as unknown as {
+      db?: { prepare(sql: string): { all(...args: unknown[]): unknown[] } };
+    }).db;
+    if (!db) {
+      return { totalScore: totals.totalScore, dimensions };
+    }
+
+    const rows = db.prepare(
+      `SELECT category, COALESCE(SUM(score_delta), 0) AS score
+       FROM ai_boot_score_events
+       WHERE camp_id = ? AND member_id = ? AND status = 'approved'
+       GROUP BY category`
+    ).all(campId, memberId) as Array<{ category: string; score: number }>;
+
+    let v3Total = 0;
+    for (const row of rows) {
+      const score = Number(row.score);
+      v3Total += score;
+      const dimension = AI_BOOT_V3_CATEGORY_DIMENSION[row.category] ?? "K";
+      dimensions[dimension] += score;
+    }
+
+    return {
+      totalScore: totals.totalScore + v3Total,
+      dimensions,
+    };
+  }
+
   async function announceIfEligible(input: {
     memberId: string;
     memberName: string;
@@ -572,7 +617,7 @@ function buildContinuousPromotionRuntime(
     }
 
     const level = repo.getMemberLevel(memberId);
-    const totals = repo.fetchAiBootLegacyDimensionScoreTotals(campId, memberId);
+    const totals = fetchEffectivePromotionTotals(memberId);
     const decision = evaluateContinuousPromotion({
       currentLevel: level.currentLevel as ContinuousLevelValue,
       cumulativeAq: totals.totalScore,
@@ -635,7 +680,7 @@ function buildContinuousPromotionRuntime(
       const rankedMemberIds = repo.listEligibleStudentIds(campId)
         .map((memberId) => ({
           memberId,
-          totalScore: repo.fetchAiBootLegacyDimensionScoreTotals(campId, memberId).totalScore,
+          totalScore: fetchEffectivePromotionTotals(memberId).totalScore,
         }))
         .sort((left, right) =>
           right.totalScore - left.totalScore ||
@@ -853,6 +898,7 @@ export interface V2ProductionDeps {
   windowSettler: ReturnType<typeof buildRealWindowSettler>;
   llmWorker: LlmScoringWorker | null;
   adminPanelLifecycle: AdminPanelLifecycleDeps;
+  continuousPromotion: ContinuousPromotionRuntime;
 }
 
 export function wireV2Production(
@@ -882,5 +928,13 @@ export function wireV2Production(
     continuousPromotion.backfillEligible();
   }
 
-  return { ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, adminPanelLifecycle: adminPanelLifecycleInstance };
+  return {
+    ingestor,
+    aggregator,
+    periodLifecycle,
+    windowSettler,
+    llmWorker,
+    adminPanelLifecycle: adminPanelLifecycleInstance,
+    continuousPromotion,
+  };
 }

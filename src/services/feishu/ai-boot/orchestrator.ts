@@ -70,6 +70,7 @@ export interface AiBootOrchestratorDeps {
   feishuClient: Pick<FeishuApiClient, "getMessageFile" | "sendTextMessage">;
   imageUnderstandingService?: AiBootImageUnderstandingService;
   recoverImageOnlyOnStartup?: boolean;
+  afterApprovedScore?: (scoreEvent: AiBootScoreEventRecord) => void | Promise<void>;
   config: AiBootConfig;
   now: () => string;
   uuid: () => string;
@@ -243,6 +244,10 @@ export function createAiBootOrchestrator(
       const insertedScore = deps.repo.insertAiBootScoreEvent(scoreEvent);
       if (!insertedScore) {
         return;
+      }
+
+      if (scoreEvent.status === "approved" && scoreEvent.scoreDelta !== 0) {
+        await deps.afterApprovedScore?.(scoreEvent);
       }
 
       if (deps.config.engineMode !== "v3_live") {

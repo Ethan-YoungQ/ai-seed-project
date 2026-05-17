@@ -36,6 +36,7 @@ const app = await createApp({
   periodLifecycle: v2.periodLifecycle,
   windowSettler: v2.windowSettler,
   llmWorker: v2.llmWorker,
+  continuousPromotion: v2.continuousPromotion,
   adminPanelLifecycle: v2.adminPanelLifecycle,
 });
 

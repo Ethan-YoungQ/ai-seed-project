@@ -129,6 +129,10 @@ export interface V2Runtime {
   memberSync: unknown;
 }
 
+export interface ContinuousPromotionRuntimeLike {
+  trigger(memberId: string): void;
+}
+
 export async function createApp(options?: {
   databaseUrl?: string;
   feishuConfigOverride?: Partial<FeishuConfig>;
@@ -142,6 +146,7 @@ export async function createApp(options?: {
   llmWorker?: unknown;
   reactionTracker?: unknown;
   memberSync?: unknown;
+  continuousPromotion?: ContinuousPromotionRuntimeLike;
   adminPanelLifecycle?: AdminPanelLifecycleDeps;
 }) {
   loadLocalEnv();
@@ -250,6 +255,9 @@ export async function createApp(options?: {
           botOpenId: botOpenId || undefined,
           feishuClient: feishuApiClient,
           recoverImageOnlyOnStartup: true,
+          afterApprovedScore: (scoreEvent) => {
+            options?.continuousPromotion?.trigger(scoreEvent.memberId);
+          },
           config: aiBootConfig,
           now: () => new Date().toISOString(),
           uuid: () => crypto.randomUUID(),
