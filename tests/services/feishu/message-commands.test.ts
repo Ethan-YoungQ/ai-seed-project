@@ -318,6 +318,51 @@ describe("message-commands chat bot recent context", () => {
       text: "结合你的 PDF 看，第二提问方向是准确的。",
     }));
   });
+
+  it("handles score opt-out mentions as operational corrections instead of open-ended chat", async () => {
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "闲聊回复",
+      used: "llm",
+      latencyMs: 12,
+    });
+    const sendTextMessage = vi.fn().mockResolvedValue({ messageId: "reply-001" });
+    const deps: MessageCommandDeps = {
+      feishuClient: {
+        sendTextMessage,
+        sendCardMessage: vi.fn().mockResolvedValue({ messageId: "card-001" }),
+      } as any,
+      lifecycle: {} as any,
+      cardDeps: { repo: { findMemberByOpenId: vi.fn() } } as any,
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([
+            {
+              title: "群聊局部上文",
+              content: "2026-05-03 11:58 app-bot [text] @陈文超 这波 4 分拿得漂亮",
+            },
+          ]),
+        },
+      },
+    };
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      messageId: "om-no-score",
+      rawText: "@_user_1 不用加分，纯瞎聊",
+      cleanedText: "不用加分，纯瞎聊",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(reply).not.toHaveBeenCalled();
+    expect(sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      receiveId: "chat-001",
+      text: expect.stringContaining("不计分"),
+    }));
+  });
 });
 
 describe("message-commands operator command routing", () => {

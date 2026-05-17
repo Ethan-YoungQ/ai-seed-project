@@ -119,6 +119,39 @@ describe("createRecentChatContextProvider", () => {
     expect(blocks.map((block) => block.content).join("\n")).toContain("对象、目标和约束");
   });
 
+  it("includes recent group context for ordinary bot mentions so score corrections stay grounded", async () => {
+    const provider = createRecentChatContextProvider();
+
+    provider.record(makeMsg({
+      messageId: "m-share",
+      memberId: "u1",
+      eventTime: "2026-05-03T11:57:00.000Z",
+      rawText: "我给客户演示了 ChatGPT 海报设计，对方自己操作了一遍。",
+    }));
+    provider.record(makeMsg({
+      messageId: "m-bot-praise",
+      memberId: "app-bot",
+      senderType: "app",
+      eventTime: "2026-05-03T11:58:00.000Z",
+      rawText: "@陈文超 AI 实战的亮点很清楚，这波 4 分拿得漂亮",
+    }));
+
+    const blocks = await provider.resolveMentionContext({
+      currentMessage: makeMsg({
+        messageId: "m-mention",
+        eventTime: "2026-05-03T12:00:00.000Z",
+        cleanedText: "不用加分，纯瞎聊",
+        rawText: "@_user_1 不用加分，纯瞎聊",
+        mentionedBotIds: ["ou_bot"],
+      }),
+      feishuClient: {} as any,
+    });
+
+    const groupContext = blocks.find((block) => block.title === "群聊局部上文");
+    expect(groupContext?.content).toContain("ChatGPT 海报设计");
+    expect(groupContext?.content).toContain("4 分拿得漂亮");
+  });
+
   it("keeps default context clean: latest 10 messages and 2 files only", async () => {
     const provider = createRecentChatContextProvider({
       documentExtractor: {

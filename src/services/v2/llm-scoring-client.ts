@@ -142,6 +142,8 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
   readonly visionModel: string;
   private readonly baseUrl: string;
   private readonly apiKey: string;
+  private readonly visionBaseUrl: string;
+  private readonly visionApiKey: string;
 
   constructor(config: LlmProviderConfig) {
     if (!config.apiKey) {
@@ -155,6 +157,23 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     this.visionModel = config.visionModel;
     this.baseUrl = config.baseUrl.replace(/\/+$/, "");
     this.apiKey = config.apiKey;
+    this.visionBaseUrl = (config.visionBaseUrl || config.baseUrl).replace(/\/+$/, "");
+    this.visionApiKey = config.visionApiKey || config.apiKey;
+  }
+
+  private requestTarget(hasImage: boolean): { baseUrl: string; apiKey: string; model: string } {
+    if (hasImage && this.visionModel) {
+      return {
+        baseUrl: this.visionBaseUrl,
+        apiKey: this.visionApiKey,
+        model: this.visionModel,
+      };
+    }
+    return {
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      model: this.model,
+    };
   }
 
   async score(
@@ -174,16 +193,17 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
         ]
       : promptText;
 
+    const target = this.requestTarget(Boolean(options.imageUrl));
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
+      response = await fetch(`${target.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${this.apiKey}`
+          authorization: `Bearer ${target.apiKey}`
         },
         body: JSON.stringify({
-          model: options.imageUrl && this.visionModel ? this.visionModel : this.model,
+          model: target.model,
           response_format: { type: "json_object" },
           messages: [{ role: "user", content }]
         }),
@@ -259,18 +279,17 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
     // GLM-4.7 / GLM-5 默认启用思考模式（先推理再回答），这会显著增加延迟
     // 和 token 成本。助教问答场景属于"lightweight requests"，官方推荐关闭。
     // 参考：https://docs.z.ai/guides/capabilities/thinking-mode
-    const requestModel = messages.some(hasImageContent) && this.visionModel
-      ? this.visionModel
-      : this.model;
+    const target = this.requestTarget(messages.some(hasImageContent));
+    const requestModel = target.model;
     const isGlmModel = requestModel.toLowerCase().startsWith("glm-");
 
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
+      response = await fetch(`${target.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${this.apiKey}`
+          authorization: `Bearer ${target.apiKey}`
         },
         body: JSON.stringify({
           model: requestModel,
@@ -337,16 +356,17 @@ export class OpenAiCompatibleLlmScoringClient implements LlmScoringClient, LlmCh
         ]
       : promptText;
 
+    const target = this.requestTarget(Boolean(options.imageUrl));
     let response: Response;
     try {
-      response = await fetch(`${this.baseUrl}/chat/completions`, {
+      response = await fetch(`${target.baseUrl}/chat/completions`, {
         method: "POST",
         headers: {
           "content-type": "application/json",
-          authorization: `Bearer ${this.apiKey}`
+          authorization: `Bearer ${target.apiKey}`
         },
         body: JSON.stringify({
-          model: options.imageUrl && this.visionModel ? this.visionModel : this.model,
+          model: target.model,
           response_format: { type: "json_object" },
           messages: [{ role: "user", content }]
         }),

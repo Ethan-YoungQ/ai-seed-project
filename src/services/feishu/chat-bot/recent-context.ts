@@ -87,7 +87,7 @@ export function createRecentChatContextProvider(
   const userContextHours = options.userContextHours ?? 24;
   const groupContextMinutes = options.groupContextMinutes ?? 10;
   const maxUserMessages = options.maxUserMessages ?? 10;
-  const maxGroupMessages = options.maxGroupMessages ?? 10;
+  const maxGroupMessages = options.maxGroupMessages ?? 15;
   const maxUserFiles = options.maxUserFiles ?? 2;
   const maxFileTextChars = options.maxFileTextChars ?? 12_000;
   const maxTextLineChars = options.maxTextLineChars ?? 500;
@@ -172,9 +172,7 @@ export function createRecentChatContextProvider(
       const wantsHomeworkContext = HOMEWORK_CONTEXT_RE.test(text);
       const wantsGroupContext = GROUP_CONTEXT_RE.test(text);
       const wantsFollowUpContext = FOLLOW_UP_RE.test(text);
-      if (!wantsHomeworkContext && !wantsGroupContext && !wantsFollowUpContext) {
-        return [];
-      }
+      const wantsDefaultGroupContext = !wantsHomeworkContext && !wantsFollowUpContext;
 
       const nowMs = parseTimeMs(current.eventTime);
       const allPrior = (byChat.get(current.chatId) ?? []).filter((message) =>
@@ -207,7 +205,7 @@ export function createRecentChatContextProvider(
         });
       }
 
-      if (wantsGroupContext) {
+      if (wantsGroupContext || wantsDefaultGroupContext) {
         const groupSinceMs = nowMs - groupContextMinutes * 60 * 1000;
         const groupMessages = allPrior.filter((message) =>
           message.recordedAtMs >= groupSinceMs && (isTextLike(message) || message.messageType === "file")

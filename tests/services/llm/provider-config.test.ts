@@ -69,10 +69,14 @@ describe("readLlmProviderConfig", () => {
       LLM_ENABLED: "true",
       LLM_PROVIDER: "glm",
       LLM_API_KEY: "sk-demo",
-      LLM_VISION_MODEL: "glm-4v-flash"
+      LLM_VISION_MODEL: "glm-4v-flash",
+      LLM_VISION_BASE_URL: "https://vision.example.com/v1/",
+      LLM_VISION_API_KEY: "sk-vision"
     });
 
     expect(config.visionModel).toBe("glm-4v-flash");
+    expect(config.visionBaseUrl).toBe("https://vision.example.com/v1");
+    expect(config.visionApiKey).toBe("sk-vision");
   });
 
   it("defaults visionModel to empty string when not set", () => {

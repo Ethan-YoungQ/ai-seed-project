@@ -57,7 +57,7 @@ export function buildFirstThreeAnnouncementCard(
       elements: [
         {
           tag: "markdown",
-          content: `本窗口结算后有以下英雄成功晋升段位：\n\n${lines}`,
+          content: `达到段位条件后，以下学员已自动晋升：\n\n${lines}`,
         },
       ],
     },

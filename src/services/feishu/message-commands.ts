@@ -1200,6 +1200,7 @@ let lastPraiseAt = 0;
  * 导致几小时前的 @Bot 消息被重新回复到原群。
  */
 const MESSAGE_STALENESS_THRESHOLD_MS = 3 * 60 * 1000;
+const SCORE_OPT_OUT_RE = /(不\s*(用|要|必)?\s*(加分|计分|评分)|别\s*(加分|计分|评分)|无需\s*(加分|计分|评分)|不算分|别算分|纯瞎聊)/;
 
 function isAlreadyProcessed(messageId: string): boolean {
   const now = Date.now();
@@ -1230,6 +1231,22 @@ function isMessageStale(eventTime: string): boolean {
   if (!Number.isFinite(eventMs)) return false;
   const ageMs = Date.now() - eventMs;
   return ageMs > MESSAGE_STALENESS_THRESHOLD_MS;
+}
+
+function isScoreOptOutMention(text: string): boolean {
+  return SCORE_OPT_OUT_RE.test(text.replace(/\s+/g, ""));
+}
+
+function buildScoreOptOutReply(contextBlocks: Array<{ title: string; content: string }> | undefined): string {
+  const hasRecentScoreContext = (contextBlocks ?? []).some((block) =>
+    /(\d+\s*分|加分|计分|评分|拿得漂亮)/.test(block.content)
+  );
+
+  if (hasRecentScoreContext) {
+    return "收到，我按“不计分”理解这条纠偏。刚才如果已经触发了自动加分或夸赞，请运营用「调分」撤回对应分数；后续我不会把这句纠偏当作得分内容。";
+  }
+
+  return "收到，这条按“不计分/纯聊天”处理。后续我不会把这句纠偏当作得分内容。";
 }
 
 /**
@@ -1277,6 +1294,19 @@ function handleChatBotMention(
             content: `尝试读取最近上下文失败：${reason}`,
           },
         ];
+      }
+
+      if (isScoreOptOutMention(message.cleanedText || message.rawText)) {
+        const replyText = buildScoreOptOutReply(contextBlocks);
+        await deps.feishuClient.sendTextMessage({
+          receiveId: message.chatId!,
+          receiveIdType: "chat_id",
+          text: replyText,
+        });
+        console.log(
+          `[ChatBot] score opt-out handled chatId=${message.chatId} messageId=${message.messageId}`,
+        );
+        return;
       }
 
       const result = await deps.chatBot!.engine.reply({

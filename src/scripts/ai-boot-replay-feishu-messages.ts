@@ -139,6 +139,27 @@ function normalizeExportedMessage(
   };
 }
 
+function readExportedMessages(messagesPath: string): LarkExportMessage[] {
+  const parsed = JSON.parse(readFileSync(messagesPath, "utf8")) as unknown;
+  if (Array.isArray(parsed)) {
+    return parsed as LarkExportMessage[];
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("messages file must be an array or lark-cli output with data.messages");
+  }
+  const root = parsed as Record<string, unknown>;
+  const data = root.data && typeof root.data === "object"
+    ? root.data as Record<string, unknown>
+    : undefined;
+  if (Array.isArray(data?.messages)) {
+    return data.messages as LarkExportMessage[];
+  }
+  if (Array.isArray(root.messages)) {
+    return root.messages as LarkExportMessage[];
+  }
+  throw new Error("messages file must be an array or lark-cli output with data.messages");
+}
+
 export async function replayFeishuMessages(input: {
   messagesPath: string;
   databaseUrl: string;
@@ -191,7 +212,7 @@ export async function replayFeishuMessages(input: {
       allowGroupPraise: false,
       allowDailyDigest: false,
     };
-    const messages = JSON.parse(readFileSync(input.messagesPath, "utf8")) as LarkExportMessage[];
+    const messages = readExportedMessages(input.messagesPath);
     const before = repository.countAiBootScoreEvents({ campId: input.campId });
     let currentNow = new Date().toISOString();
 

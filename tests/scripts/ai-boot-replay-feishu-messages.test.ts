@@ -88,4 +88,47 @@ describe("replayFeishuMessages", () => {
       }),
     ).rejects.toThrow("not chat-wrong");
   });
+
+  it("accepts raw lark-cli +chat-messages-list JSON output", async () => {
+    const { dbPath, messagesPath } = makeFixture();
+    writeFileSync(
+      messagesPath,
+      JSON.stringify({
+        ok: true,
+        data: {
+          messages: [
+            {
+              message_id: "om-cli-1",
+              msg_type: "text",
+              content: "我用 AI 做了一张客户沟通海报，并总结了使用过程",
+              create_time: "2026-05-16 22:00",
+              sender: { id: "ou-alice", sender_type: "user" },
+            },
+            {
+              message_id: "om-cli-app",
+              msg_type: "text",
+              content: "bot reply",
+              create_time: "2026-05-16 22:01",
+              sender: { id: "cli-bot", sender_type: "app" },
+            },
+          ],
+        },
+      }),
+      "utf8",
+    );
+
+    const result = await replayFeishuMessages({
+      messagesPath,
+      databaseUrl: dbPath,
+      campId: "camp-demo",
+      chatId: "chat-prod",
+      dryRun: true,
+    });
+
+    expect(result).toMatchObject({
+      messagesSeen: 2,
+      userMessages: 1,
+      replayed: 1,
+    });
+  });
 });

@@ -340,6 +340,38 @@ describe("OpenAiCompatibleLlmScoringClient", () => {
     ]);
   });
 
+  test("multimodal: uses dedicated vision endpoint and key when configured", async () => {
+    const body = {
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({ pass: true, score: 5, reason: "image ok" })
+          }
+        }
+      ]
+    };
+    const spy = vi
+      .spyOn(globalThis, "fetch")
+      .mockImplementation(() => fetchOk(body));
+    const client = new OpenAiCompatibleLlmScoringClient({
+      ...makeConfig(),
+      visionModel: "qwen-vl-max-latest",
+      visionBaseUrl: "https://dashscope.example.com/compatible-mode/v1",
+      visionApiKey: "sk-vision",
+    });
+
+    await client.score("describe image", {
+      timeoutMs: 2000,
+      imageUrl: "https://cdn.example.com/img.png"
+    });
+
+    const [url, init] = spy.mock.calls[0] as [string, RequestInit];
+    const parsed = JSON.parse(init.body as string);
+    expect(url).toBe("https://dashscope.example.com/compatible-mode/v1/chat/completions");
+    expect((init.headers as Record<string, string>).authorization).toBe("Bearer sk-vision");
+    expect(parsed.model).toBe("qwen-vl-max-latest");
+  });
+
   test("text-only: sends plain string content when imageUrl is absent", async () => {
     const body = {
       choices: [

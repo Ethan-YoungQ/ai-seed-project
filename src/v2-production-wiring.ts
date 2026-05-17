@@ -23,12 +23,25 @@ import type { FeishuCardJson } from "./services/feishu/cards/types.js";
 import { settleWindow, type SettlerDependencies } from "./domain/v2/window-settler.js";
 import { detectAnnounceablePromotions } from "./domain/v2/promotion-announcer.js";
 import { buildFirstThreeAnnouncementCard } from "./services/feishu/cards/templates/first-three-announcement-v1.js";
+import {
+  evaluateContinuousPromotion,
+  type ContinuousLevelValue,
+} from "./domain/v2/continuous-promotion.js";
 
 // ---------------------------------------------------------------------------
 // IngestorDeps adapter
 // ---------------------------------------------------------------------------
 
-function buildIngestorDeps(repo: SqliteRepository, campId: string): IngestorDeps {
+interface ContinuousPromotionRuntime {
+  trigger(memberId: string): void;
+  backfillEligible(): void;
+}
+
+function buildIngestorDeps(
+  repo: SqliteRepository,
+  campId: string,
+  continuousPromotion?: ContinuousPromotionRuntime,
+): IngestorDeps {
   const llmConfig = readLlmProviderConfig(process.env);
 
   return {
@@ -104,6 +117,7 @@ function buildIngestorDeps(repo: SqliteRepository, campId: string): IngestorDeps
         delta,
         eventAt: new Date().toISOString(),
       });
+      continuousPromotion?.trigger(memberId);
     },
 
     insertLlmScoringTask(row: IngestorLlmTaskInsert): string {
@@ -151,7 +165,10 @@ function buildIngestorDeps(repo: SqliteRepository, campId: string): IngestorDeps
 // AggregatorDeps adapter
 // ---------------------------------------------------------------------------
 
-function buildAggregatorDeps(repo: SqliteRepository): AggregatorDeps {
+function buildAggregatorDeps(
+  repo: SqliteRepository,
+  continuousPromotion?: ContinuousPromotionRuntime,
+): AggregatorDeps {
   return {
     findEventById(id: string) {
       const ev = repo.getEventById(id);
@@ -186,6 +203,7 @@ function buildAggregatorDeps(repo: SqliteRepository): AggregatorDeps {
         delta,
         eventAt: new Date().toISOString(),
       });
+      continuousPromotion?.trigger(memberId);
     },
 
     decrementMemberDimensionScore(
@@ -491,12 +509,141 @@ function buildRealWindowSettler(repo: SqliteRepository, campId: string) {
 }
 
 // ---------------------------------------------------------------------------
+// Continuous promotion — level up as soon as cumulative AQ reaches threshold
+// ---------------------------------------------------------------------------
+
+function buildContinuousPromotionRuntime(
+  repo: SqliteRepository,
+  campId: string,
+  options?: { groupChatId?: string; sendCard?: (chatId: string, card: FeishuCardJson) => Promise<void> },
+): ContinuousPromotionRuntime {
+  const inFlight = new Set<string>();
+
+  function activeWindowId(): string {
+    return (
+      repo.findOpenWindowWithOpenSlot(campId)?.id ??
+      repo.findWindowByCode(campId, "W1")?.id ??
+      "continuous"
+    );
+  }
+
+  async function announceIfEligible(input: {
+    memberId: string;
+    memberName: string;
+    fromLevel: number;
+    toLevel: 2 | 3 | 4 | 5;
+    windowId: string;
+  }): Promise<void> {
+    if (!options?.sendCard || !options.groupChatId) {
+      return;
+    }
+
+    const announcements = detectAnnounceablePromotions(input.windowId, {
+      getPromotions: () => [
+        {
+          memberId: input.memberId,
+          fromLevel: input.fromLevel,
+          toLevel: input.toLevel,
+          promoted: true,
+        },
+      ],
+      getOrdinals: () => repo.getAnnouncementOrdinals(),
+      insertOrdinal: (ordinal) => repo.insertAnnouncementOrdinal(ordinal),
+      getMemberName: () => input.memberName,
+      now: () => new Date().toISOString(),
+    });
+
+    for (const item of announcements) {
+      const card = buildFirstThreeAnnouncementCard({ items: [item] });
+      await options.sendCard(options.groupChatId, card);
+    }
+  }
+
+  async function evaluateMember(memberId: string): Promise<void> {
+    const member = repo.getMember(memberId);
+    if (
+      !member ||
+      member.campId !== campId ||
+      member.roleType !== "student" ||
+      !member.isParticipant ||
+      member.isExcludedFromBoard
+    ) {
+      return;
+    }
+
+    const level = repo.getMemberLevel(memberId);
+    const totals = repo.fetchAiBootLegacyDimensionScoreTotals(campId, memberId);
+    const decision = evaluateContinuousPromotion({
+      currentLevel: level.currentLevel as ContinuousLevelValue,
+      cumulativeAq: totals.totalScore,
+    });
+    if (!decision.promoted) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const windowId = activeWindowId();
+    repo.insertPromotionRecord({
+      id: crypto.randomUUID(),
+      windowId,
+      memberId,
+      evaluatedAt: now,
+      fromLevel: decision.fromLevel,
+      toLevel: decision.toLevel,
+      promoted: true,
+      pathTaken: "primary",
+      reason: JSON.stringify({
+        mode: "continuous",
+        cumulativeAq: decision.cumulativeAq,
+        threshold: decision.threshold,
+      }),
+    });
+    repo.upsertMemberLevel({
+      memberId,
+      currentLevel: decision.toLevel,
+      levelAttainedAt: now,
+      lastWindowId: windowId,
+      updatedAt: now,
+    });
+
+    await announceIfEligible({
+      memberId,
+      memberName: member.displayName || member.name || memberId,
+      fromLevel: decision.fromLevel,
+      toLevel: decision.toLevel,
+      windowId,
+    });
+  }
+
+  return {
+    trigger(memberId: string): void {
+      if (inFlight.has(memberId)) return;
+      inFlight.add(memberId);
+      void evaluateMember(memberId)
+        .catch((error) => {
+          console.error("[ContinuousPromotion] evaluation failed:", error);
+        })
+        .finally(() => {
+          inFlight.delete(memberId);
+        });
+    },
+
+    backfillEligible(): void {
+      for (const memberId of repo.listEligibleStudentIds(campId)) {
+        this.trigger(memberId);
+      }
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // LLM worker (real implementation or no-op when LLM is disabled)
 // ---------------------------------------------------------------------------
 
 function buildLlmWorker(
   repo: SqliteRepository,
-  _aggregator: ScoringAggregator
+  _aggregator: ScoringAggregator,
+  continuousPromotion?: ContinuousPromotionRuntime,
 ): LlmScoringWorker | null {
   const llmConfig = readLlmProviderConfig(process.env);
   if (!llmConfig.enabled) {
@@ -590,6 +737,7 @@ function buildLlmWorker(
               delta: ev.scoreDelta,
               eventAt: now,
             });
+            continuousPromotion?.trigger(ev.memberId);
           }
         } else {
           // "rejected" or "review_required"
@@ -699,11 +847,12 @@ export function wireV2Production(
   options?: { groupChatId?: string; sendCard?: (chatId: string, card: FeishuCardJson) => Promise<void> }
 ): V2ProductionDeps {
   const campId = repo.getDefaultCampId() ?? "default";
+  const continuousPromotion = buildContinuousPromotionRuntime(repo, campId, options);
 
-  const ingestorDeps = buildIngestorDeps(repo, campId);
+  const ingestorDeps = buildIngestorDeps(repo, campId, continuousPromotion);
   const ingestor = new EventIngestor(ingestorDeps);
 
-  const aggregatorDeps = buildAggregatorDeps(repo);
+  const aggregatorDeps = buildAggregatorDeps(repo, continuousPromotion);
   const aggregator = new ScoringAggregator(aggregatorDeps);
 
   const windowSettler = buildRealWindowSettler(repo, campId);
@@ -714,8 +863,9 @@ export function wireV2Production(
     options?.sendCard,
     options?.groupChatId,
   );
-  const llmWorker = buildLlmWorker(repo, aggregator);
+  const llmWorker = buildLlmWorker(repo, aggregator, continuousPromotion);
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
+  continuousPromotion.backfillEligible();
 
   return { ingestor, aggregator, periodLifecycle, windowSettler, llmWorker, adminPanelLifecycle: adminPanelLifecycleInstance };
 }
