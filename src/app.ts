@@ -249,6 +249,7 @@ export async function createApp(options?: {
             : undefined,
           botOpenId: botOpenId || undefined,
           feishuClient: feishuApiClient,
+          recoverImageOnlyOnStartup: true,
           config: aiBootConfig,
           now: () => new Date().toISOString(),
           uuid: () => crypto.randomUUID(),

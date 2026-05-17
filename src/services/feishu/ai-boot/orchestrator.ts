@@ -69,6 +69,7 @@ export interface AiBootOrchestratorDeps {
   botOpenId?: string;
   feishuClient: Pick<FeishuApiClient, "getMessageFile" | "sendTextMessage">;
   imageUnderstandingService?: AiBootImageUnderstandingService;
+  recoverImageOnlyOnStartup?: boolean;
   config: AiBootConfig;
   now: () => string;
   uuid: () => string;
@@ -292,10 +293,12 @@ export function createAiBootOrchestrator(
       });
     }
 
-  scheduleImageOnlyRecovery({
-    deps,
-    handleMessage,
-  });
+  if (deps.recoverImageOnlyOnStartup) {
+    scheduleImageOnlyRecovery({
+      deps,
+      handleMessage,
+    });
+  }
 
   return {
     handleMessage,

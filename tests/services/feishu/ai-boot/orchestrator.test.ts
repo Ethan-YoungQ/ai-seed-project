@@ -581,6 +581,7 @@ describe("createAiBootOrchestrator", () => {
     const deps = makeDeps({
       llmClient,
       imageUnderstandingService,
+      recoverImageOnlyOnStartup: true,
     } as Partial<AiBootOrchestratorDeps>);
     deps.events.push(existingEvent);
     (deps.repo as any).listAiBootImageOnlyEventsWithoutScore = vi.fn(() => [existingEvent]);
@@ -604,6 +605,21 @@ describe("createAiBootOrchestrator", () => {
       notifyPolicy: "silent",
     });
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("does not start image-only recovery unless explicitly enabled", async () => {
+    vi.useFakeTimers();
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    (deps.repo as any).listAiBootImageOnlyEventsWithoutScore = vi.fn(() => []);
+
+    createAiBootOrchestrator(deps);
+
+    await vi.runOnlyPendingTimersAsync();
+
+    expect((deps.repo as any).listAiBootImageOnlyEventsWithoutScore).not.toHaveBeenCalled();
     vi.useRealTimers();
   });
 
