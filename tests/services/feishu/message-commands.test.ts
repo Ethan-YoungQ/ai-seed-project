@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { createMessageCommandHandler, type MessageCommandDeps } from "../../../src/services/feishu/message-commands";
 import type { NormalizedFeishuMessage } from "../../../src/services/feishu/normalize-message";
+import { classifyOperationsIntent } from "../../../src/services/feishu/operations-router";
 
 let msgCounter = 0;
 
@@ -510,6 +511,102 @@ describe("message-commands operator command routing", () => {
     expect(cardJson).toContain("成员管理");
     expect(cardJson).toContain("学员甲");
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+});
+
+describe("message-commands operations intent routing", () => {
+  it("keeps card commands above other operations intents", () => {
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 审核",
+      cleanedText: "审核",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "admin_command",
+      command: "review_queue",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 排行榜",
+      cleanedText: "排行榜",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "admin_command",
+      command: "dashboard",
+    });
+  });
+
+  it("recognizes opt-out corrections before generic @Bot chat", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "闲聊回复",
+      used: "llm",
+      latencyMs: 1,
+    });
+    const sendTextMessage = vi.fn().mockResolvedValue({ messageId: "reply-001" });
+    const deps: MessageCommandDeps = {
+      feishuClient: {
+        sendTextMessage,
+        sendCardMessage: vi.fn().mockResolvedValue({ messageId: "card-001" }),
+      } as any,
+      lifecycle: {} as any,
+      cardDeps: { repo: { findMemberByOpenId: vi.fn() } } as any,
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+    };
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      messageId: "om-revoke-score",
+      rawText: "@_user_1 撤回加分，不要加分",
+      cleanedText: "撤回加分，不要加分",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 撤回加分，不要加分",
+      cleanedText: "撤回加分，不要加分",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({ kind: "score_opt_out" });
+    expect(reply).not.toHaveBeenCalled();
+    expect(sendTextMessage).toHaveBeenCalledWith(expect.objectContaining({
+      receiveId: "chat-001",
+      text: expect.stringContaining("不计分"),
+    }));
+    vi.useRealTimers();
+  });
+
+  it("separates score candidates from learner questions", () => {
+    expect(classifyOperationsIntent(makeMsg({
+      messageType: "image",
+      rawText: "",
+      attachmentCount: 1,
+      attachmentTypes: ["image"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "score_candidate",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "我做了一张 AI实践 海报，并写了复盘",
+      cleanedText: "我做了一张 AI实践 海报，并写了复盘",
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "score_candidate",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 怎么提交作业？规则是什么",
+      cleanedText: "怎么提交作业？规则是什么",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "learner_qa",
+    });
   });
 });
 

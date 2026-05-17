@@ -49,6 +49,7 @@ import { SCORING_ITEMS } from "../../domain/v2/scoring-items-config.js";
 import { buildPraisePrompt } from "./chat-bot/persona.js";
 import type { AiBootConfig } from "./ai-boot/config.js";
 import type { AiBootOrchestrator } from "./ai-boot/orchestrator.js";
+import { classifyOperationsIntent } from "./operations-router.js";
 
 // ============================================================================
 // Keyword definitions
@@ -204,6 +205,21 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
       }
     }
 
+    const operationsIntent = classifyOperationsIntent(message, {
+      botOpenId: deps.chatBot?.botOpenId,
+    });
+
+    if (operationsIntent.kind === "score_opt_out") {
+      if (message.chatId && isChatBotMention) {
+        await deps.feishuClient.sendTextMessage({
+          receiveId: message.chatId,
+          receiveIdType: "chat_id",
+          text: buildScoreOptOutReply(undefined),
+        });
+      }
+      return;
+    }
+
     const chatContextProvider = deps.chatBot?.contextProvider ?? defaultRecentChatContextProvider;
     if (deps.chatBot && !isChatBotMention) {
       chatContextProvider.record(message);
@@ -212,6 +228,10 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
     // @Bot chat branch. handleChatBotMention runs fire-and-forget; handler returns
     // immediately so Feishu does not retry slow LLM responses.
     if (isChatBotMention) {
+      if (operationsIntent.kind === "score_candidate") {
+        await handleAutoCapture(message, deps);
+        return;
+      }
       handleChatBotMention(message, deps);
       return;
     }
@@ -1200,7 +1220,7 @@ let lastPraiseAt = 0;
  * 导致几小时前的 @Bot 消息被重新回复到原群。
  */
 const MESSAGE_STALENESS_THRESHOLD_MS = 3 * 60 * 1000;
-const SCORE_OPT_OUT_RE = /(不\s*(用|要|必)?\s*(加分|计分|评分)|别\s*(加分|计分|评分)|无需\s*(加分|计分|评分)|不算分|别算分|纯瞎聊)/;
+const SCORE_OPT_OUT_RE = /(不\s*(用|要|必)?\s*(加分|计分|评分)|别\s*(加分|计分|评分)|无需\s*(加分|计分|评分)|不算分|别算分|纯瞎聊|撤回加分|撤销加分|取消加分)/;
 
 function isAlreadyProcessed(messageId: string): boolean {
   const now = Date.now();
