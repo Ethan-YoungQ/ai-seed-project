@@ -77,12 +77,14 @@ export interface AiBootOrchestratorDeps {
 
 export interface AiBootOrchestrator {
   handleMessage(message: NormalizedFeishuMessage): Promise<void>;
+  drainPendingWork(): Promise<void>;
 }
 
 export function createAiBootOrchestrator(
   deps: AiBootOrchestratorDeps,
 ): AiBootOrchestrator {
   const notificationState = createNotificationState();
+  const pendingWork = new Set<Promise<void>>();
   const imageUnderstandingService = deps.imageUnderstandingService
     ?? createAiBootImageUnderstandingService({
       repo: deps.repo,
@@ -162,12 +164,14 @@ export function createAiBootOrchestrator(
       }
 
       if (imageOnlyMessage && !imageUnderstanding.cached) {
-        scheduleImageOnlyUnderstandingReplay({
+        const task = scheduleImageOnlyUnderstandingReplay({
           service: imageUnderstandingService,
           message,
           evidence: originalEvidence,
           replay: () => handleMessage(message),
         });
+        pendingWork.add(task);
+        task.finally(() => pendingWork.delete(task));
         return;
       }
 
@@ -302,6 +306,11 @@ export function createAiBootOrchestrator(
 
   return {
     handleMessage,
+    async drainPendingWork() {
+      while (pendingWork.size > 0) {
+        await Promise.allSettled([...pendingWork]);
+      }
+    },
   };
 }
 
@@ -634,9 +643,10 @@ function scheduleImageOnlyUnderstandingReplay(input: {
   message: NormalizedFeishuMessage;
   evidence: EvidenceBundle;
   replay: () => Promise<void>;
-}): void {
-  setTimeout(() => {
-    void input.service
+}): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      void input.service
       .understandImage({
         message: input.message,
         evidence: input.evidence,
@@ -649,8 +659,12 @@ function scheduleImageOnlyUnderstandingReplay(input: {
       })
       .catch((err) => {
         console.warn("[AiBoot] image understanding replay failed", err);
+      })
+      .finally(() => {
+        resolve();
       });
-  }, 0);
+    }, 0);
+  });
 }
 
 function appendImageUnderstandingEvidence(

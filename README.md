@@ -78,15 +78,16 @@
 | **社交力** | S | S1 群消息互动、S2 互评贡献 | 活不活跃、有没有帮助别人 |
 | **成长力** | G | G1 视频学习、G2 课外资源分享、G3 持续活跃 | 有没有反思进步、分享资源 |
 
-### 3. AI 语义评分 + 主动夸赞
+### 3. AI Boot v3：语义评分 + 低干扰运营
 
-**语义评分**：从关键词白名单全面升级为 LLM 语义理解。一条消息进入后，AI 一次性评判 9 个评分项的得分（K3/K4/C1/C3/H2/H3/G1/G2/S1），支持图片（GLM-4V-Flash）和文件（glm_file_parser）多模态解析。
+**语义评分**：从关键词白名单升级为 LLM 语义理解。一条消息进入后，AI 会结合文本、图片理解结果和文件摘要判断贡献类型，覆盖日常参与、AI 产物、实践复盘、方法分享、资源推荐、同伴帮助和正式任务等场景。
 
-- 告别白名单穷举困境——不再需要手动添加关键词
-- `glm-4.7` 驱动文本评分、助教问答和夸夸风回复
-- LLM 失败时自动降级到关键词分类器，零数据损失
+- `qwen3.5-flash` 驱动文本评分、图片理解和助教问答，统一走 OpenAI-compatible 接口
+- 图片先做异步理解并写入缓存，后续评分只读取图片描述，避免群聊回复被大图识别阻塞
+- 图片-only 消息支持后台补评和重启恢复；真实群消息回放会等待异步任务完成后再关闭数据库
+- AI Boot v3 支持 `v3_shadow` 旁路运行：真实落库、可审核、可回放，但不直接改动现有榜单分数
 
-**主动夸赞 Bot**：Bot 不再被动等待 @ 提问。当检测到学员的精彩分享（总分 ≥ 3 分），Bot 会在群里主动发表彩虹屁夸赞：
+**主动夸赞 Bot**：Bot 不再被动等待 @ 提问。当检测到学员的精彩分享（总分 ≥ 3 分），可在群里主动发表短而具体的鼓励。生产环境可通过开关控制频率，默认先少而准，避免打扰群聊：
 
 ```
 @杨斌 这份 AI 流程把业务痛点拿捏住了，落地感直接拉满 🔥
@@ -95,7 +96,7 @@
 
 > 夸赞话术采用「小红书/抖音评论区」风格，要求短、具体、有网感，避免反复使用“这个问题问得很好”“欢迎其他同学”等固定套话。
 
-**群聊上下文助教**：奇点小助教被 @ 后会结合最近群聊和文件回答问题。当前边界为最近 10 条群聊上下文 + 最近 2 份文件，适合低频训练营群聊，能处理“结合我刚交的作业”这类指代，同时避免过旧信息污染回答。
+**群聊上下文助教**：奇点小助教被 @ 后会结合最近群聊和文件回答问题。当前边界为最近 10 条群聊上下文 + 最近 2 份文件，适合低频训练营群聊；评分撤回、不要加分、管理/审核/调分等运营意图会优先走专门路由，避免误入闲聊回复。
 
 **每周排行榜结算**：每周四 12:00 自动在群内发布排行榜报告——前三名（🥇🥈🥉 含表彰话术）和后三名（📌 含鼓励话术），由 systemd timer 驱动。
 
@@ -122,12 +123,12 @@
 | Level | 称号 | AQ 门槛 | 含义 |
 |:-----:|:----:|:------:|:-----|
 | 1 | 🌱 **AI 潜力股** | 0+ | 刚刚入营，一切皆有可能 |
-| 2 | 🔬 **AI 研究员** | 50+ | 开始深入思考，展现专业素养 |
-| 3 | 🎯 **AI 操盘手** | 120+ | 学以致用，成果显著 |
-| 4 | 🧠 **AI 智慧顾问** | 200+ | 影响他人，成为团队智囊 |
-| 5 | ⚡ **AI 奇点玩家** | 300+ | 全维度卓越，突破认知边界 |
+| 2 | 🔬 **AI 研究员** | 32+ 或满足 Lv2 多路径 | 开始深入思考，展现专业素养 |
+| 3 | 🎯 **AI 操盘手** | 64+ | 学以致用，成果显著 |
+| 4 | 🧠 **AI 智慧顾问** | 128+ | 影响他人，成为团队智囊 |
+| 5 | ⚡ **AI 奇点玩家** | 224+ | 全维度卓越，突破认知边界 |
 
-升级时系统自动在群里发送段位晋升公告卡片，以游戏化语言庆祝前三位晋升者，营造仪式感和稀缺性。
+升级不再依赖结算周期，达到条件即可连续晋升。Lv2 额外支持多路径判断：有 C/S/G 信号的 24+ 分、强实践路径 32+ 分、多维活跃路径 20+ 分都可触发晋升，避免只靠签到和视频分堆出来的“空心晋升”。
 
 ### 6. 零代码管理：群聊关键词即指令
 
@@ -148,8 +149,10 @@
 
 - **每期上限** —— 每个评分项每期有独立分数上限，防止刷分
 - **幂等去重** —— 同一消息不会重复计分
-- **AI 质量判定** —— 6 项需 LLM 审核的指标经过 AI 内容质量评估
+- **AI 质量判定** —— 评分必须给出贡献类型、证据、置信度和原因
 - **管理员审核队列** —— AI 评分结果推送审核卡片，一键批准/驳回
+- **Shadow 安全阀** —— v3 评分可先真实落库观察，不直接影响榜单
+- **运营纠错意图** —— “不用加分 / 撤回加分 / 纯瞎聊”等消息不会进入开放闲聊
 - **运营手动调分** —— 管理员可绕过自动上限进行手动修正
 
 ---
@@ -201,7 +204,7 @@ Frontend:   React 18 + TypeScript + Vite (手写 CSS，赛博朋克主题)
 Backend:    Fastify + TypeScript (Node.js)
 Database:   SQLite (better-sqlite3, WAL 模式)
 IM:         飞书开放平台 SDK (WebSocket 长连接)
-AI:         GLM-4-Flash (文本评分, 免费) + GLM-4V-Flash (视觉多模态, 免费)
+AI:         Qwen3.5 Flash / OpenAI-compatible LLM (文本评分、视觉理解、助教问答)
 Schedule:   systemd timer (每周四 12:00 排行榜结算)
 Deploy:     systemd + Nginx + Let's Encrypt，单机即可运行
 ```
@@ -231,7 +234,11 @@ cp .env.example .env
 | `FEISHU_APP_ID` | 飞书自建应用 App ID |
 | `FEISHU_APP_SECRET` | 飞书自建应用 App Secret |
 | `FEISHU_BOT_CHAT_ID` | 机器人所在群聊的 chat_id |
-| `LLM_API_KEY` | 智谱 AI API Key |
+| `LLM_PROVIDER` | LLM 提供方（推荐 `aliyun`，兼容 OpenAI-style Chat API） |
+| `LLM_API_KEY` | LLM API Key |
+| `LLM_TEXT_MODEL` | 文本评分/助教问答模型（线上推荐 `qwen3.5-flash`） |
+| `LLM_VISION_MODEL` | 图片理解模型（线上推荐 `qwen3.5-flash`） |
+| `AI_BOOT_ENGINE_MODE` | AI Boot 引擎模式：`legacy` / `v3_shadow` / `v3_live` |
 
 完整环境变量说明见 `.env.example`。
 
@@ -257,6 +264,13 @@ node dist/main.js
 
 # Run tests
 npm test
+
+# Replay existing Feishu group messages in dry-run mode
+npm run ai-boot:replay-feishu-messages -- \
+  --messages /tmp/feishu-messages.json \
+  --database-url ./data/app.db \
+  --camp-id default \
+  --chat-id oc_xxx
 ```
 
 ### 5. Open Dashboard
@@ -272,7 +286,7 @@ ai-seed-project/
 ├── src/
 │   ├── domain/v2/          # 评分领域模型 (ingestor, settler, levels, promotion-announcer)
 │   ├── routes/v2/          # API 路由 (board, ranking, member detail)
-│   ├── services/feishu/    # 飞书集成 (bot, cards, message handling, promotion announcement)
+│   ├── services/feishu/    # 飞书集成 (bot, cards, message handling, AI Boot v3, promotion announcement)
 │   ├── storage/            # SQLite repository
 │   └── config/             # 配置与默认值
 ├── apps/dashboard/         # React Dashboard (Vite)
@@ -306,7 +320,7 @@ ai-seed-project/
 - Node.js 18+
 - 1 Core / 1 GB RAM
 - 飞书企业版（开放平台权限）
-- 智谱 AI API 账号
+- 阿里云百炼或其他 OpenAI-compatible LLM API 账号
 
 ### Production
 
@@ -341,7 +355,7 @@ node dist/main.js
 本项目设计为**模板化可复用**：
 
 1. **替换 IM 平台**：修改 `src/services/feishu/` 适配其他 IM（企业微信、钉钉等）
-2. **替换 AI 引擎**：修改 `src/services/feishu/message-classifier.ts` 接入其他 LLM
+2. **替换 AI 引擎**：修改 `src/services/llm/provider-config.ts` 和 `src/services/v2/llm-scoring-client.ts` 接入其他 OpenAI-compatible LLM
 3. **自定义评分维度**：修改 `src/domain/v2/` 中的评分规则和维度定义
 4. **自定义 Dashboard 主题**：修改 `apps/dashboard/src/` 中的 CSS 变量
 
@@ -386,6 +400,6 @@ node dist/main.js
 ---
 
 *AI Training Camp Evaluation System*
-*Powered by Feishu Bot + GLM-4 Vision + Gamification*
+*Powered by Feishu Bot + Qwen3.5 Flash + Gamification*
 
 </div>

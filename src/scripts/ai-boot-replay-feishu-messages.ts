@@ -268,6 +268,8 @@ export async function replayFeishuMessages(input: {
       replayed += 1;
     }
 
+    await orchestrator.drainPendingWork();
+
     const after = repository.countAiBootScoreEvents({ campId: input.campId });
     return {
       dryRun,

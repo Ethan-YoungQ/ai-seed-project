@@ -512,7 +512,9 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.feishuClient.getMessageFile).not.toHaveBeenCalled();
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
 
+    const pendingWork = orchestrator.drainPendingWork();
     await vi.runOnlyPendingTimersAsync();
+    await pendingWork;
 
     expect(imageUnderstandingService.understandImage).toHaveBeenCalledTimes(1);
     expect(deps.scoreEvents).toHaveLength(1);
