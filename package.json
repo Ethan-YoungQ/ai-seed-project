@@ -19,6 +19,7 @@
     "ai-boot:cutover-check": "tsx src/scripts/ai-boot-cutover-check.ts",
     "ai-boot:reconcile-v2-period-caps": "tsx src/scripts/ai-boot-reconcile-v2-period-caps.ts",
     "ai-boot:reconcile-v3-period-caps": "tsx src/scripts/ai-boot-reconcile-v3-period-caps.ts",
+    "ai-boot:score-audit-first-cycle": "tsx src/scripts/ai-boot-score-audit-first-cycle.ts",
     "ai-boot:apply-score-corrections": "tsx src/scripts/ai-boot-apply-production-score-corrections.ts",
     "ai-boot:apply-score-tightening": "tsx src/scripts/ai-boot-apply-score-tightening-20260518.ts",
     "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts",
