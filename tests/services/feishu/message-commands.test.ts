@@ -578,6 +578,25 @@ describe("message-commands operator command routing", () => {
     expect(cardJson).toContain("https://orz.md/dashboard/");
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
   });
+
+  it.each(["天梯榜", "排行榜", "看板"])("routes short @Bot %s command to the dashboard card", async (command) => {
+    const deps = buildDeps({
+      dashboardPin: { dashboardUrl: "https://orz.md/dashboard/" },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      chatId: `chat-dashboard-${command}`,
+      rawText: `@_user_1 ${command}`,
+      cleanedText: command,
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain("https://orz.md/dashboard/");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
 });
 
 describe("message-commands operations intent routing", () => {
@@ -964,6 +983,42 @@ describe("message-commands AI Boot v3 routing", () => {
     await handler(makeMsg({
       rawText: "@_user_1 天梯榜规则是什么",
       cleanedText: "天梯榜规则是什么",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(deps.feishuClient.sendCardMessage).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it.each([
+    "我排行榜第几",
+    "张本一在天梯榜第几",
+  ])("keeps @Bot leaderboard fact question '%s' in chat instead of dashboard cards", async (question) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "榜单事实查询结果。",
+      used: "llm",
+      latencyMs: 1,
+    });
+    const deps = buildDeps({
+      dashboardPin: { dashboardUrl: "https://orz.md/dashboard/" },
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: `@_user_1 ${question}`,
+      cleanedText: question,
       mentionedBotIds: ["ou_bot"],
     }));
     await vi.advanceTimersByTimeAsync(1);
