@@ -284,6 +284,58 @@ describe("EventIngestor.ingest", () => {
     expect(fresh?.scoreDelta).toBe(3);
   });
 
+  test("positive operator_manual adjustments respect remaining period cap", () => {
+    state.events.push({
+      id: "evt-seed",
+      memberId: "member-1",
+      periodId: "period-1",
+      itemCode: "K1",
+      scoreDelta: 2,
+      sourceRef: "src-seed",
+      status: "approved",
+      llmTaskId: null,
+      reviewNote: null,
+      payloadJson: null
+    });
+
+    const result = ingestor.ingest(ingest({
+      sourceType: "operator_manual",
+      sourceRef: "manual-positive",
+      scoreDelta: 3
+    }));
+
+    expect(result.accepted).toBe(true);
+    expect(result.effectiveDelta).toBe(1);
+    expect(state.events.find((e) => e.sourceRef === "manual-positive")?.scoreDelta).toBe(1);
+    expect(state.dims.find((d) => d.dimension === "K")?.periodScore).toBe(1);
+  });
+
+  test("negative operator_manual corrections bypass period cap", () => {
+    state.events.push({
+      id: "evt-seed",
+      memberId: "member-1",
+      periodId: "period-1",
+      itemCode: "K1",
+      scoreDelta: 3,
+      sourceRef: "src-seed",
+      status: "approved",
+      llmTaskId: null,
+      reviewNote: null,
+      payloadJson: null
+    });
+
+    const result = ingestor.ingest(ingest({
+      sourceType: "operator_manual",
+      sourceRef: "manual-negative",
+      scoreDelta: -2
+    }));
+
+    expect(result.accepted).toBe(true);
+    expect(result.effectiveDelta).toBe(-2);
+    expect(state.events.find((e) => e.sourceRef === "manual-negative")?.scoreDelta).toBe(-2);
+    expect(state.dims.find((d) => d.dimension === "K")?.periodScore).toBe(-2);
+  });
+
   test("pending sum counts against cap for the same item", () => {
     state.events.push({
       id: "evt-seed",

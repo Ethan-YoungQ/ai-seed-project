@@ -17,6 +17,7 @@
     "ai-boot:shadow-replay": "tsx src/scripts/ai-boot-shadow-replay.ts",
     "ai-boot:replay-feishu-messages": "tsx src/scripts/ai-boot-replay-feishu-messages.ts",
     "ai-boot:cutover-check": "tsx src/scripts/ai-boot-cutover-check.ts",
+    "ai-boot:reconcile-v2-period-caps": "tsx src/scripts/ai-boot-reconcile-v2-period-caps.ts",
     "ai-boot:reconcile-v3-period-caps": "tsx src/scripts/ai-boot-reconcile-v3-period-caps.ts",
     "ai-boot:apply-score-corrections": "tsx src/scripts/ai-boot-apply-production-score-corrections.ts",
     "ai-boot:apply-score-tightening": "tsx src/scripts/ai-boot-apply-score-tightening-20260518.ts",
