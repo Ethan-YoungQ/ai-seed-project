@@ -28,10 +28,10 @@ describe("buildScoringPrompt", () => {
       memberName: "王静Effie",
     });
 
-    expect(AI_BOOT_PROMPT_VERSION).toBe("2026-05-17-v1");
+    expect(AI_BOOT_PROMPT_VERSION).toBe("2026-05-18-v2");
     expect(prompt).toContain("王静Effie");
     expect(prompt).toContain("我用 AI 做了一个客户拜访复盘表");
-    expect(prompt).toContain("AI_BOOT_PROMPT_VERSION: 2026-05-17-v1");
+    expect(prompt).toContain("AI_BOOT_PROMPT_VERSION: 2026-05-18-v2");
     expect(prompt).toContain("AI_BOOT_RULESET_VERSION");
 
     expect(prompt).toContain("daily_participation: 1");
@@ -69,6 +69,19 @@ describe("buildScoringPrompt", () => {
     expect(prompt).toContain("C 可以来自 AI 图片、AI 海报、AI 工作流、客户演示、内部工作产物");
     expect(prompt).toContain("S 可以来自回答同伴问题、纠错、测试结果");
     expect(prompt).toContain("G 支持 2-3 句具体复盘");
+  });
+
+  it("tightens duplicate evidence, formal task, artifact, and short method scoring", () => {
+    const prompt = buildScoringPrompt({
+      evidence: evidence(),
+      memberName: "学员",
+    });
+
+    expect(prompt).toContain("同一条证据只能选择一个最合适的分类");
+    expect(prompt).toContain("不要再拆成第二个分类重复加分");
+    expect(prompt).toContain("作业构思、提示词草稿、画面设计说明、计划草稿不能按 formal_task 高分处理");
+    expect(prompt).toContain("单张 AI 图片、海报或视觉作品如果只有成品展示，ai_artifact 基准为 3 分");
+    expect(prompt).toContain("简短方法技巧或单条 prompt 思路通常给 prompt_or_method 4 分");
   });
 
   it("defines no-score boundaries and JSON-only ScoringDecision output", () => {

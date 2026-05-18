@@ -7,7 +7,7 @@ import {
 } from "../../../domain/v3/scoring-rules.js";
 import type { EvidenceBundle } from "./content-extractor.js";
 
-export const AI_BOOT_PROMPT_VERSION = "2026-05-17-v1";
+export const AI_BOOT_PROMPT_VERSION = "2026-05-18-v2";
 
 export interface AiBootLlmClient {
   provider: string;
@@ -64,6 +64,10 @@ AI_BOOT_RULESET_VERSION: ${AI_BOOT_RULESET_VERSION}
 - C 可以来自 ${CSG_SCORE_OPPORTUNITIES.C.join("、")}。
 - S 可以来自${CSG_SCORE_OPPORTUNITIES.S.join("、")}。
 - G 支持 ${CSG_SCORE_OPPORTUNITIES.G.join("、")}。
+- 同一条证据只能选择一个最合适的分类；正式作业附件中自带的复盘、prompt 或方法说明，不要再拆成第二个分类重复加分。
+- formal_task 只适用于已经完成并提交的正式作业、测验或运营指定任务交付物；作业构思、提示词草稿、画面设计说明、计划草稿不能按 formal_task 高分处理。
+- 单张 AI 图片、海报或视觉作品如果只有成品展示，ai_artifact 基准为 3 分；只有同时包含清楚的业务使用场景、迭代过程、方法说明或高质量落地结果时，才给 4-5 分。
+- 简短方法技巧或单条 prompt 思路通常给 prompt_or_method 4 分；5-6 分需要多步骤、可复用、可验证的方法或工作流。
 
 分类与分值范围（必须严格遵守）：
 - daily_participation: ${CATEGORY_SCORE_RANGES.daily_participation.min}

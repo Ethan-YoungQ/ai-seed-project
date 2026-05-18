@@ -1,4 +1,4 @@
-export const AI_BOOT_RULESET_VERSION = "2026-05-17";
+export const AI_BOOT_RULESET_VERSION = "2026-05-18-score-tightening";
 
 export const CATEGORY_SCORE_RANGES = {
   daily_participation: { min: 1, max: 1 },

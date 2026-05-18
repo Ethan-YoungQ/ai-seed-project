@@ -8,7 +8,7 @@ import {
 
 describe("v3 scoring rules", () => {
   test("defines the expected ruleset version", () => {
-    expect(AI_BOOT_RULESET_VERSION).toBe("2026-05-17");
+    expect(AI_BOOT_RULESET_VERSION).toBe("2026-05-18-score-tightening");
   });
 
   test("defines exactly the expected category score ranges", () => {

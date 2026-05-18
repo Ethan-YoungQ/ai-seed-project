@@ -18,6 +18,7 @@
     "ai-boot:replay-feishu-messages": "tsx src/scripts/ai-boot-replay-feishu-messages.ts",
     "ai-boot:cutover-check": "tsx src/scripts/ai-boot-cutover-check.ts",
     "ai-boot:apply-score-corrections": "tsx src/scripts/ai-boot-apply-production-score-corrections.ts",
+    "ai-boot:apply-score-tightening": "tsx src/scripts/ai-boot-apply-score-tightening-20260518.ts",
     "bootstrap:feishu": "tsx src/scripts/bootstrap-feishu.ts",
     "reset:launch": "tsx src/scripts/reset-for-launch.ts",
     "sync:members": "tsx src/scripts/sync-feishu-group-members.ts",
