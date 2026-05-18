@@ -24,6 +24,7 @@ export interface FirstCycleAuditMemberPlan {
   memberId: string;
   memberName?: string;
   replayedTotal: number;
+  delta?: number;
   missingEvents?: FirstCycleAuditEventPlan[];
   overScoredEvents?: FirstCycleAuditEventPlan[];
 }
@@ -44,6 +45,7 @@ export interface FirstCycleAuditMemberResult {
   applied: boolean;
   appliedDelta: number;
   reason: string;
+  warnings: string[];
 }
 
 export interface FirstCycleScoreAuditResult {
@@ -120,7 +122,8 @@ function insertPositiveAdjustment(input: {
   chatId: string;
   beforeTotal: number;
   replayedTotal: number;
-  delta: number;
+  reportedDelta: number | null;
+  appliedDelta: number;
   missingEvents: FirstCycleAuditEventPlan[];
   now: string;
   uuid: () => string;
@@ -144,13 +147,14 @@ function insertPositiveAdjustment(input: {
 
   const eventUuid = input.uuid();
   const scoreUuid = input.uuid();
-  const auditReason = `${AUDIT_MARKER}: confirmed missing positive delta ${input.delta}; before=${input.beforeTotal}; replayed=${input.replayedTotal}`;
+  const auditReason = `${AUDIT_MARKER}: confirmed missing positive delta ${input.appliedDelta}; before=${input.beforeTotal}; replayed=${input.replayedTotal}; reported_delta=${input.reportedDelta ?? ""}`;
   const reviewNote = `${auditReason}; member=${input.memberName}; missing_events=${summarizeEvents(input.missingEvents)}`;
   const evidence = JSON.stringify({
     marker: AUDIT_MARKER,
     beforeTotal: input.beforeTotal,
     replayedTotal: input.replayedTotal,
-    delta: input.delta,
+    reportedDelta: input.reportedDelta,
+    appliedDelta: input.appliedDelta,
     missingEvents: input.missingEvents,
   });
 
@@ -190,7 +194,7 @@ function insertPositiveAdjustment(input: {
     eventId: `first-cycle-score-audit-event-${eventUuid}`,
     campId: input.campId,
     memberId: input.memberId,
-    scoreDelta: input.delta,
+    scoreDelta: input.appliedDelta,
     reason: auditReason,
     evidence,
     reviewNote,
@@ -232,17 +236,27 @@ export function auditFirstCycleScores(input: {
       const memberPlan = planByMember.get(member.id);
       const beforeTotal = currentTotal(input.repository, campId, member.id);
       const replayedTotal = memberPlan?.replayedTotal ?? null;
-      const delta = replayedTotal === null ? null : replayedTotal - beforeTotal;
+      const replayedDelta = replayedTotal === null ? null : replayedTotal - beforeTotal;
+      const delta = memberPlan?.delta ?? replayedDelta;
       const missingEvents = memberPlan?.missingEvents ?? [];
       const positiveMissingEvents = missingEvents.filter((event) => event.scoreDelta > 0);
+      const positiveMissingTotal = positiveMissingEvents.reduce((sum, event) => sum + event.scoreDelta, 0);
       const overScoredEvents = memberPlan?.overScoredEvents ?? [];
+      const overScoredTotal = overScoredEvents
+        .filter((event) => event.scoreDelta < 0)
+        .reduce((sum, event) => sum + event.scoreDelta, 0);
+      const expectedNetDelta = positiveMissingTotal + overScoredTotal;
+      const warnings = (delta !== null && delta !== expectedNetDelta) ||
+        (replayedDelta !== null && replayedDelta !== expectedNetDelta)
+        ? ["reported_delta_mismatch"]
+        : [];
       let applied = false;
       let appliedDelta = 0;
       let reason = plan ? "plan_no_delta" : "no_plan_current_total_only";
 
-      if (replayedTotal !== null && delta !== null && delta > 0) {
+      if (positiveMissingTotal > 0) {
         reason = positiveMissingEvents.length > 0 ? "positive_missing_delta" : "positive_delta_without_confirmed_missing_events";
-        if (input.apply && positiveMissingEvents.length > 0) {
+        if (input.apply) {
           applied = insertPositiveAdjustment({
             repository: input.repository,
             campId,
@@ -250,18 +264,21 @@ export function auditFirstCycleScores(input: {
             memberName: memberPlan?.memberName ?? memberDisplayName(member),
             chatId,
             beforeTotal,
-            replayedTotal,
-            delta,
+            replayedTotal: replayedTotal ?? beforeTotal,
+            reportedDelta: delta,
+            appliedDelta: positiveMissingTotal,
             missingEvents: positiveMissingEvents,
             now,
             uuid,
             planKey: hashPlan(memberPlan),
           });
-          appliedDelta = applied ? delta : 0;
+          appliedDelta = applied ? positiveMissingTotal : 0;
           reason = applied ? "applied_positive_missing_delta" : "skipped_existing_positive_missing_delta";
         }
       } else if (delta !== null && delta < 0) {
         reason = "negative_delta_report_only";
+      } else if (delta !== null && delta > 0) {
+        reason = "positive_delta_without_confirmed_missing_events";
       } else if (delta === 0) {
         reason = "no_delta";
       }
@@ -277,6 +294,7 @@ export function auditFirstCycleScores(input: {
         applied,
         appliedDelta,
         reason,
+        warnings,
       });
     }
 

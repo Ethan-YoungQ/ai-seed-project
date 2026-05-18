@@ -156,6 +156,102 @@ describe("auditFirstCycleScores", () => {
     expect(adjustment?.reviewNote).toContain("真实群回放发现正式作业漏记");
   });
 
+  it("applies only positive missing event totals when replayedTotal implies a larger delta", () => {
+    const repository = makeRepo();
+    seedExistingScore(repository, 2);
+
+    const result = auditFirstCycleScores({
+      repository,
+      campId: "camp-demo",
+      apply: true,
+      now: "2026-05-18T08:00:00.000Z",
+      uuid: () => "larger-delta",
+      plan: {
+        members: [
+          {
+            memberId: "user-alice",
+            replayedTotal: 12,
+            missingEvents: [
+              {
+                sourceMessageId: "om-missing-small",
+                scoreDelta: 1,
+                reason: "人工只确认漏补 1 分",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const member = result.members.find((row) => row.memberId === "user-alice");
+    expect(member).toMatchObject({
+      beforeTotal: 2,
+      replayedTotal: 12,
+      delta: 10,
+      applied: true,
+      appliedDelta: 1,
+    });
+    expect(member?.warnings).toContain("reported_delta_mismatch");
+    expect(repository.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(3);
+    expect(repository.getAiBootScoreEvent("first-cycle-score-audit-score-larger-delta")).toMatchObject({
+      category: "operator_adjustment",
+      scoreDelta: 1,
+    });
+  });
+
+  it("applies positive missing totals without netting out over-scored events", () => {
+    const repository = makeRepo();
+    seedExistingScore(repository, 2);
+
+    const result = auditFirstCycleScores({
+      repository,
+      campId: "camp-demo",
+      apply: true,
+      now: "2026-05-18T08:00:00.000Z",
+      uuid: () => "mixed-delta",
+      plan: {
+        members: [
+          {
+            memberId: "user-alice",
+            replayedTotal: 4,
+            missingEvents: [
+              {
+                sourceMessageId: "om-missing-5",
+                scoreDelta: 5,
+                reason: "人工确认漏补 5 分",
+              },
+            ],
+            overScoredEvents: [
+              {
+                sourceMessageId: "om-over-3",
+                scoreDelta: -3,
+                reason: "只报告，不在本脚本扣分",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const member = result.members.find((row) => row.memberId === "user-alice");
+    expect(member).toMatchObject({
+      beforeTotal: 2,
+      replayedTotal: 4,
+      delta: 2,
+      applied: true,
+      appliedDelta: 5,
+      overScoredEvents: [
+        expect.objectContaining({ sourceMessageId: "om-over-3" }),
+      ],
+    });
+    expect(member?.warnings).toEqual([]);
+    expect(repository.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(7);
+    expect(repository.getAiBootScoreEvent("first-cycle-score-audit-score-mixed-delta")).toMatchObject({
+      category: "operator_adjustment",
+      scoreDelta: 5,
+    });
+  });
+
   it("reports negative deltas without applying deductions", () => {
     const repository = makeRepo();
     seedExistingScore(repository, 8);
