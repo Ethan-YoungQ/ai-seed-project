@@ -121,6 +121,7 @@ interface ScriptResult {
   v3Applied: number;
   v3Skipped: number;
   v3Delta: number;
+  legacySnapshotsUpdated: number;
   levelUpdates: Array<{ name: string; from: number; to: number; totalScore: number }>;
 }
 
@@ -167,6 +168,7 @@ export function runScoreTightening20260518(input: {
       v3Applied: 0,
       v3Skipped: 0,
       v3Delta: 0,
+      legacySnapshotsUpdated: 0,
       levelUpdates: [],
     };
 
@@ -305,6 +307,51 @@ export function runScoreTightening20260518(input: {
       for (const row of v3Rows) {
         const dimension = V3_CATEGORY_DIMENSION[row.category] ?? "K";
         dimensions[dimension] += Number(row.score);
+      }
+
+      const legacyDimensions = { K: 0, H: 0, C: 0, S: 0, G: 0 };
+      for (const row of legacyRows) {
+        legacyDimensions[row.dimension] += Number(row.score);
+      }
+      const legacyTotal =
+        legacyDimensions.K + legacyDimensions.H + legacyDimensions.C +
+        legacyDimensions.S + legacyDimensions.G;
+      const dimensionJson = JSON.stringify(legacyDimensions);
+      const existingSnapshot = db.prepare(
+        `SELECT total_score, dimension_json
+         FROM ai_boot_legacy_score_snapshots
+         WHERE camp_id = ? AND member_id = ?
+         LIMIT 1`
+      ).get(input.campId, member.id) as
+        | { total_score: number; dimension_json: string }
+        | undefined;
+      if (
+        !existingSnapshot ||
+        Number(existingSnapshot.total_score) !== legacyTotal ||
+        String(existingSnapshot.dimension_json) !== dimensionJson
+      ) {
+        result.legacySnapshotsUpdated += 1;
+        if (!dryRun) {
+          db.prepare(
+            `INSERT INTO ai_boot_legacy_score_snapshots
+              (id, camp_id, member_id, total_score, dimension_json, source_note, snapshot_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT(camp_id, member_id) DO UPDATE SET
+               id = excluded.id,
+               total_score = excluded.total_score,
+               dimension_json = excluded.dimension_json,
+               source_note = excluded.source_note,
+               snapshot_at = excluded.snapshot_at`
+          ).run(
+            `legacy-snapshot-score-tightening-20260518-${member.id}`,
+            input.campId,
+            member.id,
+            legacyTotal,
+            dimensionJson,
+            "score_tightening_20260518_sync_after_negative_corrections",
+            now,
+          );
+        }
       }
 
       const totalScore = dimensions.K + dimensions.H + dimensions.C + dimensions.S + dimensions.G;
