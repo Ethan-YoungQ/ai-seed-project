@@ -142,6 +142,29 @@ describe("LarkFeishuWsRuntime reaction events", () => {
     warn.mockRestore();
   });
 
+  test("resolves missing reaction chat identity from message metadata before routing", async () => {
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    const resolveMessageChatId = vi.fn().mockResolvedValue("oc-group");
+    const runtime = new LarkFeishuWsRuntime(makeConfig(), onMessage, { resolveMessageChatId } as any);
+    await runtime.start();
+
+    await larkMock.handlers["im.message.reaction.created_v1"]({
+      event: {
+        message_id: "om-source",
+        user_id: { open_id: "ou-actor" },
+        reaction_type: { emoji_type: "THUMBSUP" },
+        create_time: "1775210400000",
+      },
+    });
+
+    expect(resolveMessageChatId).toHaveBeenCalledWith("om-source");
+    expect(onMessage).toHaveBeenCalledWith(expect.objectContaining({
+      messageId: "reaction:om-source:ou-actor",
+      chatId: "oc-group",
+      messageType: "reaction",
+    }));
+  });
+
   test("does not call onMessage for reaction events without chat identity", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const onMessage = vi.fn().mockResolvedValue(undefined);

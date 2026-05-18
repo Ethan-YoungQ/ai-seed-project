@@ -156,6 +156,105 @@ describe("auditFirstCycleScores", () => {
     expect(adjustment?.reviewNote).toContain("真实群回放发现正式作业漏记");
   });
 
+  it("does not apply missing events without a source message or event anchor", () => {
+    const repository = makeRepo();
+    seedExistingScore(repository, 2);
+
+    const result = auditFirstCycleScores({
+      repository,
+      campId: "camp-demo",
+      apply: true,
+      plan: {
+        members: [
+          {
+            memberId: "user-alice",
+            replayedTotal: 5,
+            missingEvents: [
+              {
+                scoreDelta: 3,
+                reason: "缺少真实消息锚点的补录不能写入",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    const member = result.members.find((row) => row.memberId === "user-alice");
+    expect(member).toMatchObject({
+      applied: false,
+      appliedDelta: 0,
+      reason: "missing_events_without_anchor",
+    });
+    expect(member?.warnings).toContain("missing_events_without_anchor");
+    expect(repository.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(2);
+  });
+
+  it("deduplicates applied audit corrections by missing event anchor instead of full plan text", () => {
+    const repository = makeRepo();
+    seedExistingScore(repository, 2);
+
+    const basePlan = {
+      members: [
+        {
+          memberId: "user-alice",
+          memberName: "Alice",
+          replayedTotal: 5,
+          missingEvents: [
+            {
+              sourceMessageId: "om-stable-anchor",
+              scoreDelta: 3,
+              reason: "第一次复核说明",
+            },
+          ],
+        },
+      ],
+    };
+
+    const first = auditFirstCycleScores({
+      repository,
+      campId: "camp-demo",
+      apply: true,
+      now: "2026-05-18T08:00:00.000Z",
+      uuid: () => "stable-anchor-1",
+      plan: basePlan,
+    });
+    const second = auditFirstCycleScores({
+      repository,
+      campId: "camp-demo",
+      apply: true,
+      now: "2026-05-18T08:01:00.000Z",
+      uuid: () => "stable-anchor-2",
+      plan: {
+        members: [
+          {
+            memberId: "user-alice",
+            memberName: "Alice Changed",
+            replayedTotal: 8,
+            missingEvents: [
+              {
+                sourceMessageId: "om-stable-anchor",
+                scoreDelta: 3,
+                reason: "第二次复核改了文字但证据锚点相同",
+              },
+            ],
+          },
+        ],
+      },
+    });
+
+    expect(first.members.find((row) => row.memberId === "user-alice")).toMatchObject({
+      applied: true,
+      appliedDelta: 3,
+    });
+    expect(second.members.find((row) => row.memberId === "user-alice")).toMatchObject({
+      applied: false,
+      appliedDelta: 0,
+      reason: "skipped_existing_positive_missing_delta",
+    });
+    expect(repository.sumApprovedAiBootScore("camp-demo", "user-alice")).toBe(5);
+  });
+
   it("applies only positive missing event totals when replayedTotal implies a larger delta", () => {
     const repository = makeRepo();
     seedExistingScore(repository, 2);

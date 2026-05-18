@@ -434,6 +434,9 @@ export async function createApp(options?: {
         } catch (error) {
           console.error("[AdminPanel] Error in onMessage callback:", error);
         }
+      }, {
+        resolveMessageChatId: async (messageId) =>
+          (await feishuApiClient.getMessageMetadata?.({ messageId }))?.chatId ?? null,
       })
     : new NoopFeishuWsRuntime());
 

@@ -563,6 +563,7 @@ describe("message-commands operator command routing", () => {
 
   it.each([
     ["帮我看下审核队列", "复核队列"],
+    ["帮我看审核队列", "复核队列"],
     ["请你打开管理面板", "管理员面板"],
     ["麻烦调分", "手动调分"],
   ])("routes natural admin request @Bot %s to the matching card", async (command, cardText) => {
@@ -645,6 +646,15 @@ describe("message-commands operations intent routing", () => {
     expect(classifyOperationsIntent(makeMsg({
       rawText: "@_user_1 帮我看下审核队列",
       cleanedText: "帮我看下审核队列",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "admin_command",
+      command: "review_queue",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 帮我看审核队列",
+      cleanedText: "帮我看审核队列",
       mentionedBotIds: ["ou_bot"],
     }), { botOpenId: "ou_bot" })).toMatchObject({
       kind: "admin_command",

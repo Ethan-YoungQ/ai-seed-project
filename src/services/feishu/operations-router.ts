@@ -45,7 +45,7 @@ const MENTIONED_BOT_REQUEST_RE =
 const LEARNER_ADMIN_CONTEXT_RE =
   /(怎么|如何|为什么|规则|是什么|能不能|可以吗|咋)/;
 const ADMIN_ACTION_CONTEXT_RE =
-  /(打开|拉起|发一下|发个|看下|看看|进入|显示|调一下|调整|查看|查一下)/;
+  /(打开|拉起|发一下|发个|看下|看看|看|进入|显示|调一下|调整|查看|查一下)/;
 const POLITE_COMMAND_PREFIX_RE =
   /^(帮我|帮忙|请你|麻烦|给我|可以帮我|能否帮我)/;
 

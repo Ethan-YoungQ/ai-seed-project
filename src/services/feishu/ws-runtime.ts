@@ -46,6 +46,10 @@ export interface FeishuWsRuntime {
   setCardActionHandler(handler: (input: CardActionInput) => Promise<CardActionResponse>): void;
 }
 
+export interface FeishuWsRuntimeOptions {
+  resolveMessageChatId?: (messageId: string) => Promise<string | null | undefined>;
+}
+
 export class NoopFeishuWsRuntime implements FeishuWsRuntime {
   async start() {}
   async stop() {}
@@ -71,7 +75,8 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
   constructor(
     private readonly config: FeishuConfig,
-    private readonly onMessage: (payload: ReturnType<typeof normalizeFeishuMessageEvent>) => Promise<void>
+    private readonly onMessage: (payload: ReturnType<typeof normalizeFeishuMessageEvent>) => Promise<void>,
+    private readonly options: FeishuWsRuntimeOptions = {},
   ) {}
 
   setCardActionHandler(handler: (input: CardActionInput) => Promise<CardActionResponse>): void {
@@ -195,12 +200,21 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
         if (!reaction) return;
 
         const configuredChatId = this.config.botChatId?.trim();
-        if (!reaction.chatId) {
+        let reactionChatId = reaction.chatId?.trim() || null;
+        if (!reactionChatId && this.options.resolveMessageChatId) {
+          try {
+            reactionChatId = (await this.options.resolveMessageChatId(reaction.messageId))?.trim() || null;
+          } catch (error) {
+            console.warn(`[Reaction] skipped: failed to resolve chat identity for ${reaction.messageId}: ${error instanceof Error ? error.message : String(error)}`);
+            return;
+          }
+        }
+        if (!reactionChatId) {
           console.warn("[Reaction] skipped: missing chat identity for reaction event");
           return;
         }
-        if (!configuredChatId || reaction.chatId !== configuredChatId) {
-          console.warn(`[Reaction] skipped: chat mismatch payload=${reaction.chatId}, configured=${configuredChatId ?? ""}`);
+        if (!configuredChatId || reactionChatId !== configuredChatId) {
+          console.warn(`[Reaction] skipped: chat mismatch payload=${reactionChatId}, configured=${configuredChatId ?? ""}`);
           return;
         }
 
@@ -211,7 +225,7 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
         await this.onMessage({
           messageId: `reaction:${reaction.messageId}:${reaction.actorOpenId}`,
           memberId: reaction.actorOpenId,
-          chatId: reaction.chatId,
+          chatId: reactionChatId,
           chatType: "group",
           senderType: "user",
           messageType: "reaction",

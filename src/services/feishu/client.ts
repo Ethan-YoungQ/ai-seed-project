@@ -64,6 +64,16 @@ export interface FeishuMessageFileInput {
   resourceType?: "file" | "image";
 }
 
+export interface FeishuMessageMetadataInput {
+  messageId: string;
+}
+
+export interface FeishuMessageMetadata {
+  messageId: string;
+  chatId?: string;
+  messageType?: string;
+}
+
 export interface FeishuChatCreateInput {
   name: string;
   description?: string;
@@ -126,6 +136,7 @@ export interface FeishuApiClient {
     mimeType?: string;
     bytes: Buffer;
   }>;
+  getMessageMetadata?(input: FeishuMessageMetadataInput): Promise<FeishuMessageMetadata>;
   getMemberProfile?(input: FeishuMemberProfileInput): Promise<FeishuMemberProfile>;
   getChatName?(chatId: string): Promise<string | null>;
   createBaseRecord(input: FeishuBaseRecordInput): Promise<{ recordId?: string }>;
@@ -306,6 +317,23 @@ export class LarkFeishuApiClient implements FeishuApiClient {
     } catch {
       return null;
     }
+  }
+
+  async getMessageMetadata(input: FeishuMessageMetadataInput): Promise<FeishuMessageMetadata> {
+    const response = await this.client.im.message.get({
+      path: {
+        message_id: input.messageId
+      }
+    });
+    const item = response?.data?.items?.[0] ?? response?.data?.message ?? response?.data ?? {};
+    const chatId = String(item?.chat_id ?? item?.chat?.chat_id ?? "").trim();
+    const messageType = String(item?.msg_type ?? item?.message_type ?? "").trim();
+
+    return {
+      messageId: String(item?.message_id ?? input.messageId),
+      chatId: chatId || undefined,
+      messageType: messageType || undefined
+    };
   }
 
   async getMessageFile(input: FeishuMessageFileInput) {

@@ -91,6 +91,60 @@ function summarizeEvents(events: FirstCycleAuditEventPlan[]): string {
     .join(" | ");
 }
 
+function missingEventAnchor(event: FirstCycleAuditEventPlan): string | null {
+  const sourceMessageId = event.sourceMessageId?.trim();
+  if (sourceMessageId) {
+    return `message:${sourceMessageId}`;
+  }
+  const eventId = event.eventId?.trim();
+  if (eventId) {
+    return `event:${eventId}`;
+  }
+  return null;
+}
+
+function stableMissingEventPlanKey(events: FirstCycleAuditEventPlan[]): string {
+  return hashPlan(
+    events
+      .map((event) => missingEventAnchor(event))
+      .filter((anchor): anchor is string => Boolean(anchor))
+      .sort()
+  );
+}
+
+function readAppliedMissingEventAnchors(input: {
+  db: Database.Database;
+  campId: string;
+  memberId: string;
+}): Set<string> {
+  const rows = input.db.prepare(
+    `SELECT e.evidence_json
+     FROM ai_boot_events e
+     INNER JOIN ai_boot_score_events s ON s.event_id = e.id
+     WHERE s.camp_id = ?
+       AND s.member_id = ?
+       AND s.status = 'approved'
+       AND s.category = 'operator_adjustment'
+       AND e.source_message_id LIKE ?`
+  ).all(input.campId, input.memberId, `${AUDIT_MARKER}:${input.campId}:${input.memberId}:%`) as Array<{
+    evidence_json?: string | null;
+  }>;
+
+  const anchors = new Set<string>();
+  for (const row of rows) {
+    try {
+      const parsed = JSON.parse(row.evidence_json ?? "{}") as { missingEvents?: FirstCycleAuditEventPlan[] };
+      for (const event of parsed.missingEvents ?? []) {
+        const anchor = missingEventAnchor(event);
+        if (anchor) anchors.add(anchor);
+      }
+    } catch {
+      // Ignore malformed legacy audit evidence; the source_message_id uniqueness guard still applies.
+    }
+  }
+  return anchors;
+}
+
 function normalizePlan(input: unknown): FirstCycleScoreAuditPlan {
   const root = input as Partial<FirstCycleScoreAuditPlan> | FirstCycleAuditMemberPlan[];
   const members = Array.isArray(root) ? root : root.members;
@@ -240,22 +294,34 @@ export function auditFirstCycleScores(input: {
       const delta = memberPlan?.delta ?? replayedDelta;
       const missingEvents = memberPlan?.missingEvents ?? [];
       const positiveMissingEvents = missingEvents.filter((event) => event.scoreDelta > 0);
-      const positiveMissingTotal = positiveMissingEvents.reduce((sum, event) => sum + event.scoreDelta, 0);
+      const anchoredPositiveMissingEvents = positiveMissingEvents.filter((event) => missingEventAnchor(event));
+      const unanchoredPositiveMissingEvents = positiveMissingEvents.filter((event) => !missingEventAnchor(event));
+      const appliedAnchors = readAppliedMissingEventAnchors({ db, campId, memberId: member.id });
+      const unappliedPositiveMissingEvents = anchoredPositiveMissingEvents.filter((event) => {
+        const anchor = missingEventAnchor(event);
+        return anchor && !appliedAnchors.has(anchor);
+      });
+      const reportedPositiveMissingTotal = anchoredPositiveMissingEvents.reduce((sum, event) => sum + event.scoreDelta, 0);
+      const positiveMissingTotal = unappliedPositiveMissingEvents.reduce((sum, event) => sum + event.scoreDelta, 0);
       const overScoredEvents = memberPlan?.overScoredEvents ?? [];
       const overScoredTotal = overScoredEvents
         .filter((event) => event.scoreDelta < 0)
         .reduce((sum, event) => sum + event.scoreDelta, 0);
-      const expectedNetDelta = positiveMissingTotal + overScoredTotal;
-      const warnings = (delta !== null && delta !== expectedNetDelta) ||
-        (replayedDelta !== null && replayedDelta !== expectedNetDelta)
-        ? ["reported_delta_mismatch"]
-        : [];
+      const expectedNetDelta = reportedPositiveMissingTotal + overScoredTotal;
+      const warnings: string[] = [];
+      if ((delta !== null && delta !== expectedNetDelta) ||
+        (replayedDelta !== null && replayedDelta !== expectedNetDelta)) {
+        warnings.push("reported_delta_mismatch");
+      }
+      if (unanchoredPositiveMissingEvents.length > 0) {
+        warnings.push("missing_events_without_anchor");
+      }
       let applied = false;
       let appliedDelta = 0;
       let reason = plan ? "plan_no_delta" : "no_plan_current_total_only";
 
       if (positiveMissingTotal > 0) {
-        reason = positiveMissingEvents.length > 0 ? "positive_missing_delta" : "positive_delta_without_confirmed_missing_events";
+        reason = unappliedPositiveMissingEvents.length > 0 ? "positive_missing_delta" : "positive_delta_without_confirmed_missing_events";
         if (input.apply) {
           applied = insertPositiveAdjustment({
             repository: input.repository,
@@ -267,14 +333,18 @@ export function auditFirstCycleScores(input: {
             replayedTotal: replayedTotal ?? beforeTotal,
             reportedDelta: delta,
             appliedDelta: positiveMissingTotal,
-            missingEvents: positiveMissingEvents,
+            missingEvents: unappliedPositiveMissingEvents,
             now,
             uuid,
-            planKey: hashPlan(memberPlan),
+            planKey: stableMissingEventPlanKey(unappliedPositiveMissingEvents),
           });
           appliedDelta = applied ? positiveMissingTotal : 0;
           reason = applied ? "applied_positive_missing_delta" : "skipped_existing_positive_missing_delta";
         }
+      } else if (anchoredPositiveMissingEvents.length > 0 && positiveMissingEvents.length > 0) {
+        reason = "skipped_existing_positive_missing_delta";
+      } else if (unanchoredPositiveMissingEvents.length > 0) {
+        reason = "missing_events_without_anchor";
       } else if (delta !== null && delta < 0) {
         reason = "negative_delta_report_only";
       } else if (delta !== null && delta > 0) {
