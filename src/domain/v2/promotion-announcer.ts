@@ -23,7 +23,7 @@ export interface PromotionLite {
 
 export interface AnnouncerDeps {
   getPromotions(windowId: string): PromotionLite[];
-  getOrdinals(): Array<{ level: number; ordinal: number }>;
+  getOrdinals(): Array<{ level: number; ordinal: number; memberId?: string }>;
   insertOrdinal(input: {
     level: number;
     ordinal: number;
@@ -42,8 +42,9 @@ export interface AnnouncerDeps {
  * Only promotions where `promoted === true && toLevel > fromLevel` and
  * `toLevel >= 2` are candidates. For each candidate, checks how many
  * people have already been announced for that level (across all past
- * windows). If < 3, assigns the next ordinal, writes it to the DB,
- * and includes it in the result.
+ * windows). If the same member has already been announced for that
+ * target level, it is skipped. If < 3, assigns the next ordinal, writes
+ * it to the DB, and includes it in the result.
  *
  * The iteration order follows the window's member processing order
  * (sorted by member ID), which determines who gets 1st vs 2nd vs 3rd
@@ -58,8 +59,14 @@ export function detectAnnounceablePromotions(
 
   // Build a map: level -> max ordinal (0 if none)
   const ordinalByLevel: Record<number, number> = { 2: 0, 3: 0, 4: 0, 5: 0 };
+  const announcedMembersByLevel = new Map<number, Set<string>>();
   for (const entry of existingOrdinals) {
-    ordinalByLevel[entry.level] = entry.ordinal;
+    ordinalByLevel[entry.level] = Math.max(ordinalByLevel[entry.level] ?? 0, entry.ordinal);
+    if (entry.memberId) {
+      const members = announcedMembersByLevel.get(entry.level) ?? new Set<string>();
+      members.add(entry.memberId);
+      announcedMembersByLevel.set(entry.level, members);
+    }
   }
 
   const result: AnnouncementItem[] = [];
@@ -70,11 +77,15 @@ export function detectAnnounceablePromotions(
     if (prom.toLevel < 2 || prom.toLevel > 5) continue;
 
     const level = prom.toLevel as 2 | 3 | 4 | 5;
+    if (announcedMembersByLevel.get(level)?.has(prom.memberId)) continue;
     const currentCount = ordinalByLevel[level];
     if (currentCount >= 3) continue;
 
     const ordinal = (currentCount + 1) as 1 | 2 | 3;
     ordinalByLevel[level] = ordinal;
+    const announcedMembers = announcedMembersByLevel.get(level) ?? new Set<string>();
+    announcedMembers.add(prom.memberId);
+    announcedMembersByLevel.set(level, announcedMembers);
 
     const memberName = deps.getMemberName(prom.memberId) ?? "未知";
     deps.insertOrdinal({

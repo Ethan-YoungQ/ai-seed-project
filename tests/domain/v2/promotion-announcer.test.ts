@@ -124,6 +124,32 @@ describe("detectAnnounceablePromotions", () => {
     expect(result).toEqual([]);
   });
 
+  test("skips a member already announced for the same target level", () => {
+    const inserted: Array<{ level: number; ordinal: number; memberId: string }> = [];
+    const deps = makeDeps({
+      insertOrdinal: (input) => {
+        inserted.push({
+          level: input.level,
+          ordinal: input.ordinal,
+          memberId: input.memberId,
+        });
+      },
+    });
+    deps.getPromotions = () => [
+      { memberId: "m1", fromLevel: 1, toLevel: 2, promoted: true },
+      { memberId: "m2", fromLevel: 1, toLevel: 2, promoted: true },
+    ];
+    deps.getOrdinals = () => [
+      { level: 2, ordinal: 1, memberId: "m1" },
+    ];
+
+    const result = detectAnnounceablePromotions("w2", deps);
+
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ ordinal: 2, memberId: "m2", targetLevel: 2 });
+    expect(inserted).toEqual([{ level: 2, ordinal: 2, memberId: "m2" }]);
+  });
+
   test("continues ordinal from past windows", () => {
     const deps = makeDeps();
     deps.getPromotions = () => [

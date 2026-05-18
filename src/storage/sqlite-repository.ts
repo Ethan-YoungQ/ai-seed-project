@@ -555,6 +555,8 @@ CREATE TABLE IF NOT EXISTS v2_level_announcement_ordinals (
   announced_at TEXT NOT NULL,
   PRIMARY KEY (level, ordinal)
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_v2_level_announcement_ordinals_level_member
+  ON v2_level_announcement_ordinals (level, member_id);
 
 CREATE TABLE IF NOT EXISTS v2_llm_scoring_tasks (
   id TEXT PRIMARY KEY,
@@ -2521,14 +2523,14 @@ export class SqliteRepository {
   // Level announcement ordinals
   // ==========================================================================
 
-  getAnnouncementOrdinals(): Array<{ level: number; ordinal: number }> {
+  getAnnouncementOrdinals(): Array<{ level: number; ordinal: number; memberId: string }> {
     const rows = this.db
       .prepare(
-        `SELECT level, MAX(ordinal) AS ordinal
+        `SELECT level, ordinal, member_id AS memberId
          FROM v2_level_announcement_ordinals
-         GROUP BY level`
+         ORDER BY level ASC, ordinal ASC`
       )
-      .all() as Array<{ level: number; ordinal: number }>;
+      .all() as Array<{ level: number; ordinal: number; memberId: string }>;
     return rows;
   }
 
@@ -2542,7 +2544,7 @@ export class SqliteRepository {
   }): void {
     this.db
       .prepare(
-        `INSERT INTO v2_level_announcement_ordinals
+        `INSERT OR IGNORE INTO v2_level_announcement_ordinals
           (level, ordinal, member_id, member_name, window_id, announced_at)
          VALUES (@level, @ordinal, @memberId, @memberName, @windowId, @announcedAt)`
       )
