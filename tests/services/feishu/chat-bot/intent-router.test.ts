@@ -7,6 +7,7 @@ import {
 describe("classifyBotQuestionIntent", () => {
   const cases: Array<{ text: string; kind: BotQuestionIntentKind }> = [
     { text: "为什么我还是潜力股[泣不成声]", kind: "level_status" },
+    { text: "Grace 为什么我还是潜力股", kind: "level_status" },
     { text: "如何能成为潜力股", kind: "level_status" },
     { text: "我的段位是多少", kind: "level_status" },
     { text: "当前段位是什么", kind: "level_status" },
@@ -34,10 +35,23 @@ describe("classifyBotQuestionIntent", () => {
   ];
 
   it.each(cases)("classifies $text as $kind", ({ text, kind }) => {
-    expect(classifyBotQuestionIntent(text)).toEqual({ kind });
+    const intent = classifyBotQuestionIntent(text);
+    expect(intent).toMatchObject({ kind });
+    expect(intent.reason).toEqual(expect.any(String));
+    expect(intent.reason.length).toBeGreaterThan(0);
   });
 
   it("treats blank text as general chat", () => {
-    expect(classifyBotQuestionIntent("   \n\t")).toEqual({ kind: "general_chat" });
+    expect(classifyBotQuestionIntent("   \n\t")).toEqual({
+      kind: "general_chat",
+      reason: "fallback",
+    });
+  });
+
+  it("returns a stable reason for level keyword matches", () => {
+    expect(classifyBotQuestionIntent("Grace 为什么我还是潜力股")).toEqual({
+      kind: "level_status",
+      reason: "level_keywords",
+    });
   });
 });

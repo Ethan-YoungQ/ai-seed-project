@@ -9,6 +9,7 @@ export type BotQuestionIntentKind =
 
 export interface BotQuestionIntent {
   kind: BotQuestionIntentKind;
+  reason: string;
 }
 
 const LEVEL_STATUS_PATTERNS = [
@@ -68,31 +69,31 @@ function matchesAny(text: string, patterns: RegExp[]): boolean {
 
 export function classifyBotQuestionIntent(rawText: string): BotQuestionIntent {
   const text = normalizeQuestion(rawText);
-  if (text.length === 0) return { kind: "general_chat" };
+  if (text.length === 0) return { kind: "general_chat", reason: "fallback" };
 
   if (matchesAny(text, LEVEL_STATUS_PATTERNS) && matchesAny(text, LEVEL_QUESTION_PATTERNS)) {
-    return { kind: "level_status" };
+    return { kind: "level_status", reason: "level_keywords" };
   }
 
   if (matchesAny(text, CS_INTERACTION_PATTERNS)) {
-    return { kind: "cs_interaction_check" };
+    return { kind: "cs_interaction_check", reason: "cs_interaction_keywords" };
   }
 
   if (matchesAny(text, SCORE_MISSING_PATTERNS)) {
-    return { kind: "score_missing_check" };
+    return { kind: "score_missing_check", reason: "score_keywords" };
   }
 
   if (matchesAny(text, SCORE_BREAKDOWN_PATTERNS)) {
-    return { kind: "score_breakdown" };
+    return { kind: "score_breakdown", reason: "score_keywords" };
   }
 
   if (matchesAny(text, RULES_PATTERNS)) {
-    return { kind: "rules_query" };
+    return { kind: "rules_query", reason: "rules_keywords" };
   }
 
   if (matchesAny(text, COURSE_OR_HOMEWORK_PATTERNS)) {
-    return { kind: "course_or_homework_qa" };
+    return { kind: "course_or_homework_qa", reason: "course_context_keywords" };
   }
 
-  return { kind: "general_chat" };
+  return { kind: "general_chat", reason: "fallback" };
 }
