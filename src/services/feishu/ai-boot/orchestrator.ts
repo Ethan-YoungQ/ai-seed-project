@@ -11,6 +11,7 @@ import { AI_BOOT_RULESET_VERSION } from "../../../domain/v3/scoring-rules.js";
 import type { SqliteRepository } from "../../../storage/sqlite-repository.js";
 import type { FeishuApiClient } from "../client.js";
 import type { MemberLite } from "../cards/types.js";
+import { buildReviewQueueCard } from "../cards/templates/review-queue-v1.js";
 import type { NormalizedFeishuMessage } from "../normalize-message.js";
 import type { AiBootConfig } from "./config.js";
 import { extractEvidence, type EvidenceBundle } from "./content-extractor.js";
@@ -50,6 +51,9 @@ export interface AiBootOrchestratorDeps {
     | "sumApprovedAiBootScoreByCategory"
     | "sumApprovedAiBootScore"
     | "findActivePeriod"
+    | "getMember"
+    | "listAiBootReviewQueue"
+    | "countAiBootReviewQueue"
     | "insertAiBootNotificationEvent"
     | "countAiBootNotificationEventsForMember"
     | "countAiBootNotificationEventsForChat"
@@ -70,7 +74,8 @@ export interface AiBootOrchestratorDeps {
   };
   llmClient?: AiBootLlmClient;
   botOpenId?: string;
-  feishuClient: Pick<FeishuApiClient, "getMessageFile" | "sendTextMessage">;
+  feishuClient: Pick<FeishuApiClient, "getMessageFile" | "sendTextMessage" | "sendCardMessage">;
+  reviewQueueChatId?: string;
   imageUnderstandingService?: AiBootImageUnderstandingService;
   recoverImageOnlyOnStartup?: boolean;
   afterApprovedScore?: (scoreEvent: AiBootScoreEventRecord) => void | Promise<void>;
@@ -259,6 +264,10 @@ export function createAiBootOrchestrator(
         await deps.afterApprovedScore?.(scoreEvent);
       }
 
+      if (scoreEvent.status === "review_required") {
+        await pushReviewQueueCard({ deps, scoreEvent, member });
+      }
+
       if (deps.config.engineMode !== "v3_live") {
         return;
       }
@@ -326,6 +335,48 @@ export function createAiBootOrchestrator(
       }
     },
   };
+}
+
+async function pushReviewQueueCard(input: {
+  deps: AiBootOrchestratorDeps;
+  scoreEvent: AiBootScoreEventRecord;
+  member: MemberLite;
+}): Promise<void> {
+  const { deps, scoreEvent, member } = input;
+  if (deps.config.engineMode !== "v3_live" || !deps.reviewQueueChatId) {
+    return;
+  }
+
+  const totalEvents = deps.repo.countAiBootReviewQueue({ campId: deps.campId });
+  const rows = deps.repo.listAiBootReviewQueue({
+    campId: deps.campId,
+    limit: 10,
+    offset: 0,
+  });
+  const events = (rows.length > 0 ? rows : [scoreEvent]).map((row) => {
+    const rowMember = deps.repo.getMember(row.memberId);
+    return {
+      eventId: row.id,
+      engine: "v3" as const,
+      memberId: row.memberId,
+      memberName: rowMember?.displayName || rowMember?.name || member.displayName || "未知学员",
+      itemCode: row.category,
+      scoreDelta: row.scoreDelta,
+      textExcerpt: row.evidence || row.reason,
+      llmReason: row.reason || "暂无 LLM 理由",
+      createdAt: row.decidedAt,
+    };
+  });
+
+  await deps.feishuClient.sendCardMessage({
+    chatId: deps.reviewQueueChatId,
+    cardJson: buildReviewQueueCard({
+      currentPage: 1,
+      totalPages: Math.max(1, Math.ceil(Math.max(totalEvents, events.length) / 10)),
+      totalEvents: Math.max(totalEvents, events.length),
+      events,
+    }) as unknown as Record<string, unknown>,
+  });
 }
 
 function scheduleImageOnlyRecovery(input: {

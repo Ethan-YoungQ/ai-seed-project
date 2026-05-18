@@ -324,6 +324,11 @@ export async function createApp(options?: {
     (feishuConfig.botChatId ? repository.getCampByGroupId(feishuConfig.botChatId)?.id : undefined) ??
     repository.getDefaultCampId() ??
     "camp-demo";
+  const reviewQueueChatId =
+    process.env.FEISHU_REVIEW_QUEUE_CHAT_ID?.trim() ||
+    process.env.FEISHU_ADMIN_TEST_CHAT_ID?.trim() ||
+    process.env.FEISHU_TEST_CHAT_ID?.trim() ||
+    undefined;
   const aiBootOrchestrator =
     feishuApiClient && aiBootConfig.engineMode !== "legacy"
       ? createAiBootOrchestrator({
@@ -351,6 +356,7 @@ export async function createApp(options?: {
             : undefined,
           botOpenId: botOpenId || undefined,
           feishuClient: feishuApiClient,
+          reviewQueueChatId,
           recoverImageOnlyOnStartup: true,
           afterApprovedScore: (scoreEvent) => {
             options?.continuousPromotion?.trigger(scoreEvent.memberId);

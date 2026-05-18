@@ -204,6 +204,9 @@ export async function replayFeishuMessages(input: {
           async sendTextMessage(): Promise<{ messageId: string }> {
             throw new Error("Feishu credentials are not configured for message sending");
           },
+          async sendCardMessage(): Promise<{ messageId: string }> {
+            throw new Error("Feishu credentials are not configured for card sending");
+          },
         };
     const llmConfig = readLlmProviderConfig(process.env);
     const aiBootConfig = {

@@ -42,7 +42,7 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
     countReviewRequiredEvents: async () => {
       try {
         const campId = r.getDefaultCampId() ?? "default";
-        return r.countReviewRequiredEvents({ campId });
+        return countV3ReviewRequiredEvents(r, campId) + r.countReviewRequiredEvents({ campId });
       } catch {
         return 0;
       }
@@ -96,13 +96,40 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
 
     listReviewRequiredEvents: async (opts) => {
       const campId = r.getDefaultCampId() ?? "default";
+      const limit = opts?.limit ?? 10;
+      const offset = opts?.offset ?? 0;
+      const v3Rows = typeof r.listAiBootReviewQueue === "function"
+        ? r.listAiBootReviewQueue({ campId, limit, offset })
+        : [];
+      const mappedV3 = v3Rows.map((row) => {
+        const member = r.getMember(row.memberId);
+        return {
+          eventId: row.id,
+          engine: "v3" as const,
+          memberId: row.memberId,
+          memberName: member?.displayName || member?.name || "未知学员",
+          itemCode: row.category,
+          scoreDelta: row.scoreDelta,
+          textExcerpt: row.evidence || row.reason,
+          llmReason: row.reason || "暂无 LLM 理由",
+          createdAt: row.decidedAt,
+        };
+      });
+      if (mappedV3.length >= limit) {
+        return mappedV3;
+      }
+
+      const v3Total = countV3ReviewRequiredEvents(r, campId);
+      const v2Offset = Math.max(0, offset - v3Total);
+      const v2Limit = limit - mappedV3.length;
       const rows = r.listReviewRequiredEvents({
         campId,
-        limit: opts?.limit ?? 10,
-        offset: opts?.offset ?? 0,
+        limit: v2Limit,
+        offset: v2Offset,
       });
-      return rows.map((row) => ({
+      const mappedV2 = rows.map((row) => ({
         eventId: row.eventId,
+        engine: "v2" as const,
         memberId: row.memberId,
         memberName: row.memberName,
         itemCode: row.itemCode,
@@ -111,6 +138,11 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
         llmReason: row.llmReason ?? "暂无 LLM 理由",
         createdAt: row.createdAt,
       }));
+      return [...mappedV3, ...mappedV2];
+    },
+
+    updateAiBootScoreDecision: (input) => {
+      return r.updateAiBootScoreDecision(input);
     },
 
     // Remaining methods — partially implemented
@@ -160,6 +192,22 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
 
     insertReactionTrackedMessage: notImpl,
   };
+}
+
+function countV3ReviewRequiredEvents(r: SqliteRepository, campId: string): number {
+  if (typeof r.countAiBootReviewQueue === "function") {
+    return r.countAiBootReviewQueue({ campId });
+  }
+  const db = (r as unknown as { db?: { prepare(sql: string): { get(input: unknown): unknown } } }).db;
+  if (!db) return 0;
+  const row = db.prepare(
+    `SELECT COUNT(1) AS total
+     FROM ai_boot_score_events
+     WHERE camp_id = @campId
+       AND status = 'review_required'
+       AND confidence = 'low'`
+  ).get({ campId }) as { total?: number } | undefined;
+  return Number(row?.total ?? 0);
 }
 
 export function ingestorAdapter(ingestorRaw: unknown): CardHandlerDeps["ingestor"] {

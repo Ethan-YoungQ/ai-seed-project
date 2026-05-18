@@ -115,6 +115,13 @@ export interface CardHandlerDeps {
       offset?: number;
     }): Promise<ReviewQueueEventRow[]>;
     countReviewRequiredEvents(): Promise<number>;
+    updateAiBootScoreDecision?(input: {
+      id: string;
+      status: "approved" | "rejected";
+      reviewedByOpId: string;
+      reviewNote: string;
+      scoreDelta?: number;
+    }): boolean;
   };
   ingestor: {
     ingest(req: IngestRequest): Promise<IngestResult>;
@@ -268,6 +275,7 @@ export interface ScoringEventLite {
 /** Event in the review queue */
 export interface ReviewQueueEventRow {
   eventId: string;
+  engine?: "v2" | "v3";
   memberId: string;
   memberName: string;
   itemCode: string;

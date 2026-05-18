@@ -179,6 +179,54 @@ describe("reviewApproveHandler", () => {
     expect(result.toast?.content).toContain("其他运营");
   });
 
+  test("v3 approve uses conditional score-event update and refreshes the queue card", async () => {
+    const updateAiBootScoreDecision = vi.fn(() => true);
+    const deps = fakeDeps({
+      repo: {
+        ...fakeDeps().repo,
+        findMemberByOpenId: vi.fn(() => operatorMember()),
+        updateAiBootScoreDecision,
+        listReviewRequiredEvents: vi.fn(async () => []),
+        countReviewRequiredEvents: vi.fn(async () => 0),
+      } as never,
+    });
+    const ctx = fakeCtx({
+      actionPayload: { action: "review_approve", engine: "v3", eventId: "score-1" },
+    });
+
+    const result = await reviewApproveHandler(ctx, deps);
+
+    expect(updateAiBootScoreDecision).toHaveBeenCalledWith({
+      id: "score-1",
+      status: "approved",
+      reviewedByOpId: "m-op-1",
+      reviewNote: "approved_by_review_card",
+    });
+    expect(deps.aggregator.applyDecision).not.toHaveBeenCalled();
+    expect(result.newCardJson).toBeDefined();
+    expect(JSON.stringify(result.newCardJson)).toContain("暂无待审核事件");
+  });
+
+  test("v3 duplicate approve returns invalid toast and does not fall back to v2 aggregation", async () => {
+    const updateAiBootScoreDecision = vi.fn(() => false);
+    const deps = fakeDeps({
+      repo: {
+        ...fakeDeps().repo,
+        findMemberByOpenId: vi.fn(() => operatorMember()),
+        updateAiBootScoreDecision,
+      } as never,
+    });
+    const ctx = fakeCtx({
+      actionPayload: { action: "review_approve", engine: "v3", eventId: "score-1" },
+    });
+
+    const result = await reviewApproveHandler(ctx, deps);
+
+    expect(result.toast?.type).toBe("error");
+    expect(result.toast?.content).toContain("已被其他运营处理");
+    expect(deps.aggregator.applyDecision).not.toHaveBeenCalled();
+  });
+
   test("missing eventId returns error toast without calling applyDecision", async () => {
     const deps = fakeDeps();
     const ctx = fakeCtx({ actionPayload: { action: "review_approve" } });

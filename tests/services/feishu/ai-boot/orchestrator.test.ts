@@ -142,6 +142,41 @@ function makeDeps(
         .filter((event) => event.campId === campId && event.memberId === memberId && event.status === "approved")
         .reduce((sum, event) => sum + event.scoreDelta, 0),
     ),
+    getMember: vi.fn((memberId: string) => {
+      if (memberId !== "member-1") return undefined;
+      return {
+        id: "member-1",
+        campId: "default",
+        name: "测试学员",
+        displayName: "测试学员",
+        avatarUrl: "",
+        department: "",
+        roleType: "student",
+        isParticipant: true,
+        isExcludedFromBoard: false,
+        status: "active",
+      };
+    }),
+    listAiBootReviewQueue: vi.fn((input: {
+      campId: string;
+      limit: number;
+      offset: number;
+    }) =>
+      scoreEvents
+        .filter((event) =>
+          event.campId === input.campId &&
+          event.status === "review_required" &&
+          event.confidence === "low",
+        )
+        .slice(input.offset, input.offset + input.limit),
+    ),
+    countAiBootReviewQueue: vi.fn((input: { campId: string }) =>
+      scoreEvents.filter((event) =>
+        event.campId === input.campId &&
+        event.status === "review_required" &&
+        event.confidence === "low",
+      ).length,
+    ),
     insertAiBootNotificationEvent: vi.fn((event: AiBootNotificationEventRecord) => {
       const existing = notificationEvents.find((row) => row.scoreEventId === event.scoreEventId);
       if (existing) return false;
@@ -231,6 +266,7 @@ function makeDeps(
         bytes: Buffer.from("fake-image"),
       }),
       sendTextMessage: vi.fn().mockResolvedValue({ messageId: "praise-1" }),
+      sendCardMessage: vi.fn().mockResolvedValue({ messageId: "review-card-1" }),
     },
     campId: "default",
     config: {
@@ -863,6 +899,37 @@ describe("createAiBootOrchestrator", () => {
       notifyPolicy: "silent",
     });
     expect(deps.scoreEvents[0].reason).toContain("rate limited");
+  });
+
+  it("pushes a v3 review queue card to the configured test chat when a score needs operator review", async () => {
+    const llmClient = makeLlmClient({
+      status: "review_required",
+      category: "ai_artifact",
+      scoreDelta: 4,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "证据需要运营确认。",
+      evidence: "学员发了 AI 图片作品，但上下文不足。",
+      badges: ["needs_review"],
+    });
+    const deps = makeDeps({
+      llmClient,
+      reviewQueueChatId: "oc-admin-test",
+    } as Partial<AiBootOrchestratorDeps>);
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledWith(expect.objectContaining({
+      chatId: "oc-admin-test",
+    }));
+    const cardJson = (deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson;
+    const cardText = JSON.stringify(cardJson);
+    expect(cardText).toContain("测试学员");
+    expect(cardText).toContain("ai_artifact");
+    expect(cardText).toContain('"engine":"v3"');
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
   it("does not repeat daily participation score after the member already has one for the Shanghai business day", async () => {

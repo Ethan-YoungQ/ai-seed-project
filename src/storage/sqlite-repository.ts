@@ -1646,6 +1646,19 @@ export class SqliteRepository {
     return rows.map((row) => this.mapAiBootScoreEventRow(row));
   }
 
+  countAiBootReviewQueue(input: { campId: string }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COUNT(1) AS total
+         FROM ai_boot_score_events
+         WHERE camp_id = @campId
+           AND status = 'review_required'
+           AND confidence = 'low'`
+      )
+      .get(input) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
   updateAiBootScoreDecision(input: {
     id: string;
     status: AiBootDecisionStatus;

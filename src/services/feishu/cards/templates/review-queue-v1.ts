@@ -72,14 +72,14 @@ function buildEventRow(event: ReviewQueueEventRow, rowIndex: number): Array<Reco
         name: actionName("review_approve", rowIndex, event.eventId),
         text: { tag: "plain_text", content: "✅ 通过" },
         type: "primary",
-        value: { action: "review_approve", eventId: event.eventId }
+        value: { action: "review_approve", eventId: event.eventId, engine: event.engine ?? "v2" }
       },
       {
         tag: "button",
         name: actionName("review_reject", rowIndex, event.eventId),
         text: { tag: "plain_text", content: "❌ 拒绝" },
         type: "danger",
-        value: { action: "review_reject", eventId: event.eventId }
+        value: { action: "review_reject", eventId: event.eventId, engine: event.engine ?? "v2" }
       }
     ])
   ];

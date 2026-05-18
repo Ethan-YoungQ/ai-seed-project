@@ -56,6 +56,60 @@ async function loadQueuePage(
   return { currentPage: page, totalPages, totalEvents, events };
 }
 
+function isV3ReviewAction(payload: Record<string, unknown>): boolean {
+  return payload.engine === "v3";
+}
+
+async function applyV3Decision(
+  ctx: CardActionContext,
+  deps: CardHandlerDeps,
+  status: "approved" | "rejected"
+): Promise<CardActionResult> {
+  const eventId = ctx.actionPayload.eventId;
+  if (!eventId || typeof eventId !== "string") {
+    return { toast: { type: "error", content: "缺少 eventId 参数" } };
+  }
+
+  const operator = deps.repo.findMemberByOpenId(ctx.operatorOpenId);
+  if (!operator) {
+    return { toast: { type: "error", content: "未找到对应成员,请联系管理员" } };
+  }
+  if (!deps.repo.updateAiBootScoreDecision) {
+    return { toast: { type: "error", content: "v3 审核链路未配置,请联系管理员" } };
+  }
+
+  const ok = deps.repo.updateAiBootScoreDecision({
+    id: eventId,
+    status,
+    reviewedByOpId: operator.id,
+    reviewNote: status === "approved"
+      ? "approved_by_review_card"
+      : "rejected_by_review_card",
+    ...(status === "rejected" ? { scoreDelta: 0 } : {})
+  });
+  if (!ok) {
+    return { toast: { type: "error", content: "此条已被其他运营处理,请刷新队列" } };
+  }
+
+  await deps.repo.insertCardInteraction({
+    id: deps.uuid(),
+    memberId: null,
+    periodId: null,
+    cardType: "review_queue",
+    actionName: status === "approved" ? "review_approve" : "review_reject",
+    feishuMessageId: ctx.messageId,
+    feishuCardVersion: ctx.currentVersion,
+    payloadJson: ctx.actionPayload,
+    receivedAt: ctx.receivedAt,
+    triggerId: ctx.triggerId,
+    operatorOpenId: ctx.operatorOpenId,
+    rejectedReason: null
+  });
+
+  const state = await loadQueuePage(deps, 1);
+  return { newCardJson: buildReviewQueueCard(state) };
+}
+
 // ============================================================================
 // review_approve handler
 // ============================================================================
@@ -70,6 +124,10 @@ export const reviewApproveHandler: CardHandler = async (
   const eventId = ctx.actionPayload.eventId;
   if (!eventId || typeof eventId !== "string") {
     return { toast: { type: "error", content: "缺少 eventId 参数" } };
+  }
+
+  if (isV3ReviewAction(ctx.actionPayload)) {
+    return applyV3Decision(ctx, deps, "approved");
   }
 
   try {
@@ -113,6 +171,10 @@ export const reviewRejectHandler: CardHandler = async (
   const eventId = ctx.actionPayload.eventId;
   if (!eventId || typeof eventId !== "string") {
     return { toast: { type: "error", content: "缺少 eventId 参数" } };
+  }
+
+  if (isV3ReviewAction(ctx.actionPayload)) {
+    return applyV3Decision(ctx, deps, "rejected");
   }
 
   try {
