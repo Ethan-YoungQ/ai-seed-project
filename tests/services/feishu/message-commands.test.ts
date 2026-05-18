@@ -802,6 +802,7 @@ describe("message-commands AI Boot v3 routing", () => {
     const handler = createMessageCommandHandler(deps);
     const msg = makeMsg({
       messageId: "reaction:om-source:user-001",
+      messageType: "reaction",
       rawText: "[表情回应: SMIRK]",
       cleanedText: "[表情回应: SMIRK]",
     });

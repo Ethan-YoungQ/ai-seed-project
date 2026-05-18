@@ -2,6 +2,7 @@ import * as lark from "@larksuiteoapi/node-sdk";
 
 import type { FeishuConfig } from "./config.js";
 import { normalizeFeishuMessageEvent } from "./normalize-message.js";
+import { normalizeReactionEvent } from "./reaction-event-normalizer.js";
 
 export interface CardActionInput {
   operatorOpenId: string;
@@ -189,47 +190,37 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
       // C2 表情回应: 学员在群内给消息点赞/加表情 → K1 签到(群活动)
       "im.message.reaction.created_v1": async (data: unknown) => {
-        const d = data as {
-          message_id?: string;
-          reaction_type?: { emoji_type?: string };
-          operator?: { operator_id?: string; operator_type?: string };
-          operator_type?: string;
-          user_id?: { open_id?: string };
-          event?: {
-            message_id?: string;
-            reaction_type?: { emoji_type?: string };
-            operator?: { operator_id?: string; operator_type?: string };
-            user_id?: { open_id?: string };
-          };
-        };
-        const event = d.event ?? d;
-        const openId = event?.user_id?.open_id ?? event?.operator?.operator_id ?? "";
-        const messageId = event?.message_id ?? "";
-        const emoji = event?.reaction_type?.emoji_type ?? "";
+        const reaction = normalizeReactionEvent(data);
 
-        if (!openId || !messageId) return;
+        if (!reaction) return;
 
-        console.log(`[Reaction] ${openId} reacted ${emoji} on ${messageId}`);
+        const chatId = this.config.botChatId?.trim();
+        if (!chatId) {
+          console.warn("[Reaction] skipped: missing botChatId for reaction synthetic message");
+          return;
+        }
+
+        console.log(`[Reaction] ${reaction.actorOpenId} reacted ${reaction.emoji} on ${reaction.messageId}`);
 
         // Treat reaction as a group activity → route through onMessage
-        // with a synthetic normalized message so the classifier picks it up as K1
+        // with a synthetic normalized message so audit and scoring paths can process C2.
         await this.onMessage({
-          messageId: `reaction:${messageId}:${openId}`,
-          memberId: openId,
-          chatId: "", // reaction events don't carry chat_id; onMessage handles gracefully
+          messageId: `reaction:${reaction.messageId}:${reaction.actorOpenId}`,
+          memberId: reaction.actorOpenId,
+          chatId,
           chatType: "group",
           senderType: "user",
-          messageType: "text",
-          eventTime: new Date().toISOString(),
-          rawText: `[表情回应: ${emoji}]`,
+          messageType: "reaction",
+          eventTime: reaction.occurredAt,
+          rawText: `[表情回应: ${reaction.emoji}]`,
           parsedTags: [],
           attachmentCount: 0,
           attachmentTypes: [],
           mentionedBotIds: [],
-          cleanedText: `[表情回应: ${emoji}]`,
+          cleanedText: `[表情回应: ${reaction.emoji}]`,
           documentText: "",
           documentParseStatus: "not_applicable",
-          eventUrl: `feishu://reaction/${messageId}`,
+          eventUrl: `feishu://reaction/${reaction.messageId}`,
         });
       },
     };
