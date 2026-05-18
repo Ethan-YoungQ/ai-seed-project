@@ -299,6 +299,38 @@ describe("extractEvidence", () => {
     expect(evidence.extractionReason).toBe("ok");
   });
 
+  it("downloads and extracts HTML files so model scoring sees the artifact content", async () => {
+    const feishuClient = {
+      getMessageFile: vi.fn().mockResolvedValue({
+        bytes: Buffer.from("<!doctype html><html><head><title>AI玩家的进化之路</title><style>.x{}</style></head><body><h1>AI玩家的进化之路</h1><script>alert(1)</script><p>我用 AI 做了一个学习路径页面。</p></body></html>"),
+        fileName: "AI玩家的进化之路.html",
+        fileExt: "html",
+        mimeType: "text/html",
+      }),
+    };
+
+    const evidence = await extractEvidence(makeMsg({
+      messageId: "m-html",
+      messageType: "file",
+      fileKey: "file-key-html",
+      fileName: "AI玩家的进化之路.html",
+      fileExt: "html",
+      mimeType: "text/html",
+      documentParseStatus: "pending",
+    }), { feishuClient });
+
+    expect(feishuClient.getMessageFile).toHaveBeenCalledWith({
+      messageId: "m-html",
+      fileKey: "file-key-html",
+      fileName: "AI玩家的进化之路.html",
+    });
+    expect(evidence.extractionStatus).toBe("parsed");
+    expect(evidence.extractionReason).toBe("parsed");
+    expect(evidence.documentText).toContain("AI玩家的进化之路");
+    expect(evidence.documentText).toContain("我用 AI 做了一个学习路径页面");
+    expect(evidence.documentText).not.toContain("alert");
+  });
+
   it("returns failed evidence when a supported file has no Feishu client", async () => {
     const evidence = await extractEvidence(makeMsg({
       messageType: "file",

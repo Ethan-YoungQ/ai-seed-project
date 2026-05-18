@@ -28,10 +28,10 @@ describe("buildScoringPrompt", () => {
       memberName: "王静Effie",
     });
 
-    expect(AI_BOOT_PROMPT_VERSION).toBe("2026-05-18-v2");
+    expect(AI_BOOT_PROMPT_VERSION).toBe("2026-05-18-v3");
     expect(prompt).toContain("王静Effie");
     expect(prompt).toContain("我用 AI 做了一个客户拜访复盘表");
-    expect(prompt).toContain("AI_BOOT_PROMPT_VERSION: 2026-05-18-v2");
+    expect(prompt).toContain("AI_BOOT_PROMPT_VERSION: 2026-05-18-v3");
     expect(prompt).toContain("AI_BOOT_RULESET_VERSION");
 
     expect(prompt).toContain("daily_participation: 1");
@@ -82,6 +82,23 @@ describe("buildScoringPrompt", () => {
     expect(prompt).toContain("作业构思、提示词草稿、画面设计说明、计划草稿不能按 formal_task 高分处理");
     expect(prompt).toContain("单张 AI 图片、海报或视觉作品如果只有成品展示，ai_artifact 基准为 3 分");
     expect(prompt).toContain("简短方法技巧或单条 prompt 思路通常给 prompt_or_method 4 分");
+  });
+
+  it("separates self-created artifacts, external links, low-value chat, and review scope", () => {
+    const prompt = buildScoringPrompt({
+      evidence: evidence({
+        attachments: [{ type: "file", fileName: "AI玩家的进化之路.html", fileExt: "html" }],
+        documentText: "AI玩家的进化之路 我用 AI 做了一个学习路径页面。",
+      }),
+      memberName: "学员",
+    });
+
+    expect(prompt).toContain("HTML、PDF、DOCX");
+    expect(prompt).toContain("不得降级为 daily_participation 或闲聊");
+    expect(prompt).toContain("外部链接不是作品");
+    expect(prompt).toContain("仅转发别人发过的链接或闲聊式附链接，不得按 ai_artifact 高分处理");
+    expect(prompt).toContain("闲聊、调侃、表情、晋升/榜单玩笑、单纯寒暄应输出 no_score");
+    expect(prompt).toContain("review_required 只用于");
   });
 
   it("defines no-score boundaries and JSON-only ScoringDecision output", () => {
@@ -227,15 +244,33 @@ describe("decideWithLlm", () => {
   });
 
   it.each([
-    ["empty response", ""],
     [
       "leading prose",
-      'Here is the JSON: {"status":"approved","category":"formal_task","scoreDelta":10,"confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}',
+      'Here is the JSON: {"status":"approved","category":"ai_artifact","scoreDelta":4,"confidence":"high","notifyPolicy":"group_praise","reason":"提交了 AI 作品。","evidence":"附件展示了可评分作品。","badges":["artifact"]}',
     ],
     [
       "fenced JSON",
-      '```json\n{"status":"approved","category":"formal_task","scoreDelta":10,"confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}\n```',
+      '```json\n{"status":"approved","category":"resource_recommendation","scoreDelta":2,"confidence":"medium","notifyPolicy":"silent","reason":"推荐了学习资源并说明用途。","evidence":"消息包含资源链接和使用场景。","badges":["resource"]}\n```',
     ],
+  ])("parses Qwen JSON even when wrapped by %s", async (_name, response) => {
+    const client: AiBootLlmClient = {
+      provider: "test-provider",
+      model: "test-model",
+      async chat() {
+        return response;
+      },
+    };
+
+    await expect(decideWithLlm(client, {
+      evidence: evidence(),
+      memberName: "学员",
+    })).resolves.toMatchObject({
+      status: "approved",
+    });
+  });
+
+  it.each([
+    ["empty response", ""],
     [
       "schema-invalid JSON",
       '{"status":"approved","category":"formal_task","scoreDelta":"10","confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}',
@@ -244,7 +279,7 @@ describe("decideWithLlm", () => {
       "shadow status",
       '{"status":"shadow","category":"formal_task","scoreDelta":10,"confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}',
     ],
-  ])("returns review_required for invalid LLM output: %s", async (_name, response) => {
+  ])("returns zero-point review for invalid LLM output: %s", async (_name, response) => {
     const client: AiBootLlmClient = {
       provider: "test-provider",
       model: "test-model",
@@ -258,8 +293,8 @@ describe("decideWithLlm", () => {
       memberName: "学员",
     })).resolves.toEqual({
       status: "review_required",
-      category: "formal_task",
-      scoreDelta: 1,
+      category: "operator_adjustment",
+      scoreDelta: 0,
       confidence: "low",
       notifyPolicy: "silent",
       reason: "LLM returned invalid scoring output; operator review required.",

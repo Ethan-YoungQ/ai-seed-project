@@ -161,6 +161,21 @@ describe("runDeterministicGuards", () => {
     )).toEqual({ kind: "continue" });
   });
 
+  it("keeps low-value Feishu emoji and promotion chat out of LLM review", () => {
+    for (const sanitizedText of [
+      "[坏笑][坏笑][坏笑]",
+      "[表情回应: ROSE]",
+    ]) {
+      expect(runDeterministicGuards(
+        evidence({ sanitizedText }),
+        context({ dailyParticipationAlreadyScored: true }),
+      )).toEqual({
+        kind: "ignore",
+        reason: "low_value_chat_daily_cap_used",
+      });
+    }
+  });
+
   it("ignores repeated content with an existing approved score", () => {
     expect(runDeterministicGuards(evidence(), context({
       duplicateApprovedContent: true,

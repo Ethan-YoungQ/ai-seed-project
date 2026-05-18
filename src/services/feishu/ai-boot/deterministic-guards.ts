@@ -33,6 +33,8 @@ const TRIVIAL_TEXTS = new Set([
 ]);
 
 const EMOJI_ONLY_RE = /^[\p{Emoji_Presentation}\p{Extended_Pictographic}\uFE0F\s]+$/u;
+const FEISHU_BRACKET_EMOJI_RE = /(?:\[[^\]\s]{1,16}\]\s*)+/u;
+const FEISHU_REACTION_RE = /^\[表情回应:\s*[^\]]+\]$/u;
 const PURE_LINK_REMAINDER_RE = /^[\s.,;:!?，。！？；、：…()[\]{}（）【】《》「」『』"'“”‘’<>-]*$/u;
 
 export function runDeterministicGuards(
@@ -79,6 +81,14 @@ export function runDeterministicGuards(
     return { kind: "daily_participation", reason: "trivial_chat" };
   }
 
+  if (isLowValueChatOnly(evidence)) {
+    if (context.dailyParticipationAlreadyScored) {
+      return { kind: "ignore", reason: "low_value_chat_daily_cap_used" };
+    }
+
+    return { kind: "daily_participation", reason: "low_value_chat" };
+  }
+
   if (isPureLinkWithoutReason(evidence)) {
     return { kind: "no_score", reason: "pure_link_without_reason" };
   }
@@ -100,6 +110,25 @@ function isTrivialOnly(text: string): boolean {
   }
 
   return TRIVIAL_TEXTS.has(normalized) || EMOJI_ONLY_RE.test(normalized);
+}
+
+function isLowValueChatOnly(evidence: EvidenceBundle): boolean {
+  if (
+    evidence.urls.length > 0 ||
+    evidence.attachments.length > 0 ||
+    evidence.documentText.trim().length > 0
+  ) {
+    return false;
+  }
+
+  const normalized = evidence.sanitizedText.trim();
+  if (normalized.length === 0) {
+    return false;
+  }
+
+  const withoutBracketEmoji = normalized.replace(FEISHU_BRACKET_EMOJI_RE, "").trim();
+  return FEISHU_REACTION_RE.test(normalized) ||
+    withoutBracketEmoji.length === 0;
 }
 
 function isPureLinkWithoutReason(evidence: EvidenceBundle): boolean {

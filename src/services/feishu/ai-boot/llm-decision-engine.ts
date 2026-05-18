@@ -7,7 +7,7 @@ import {
 } from "../../../domain/v3/scoring-rules.js";
 import type { EvidenceBundle } from "./content-extractor.js";
 
-export const AI_BOOT_PROMPT_VERSION = "2026-05-18-v2";
+export const AI_BOOT_PROMPT_VERSION = "2026-05-18-v3";
 
 export interface AiBootLlmClient {
   provider: string;
@@ -31,8 +31,8 @@ function invalidOutputDecision(input: {
 }): ScoringDecision {
   return parseScoringDecision({
     status: "review_required",
-    category: "formal_task",
-    scoreDelta: 1,
+    category: "operator_adjustment",
+    scoreDelta: 0,
     confidence: "low",
     notifyPolicy: "silent",
     reason: "LLM returned invalid scoring output; operator review required.",
@@ -68,6 +68,11 @@ AI_BOOT_RULESET_VERSION: ${AI_BOOT_RULESET_VERSION}
 - formal_task 只适用于已经完成并提交的正式作业、测验或运营指定任务交付物；作业构思、提示词草稿、画面设计说明、计划草稿不能按 formal_task 高分处理。
 - 单张 AI 图片、海报或视觉作品如果只有成品展示，ai_artifact 基准为 3 分；只有同时包含清楚的业务使用场景、迭代过程、方法说明或高质量落地结果时，才给 4-5 分。
 - 简短方法技巧或单条 prompt 思路通常给 prompt_or_method 4 分；5-6 分需要多步骤、可复用、可验证的方法或工作流。
+- HTML、PDF、DOCX 等附件如果 evidence.documentText 或文件名显示为学员自创 AI 作品、页面、海报、报告、工具、工作流或学习产物，不得降级为 daily_participation 或闲聊；应按 ai_artifact、prompt_or_method、ai_practice_reflection 或 formal_task 中最符合证据的分类评分。
+- 外部链接不是作品。只有当学员说明推荐理由、使用场景、适用人群或学习价值时，才按 resource_recommendation 评分；仅转发别人发过的链接或闲聊式附链接，不得按 ai_artifact 高分处理。
+- 闲聊、调侃、表情、晋升/榜单玩笑、单纯寒暄应输出 no_score；不要把闲聊塞入 review_required。
+- review_required 只用于“证据看起来可能有价值，但分类或分值确实需要运营判断”的情况；不要用 review_required 处理明显无分内容。
+- 如果输出 review_required，category 和 scoreDelta 应代表你建议运营审核的候选分类与候选分值；如果只是模型无法判断或证据不足，不要臆测加分，应输出 no_score。
 
 分类与分值范围（必须严格遵守）：
 - daily_participation: ${CATEGORY_SCORE_RANGES.daily_participation.min}
@@ -124,6 +129,27 @@ ${JSON.stringify(evidence, null, 2)}
 `;
 }
 
+function extractJsonObject(response: string): string | null {
+  const trimmed = response.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const candidate = fenced?.[1]?.trim() ?? trimmed;
+  if (candidate.startsWith("{") && candidate.endsWith("}")) {
+    return candidate;
+  }
+
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return candidate.slice(start, end + 1);
+  }
+
+  return null;
+}
+
 export async function decideWithLlm(
   client: AiBootLlmClient,
   input: { evidence: EvidenceBundle; memberName: string; imageDataUrl?: string },
@@ -155,12 +181,12 @@ export async function decideWithLlm(
   );
 
   try {
-    const trimmed = response.trim();
-    if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) {
+    const json = extractJsonObject(response);
+    if (!json) {
       return invalidOutputDecision({ client, evidence: input.evidence });
     }
 
-    return parseScoringDecision(JSON.parse(trimmed));
+    return parseScoringDecision(JSON.parse(json));
   } catch {
     return invalidOutputDecision({ client, evidence: input.evidence });
   }

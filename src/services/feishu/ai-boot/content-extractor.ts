@@ -71,7 +71,7 @@ const CLOSING_DELIMITER_PAIRS: Record<string, string> = {
 const FEISHU_AT_RE = /<at\b[^>]*>.*?<\/at>/g;
 const RAW_MENTION_RE = /@_user_\d+/g;
 const ATTACHMENT_MESSAGE_TYPES = new Set(["image", "file", "media"]);
-const SUPPORTED_DOCUMENT_EXTS = new Set(["pdf", "docx"]);
+const SUPPORTED_DOCUMENT_EXTS = new Set(["pdf", "docx", "html", "htm"]);
 
 function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();

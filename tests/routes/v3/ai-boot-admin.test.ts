@@ -171,7 +171,7 @@ describe("v3 ai boot operator review APIs", () => {
       id: "score-old-low",
       status: "review_required",
       confidence: "low",
-      evidence: "first low confidence evidence",
+      evidence: "shared a workflow",
       reason: "needs operator review",
       category: "ai_artifact",
       scoreDelta: 4,

@@ -627,8 +627,8 @@ async function decideContribution(input: {
   if (!deps.llmClient) {
     return parseScoringDecision({
       status: "review_required",
-      category: "formal_task",
-      scoreDelta: 1,
+      category: "operator_adjustment",
+      scoreDelta: 0,
       confidence: "low",
       notifyPolicy: "silent",
       reason: "LLM scoring client is not configured.",
@@ -646,8 +646,8 @@ async function decideContribution(input: {
     const reason = err instanceof Error ? err.message : String(err);
     return parseScoringDecision({
       status: "review_required",
-      category: "formal_task",
-      scoreDelta: 1,
+      category: "operator_adjustment",
+      scoreDelta: 0,
       confidence: "low",
       notifyPolicy: "silent",
       reason: `LLM scoring failed; operator review required: ${reason.slice(0, 160)}`,
@@ -806,8 +806,8 @@ function decisionFromGuard(
   if (outcome.kind === "review_required") {
     return parseScoringDecision({
       status: "review_required",
-      category: "formal_task",
-      scoreDelta: 1,
+      category: "operator_adjustment",
+      scoreDelta: 0,
       confidence: "low",
       notifyPolicy: "silent",
       reason: outcome.reason,

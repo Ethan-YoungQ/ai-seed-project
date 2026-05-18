@@ -881,6 +881,98 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.llmClient?.chat).not.toHaveBeenCalled();
   });
 
+  it("passes HTML artifact text to Qwen scoring instead of downgrading a file share to chat", async () => {
+    let prompt = "";
+    const llmClient: AiBootLlmClient = {
+      provider: "aliyun",
+      model: "qwen3.5-flash",
+      chat: vi.fn(async (messages) => {
+        prompt = String(messages[1]?.content ?? "");
+        return JSON.stringify({
+          status: "approved",
+          category: "ai_artifact",
+          scoreDelta: 4,
+          confidence: "high",
+          notifyPolicy: "group_praise",
+          reason: "学员提交了自创 AI HTML 作品。",
+          evidence: "HTML 标题和正文展示了 AI 玩家学习路径页面。",
+          badges: ["artifact", "html"],
+        });
+      }),
+    };
+    const deps = makeDeps({
+      llmClient,
+      feishuClient: {
+        getMessageFile: vi.fn().mockResolvedValue({
+          bytes: Buffer.from("<html><head><title>AI玩家的进化之路</title></head><body><h1>AI玩家的进化之路</h1><p>我用 AI 做了一个学习路径页面。</p></body></html>"),
+          fileName: "AI玩家的进化之路.html",
+          fileExt: "html",
+          mimeType: "text/html",
+        }),
+        sendTextMessage: vi.fn().mockResolvedValue({ messageId: "praise-1" }),
+        sendCardMessage: vi.fn().mockResolvedValue({ messageId: "review-card-1" }),
+      },
+    } as Partial<AiBootOrchestratorDeps>);
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      messageType: "file",
+      fileKey: "file-html-1",
+      fileName: "AI玩家的进化之路.html",
+      fileExt: "html",
+      mimeType: "text/html",
+      rawText: "",
+      cleanedText: "",
+      documentParseStatus: "pending",
+    }));
+
+    expect(prompt).toContain("AI玩家的进化之路");
+    expect(prompt).toContain("我用 AI 做了一个学习路径页面");
+    expect(prompt).toContain("不得降级为 daily_participation 或闲聊");
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 4,
+    });
+  });
+
+  it("keeps obvious Feishu emoji-only chat out of LLM and review queue", async () => {
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    deps.scoreEvents.push({
+      id: "existing-score",
+      eventId: "existing-event",
+      campId: "default",
+      memberId: "member-1",
+      category: "daily_participation",
+      scoreDelta: 1,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "silent",
+      reason: "trivial_chat",
+      evidence: "OK",
+      badgesJson: "[]",
+      modelProvider: "deterministic",
+      modelName: "guards",
+      promptVersion: "",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-16T08:00:00.000Z",
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      rawText: "[坏笑][坏笑][坏笑]@_user_1",
+      cleanedText: "[坏笑][坏笑][坏笑]@_user_1",
+    }));
+
+    expect(deps.events).toHaveLength(1);
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.llmClient?.chat).not.toHaveBeenCalled();
+    expect(deps.feishuClient.sendCardMessage).not.toHaveBeenCalled();
+  });
+
   it("moves LLM failures into review_required instead of dropping the score event", async () => {
     const llmClient: AiBootLlmClient = {
       provider: "test-provider",
@@ -895,7 +987,8 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.scoreEvents).toHaveLength(1);
     expect(deps.scoreEvents[0]).toMatchObject({
       status: "review_required",
-      scoreDelta: 1,
+      category: "operator_adjustment",
+      scoreDelta: 0,
       notifyPolicy: "silent",
     });
     expect(deps.scoreEvents[0].reason).toContain("rate limited");
@@ -935,8 +1028,8 @@ describe("createAiBootOrchestrator", () => {
   it("renders invalid LLM review cards in Chinese", async () => {
     const llmClient = makeLlmClient({
       status: "review_required",
-      category: "formal_task",
-      scoreDelta: 1,
+      category: "operator_adjustment",
+      scoreDelta: 0,
       confidence: "low",
       notifyPolicy: "silent",
       reason: "LLM returned invalid scoring output; operator review required.",
@@ -953,7 +1046,7 @@ describe("createAiBootOrchestrator", () => {
 
     const cardJson = (deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson;
     const cardText = JSON.stringify(cardJson);
-    expect(cardText).toContain("正式任务");
+    expect(cardText).toContain("运营调分");
     expect(cardText).toContain("模型返回格式异常，需要运营人工复核");
     expect(cardText).toContain("原消息已记录");
     expect(cardText).not.toContain("LLM returned invalid scoring output");
@@ -1073,6 +1166,8 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.scoreEvents).toHaveLength(1);
     expect(deps.scoreEvents[0]).toMatchObject({
       status: "review_required",
+      category: "operator_adjustment",
+      scoreDelta: 0,
       reason: "duplicate_content",
       notifyPolicy: "silent",
     });
