@@ -3,6 +3,8 @@
  * Defines all card types, action handling, state shapes, and dependencies.
  */
 
+import type { AiBootScoreCategory } from "../../../domain/v3/ai-boot-types.js";
+
 // ============================================================================
 // Card Type Definitions
 // ============================================================================
@@ -121,6 +123,8 @@ export interface CardHandlerDeps {
       reviewedByOpId: string;
       reviewNote: string;
       scoreDelta?: number;
+      category?: AiBootScoreCategory;
+      reason?: string;
     }): boolean;
   };
   ingestor: {
@@ -279,6 +283,7 @@ export interface ReviewQueueEventRow {
   memberId: string;
   memberName: string;
   itemCode: string;
+  category?: AiBootScoreCategory;
   scoreDelta: number;
   textExcerpt: string;
   llmReason: string;

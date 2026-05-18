@@ -674,7 +674,7 @@ describe("createAiBootOrchestrator", () => {
     vi.useRealTimers();
   });
 
-  it("moves image-only understanding failures into review_required instead of dropping the score event", async () => {
+  it("moves image-only understanding failures into a positive artifact review candidate", async () => {
     vi.useFakeTimers();
     const failedUnderstanding: AiBootImageUnderstandingRecord = {
       fileKey: "img-key-1",
@@ -717,8 +717,8 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.scoreEvents).toHaveLength(1);
     expect(deps.scoreEvents[0]).toMatchObject({
       status: "review_required",
-      category: "operator_adjustment",
-      scoreDelta: 0,
+      category: "ai_artifact",
+      scoreDelta: 3,
       notifyPolicy: "silent",
       reason: expect.stringContaining("image_understanding_failed"),
     });
@@ -1076,7 +1076,7 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.feishuClient.sendCardMessage).not.toHaveBeenCalled();
   });
 
-  it("moves LLM failures into review_required instead of dropping the score event", async () => {
+  it("moves LLM failures with strong evidence into a positive review candidate", async () => {
     const llmClient: AiBootLlmClient = {
       provider: "test-provider",
       model: "test-model",
@@ -1090,8 +1090,8 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.scoreEvents).toHaveLength(1);
     expect(deps.scoreEvents[0]).toMatchObject({
       status: "review_required",
-      category: "operator_adjustment",
-      scoreDelta: 0,
+      category: "ai_practice_reflection",
+      scoreDelta: 3,
       notifyPolicy: "silent",
     });
     expect(deps.scoreEvents[0].reason).toContain("rate limited");

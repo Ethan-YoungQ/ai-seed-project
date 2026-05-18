@@ -1,5 +1,6 @@
 import type { ScoringDecision } from "../../../domain/v3/scoring-decision.js";
 import { parseScoringDecision } from "../../../domain/v3/scoring-decision.js";
+import type { AiBootScoreCategory } from "../../../domain/v3/ai-boot-types.js";
 import {
   AI_BOOT_RULESET_VERSION,
   CATEGORY_SCORE_RANGES,
@@ -25,18 +26,127 @@ export interface AiBootLlmClient {
   ): Promise<string>;
 }
 
+type FallbackCandidate = {
+  category: AiBootScoreCategory;
+  scoreDelta: number;
+};
+
+function evidenceText(evidence: EvidenceBundle): string {
+  return [evidence.sanitizedText, evidence.documentText].join("\n").trim();
+}
+
+function summarizeEvidenceForFallback(evidence: EvidenceBundle): string {
+  const text = evidenceText(evidence);
+  if (text.length > 0) {
+    return text.slice(0, 180);
+  }
+  if (evidence.attachments.length > 0) {
+    return `attachments:${evidence.attachments.map((attachment) => attachment.fileName || attachment.type).join(",")}`;
+  }
+  if (evidence.urls.length > 0) {
+    return `urls:${evidence.urls.join(",")}`;
+  }
+  return `content_hash:${evidence.contentHash}`;
+}
+
+function isLowValueEvidence(evidence: EvidenceBundle): boolean {
+  const text = evidenceText(evidence).replace(/\s+/g, "");
+  if (evidence.attachments.length > 0 || evidence.urls.length > 0) {
+    return false;
+  }
+  if (text.length === 0) {
+    return true;
+  }
+  if (text.length <= 12) {
+    return true;
+  }
+  return /^(哈哈+|呵呵+|收到|好的|好|ok|OK|厉害|太牛了|牛|赞|谢谢|感谢|不用加分|纯瞎聊)$/i.test(text);
+}
+
+function fallbackCandidate(evidence: EvidenceBundle): FallbackCandidate | null {
+  const text = evidenceText(evidence);
+  const lowered = text.toLowerCase();
+  const attachmentNames = evidence.attachments
+    .map((attachment) => `${attachment.type} ${attachment.fileName ?? ""} ${attachment.fileExt ?? ""}`)
+    .join(" ")
+    .toLowerCase();
+  const combined = `${lowered}\n${attachmentNames}`;
+
+  if (evidence.attachments.length > 0) {
+    return { category: "ai_artifact", scoreDelta: 3 };
+  }
+  if (/\b(html|pdf|docx|xlsx|pptx)\b|图片|海报|作品|页面|产物|表格|报告|工具/.test(combined)) {
+    return { category: "ai_artifact", scoreDelta: 3 };
+  }
+  if (/prompt|提示词|方法|步骤|工作流|参数|操作策略|教程/.test(combined)) {
+    return { category: "prompt_or_method", scoreDelta: 4 };
+  }
+  if (/复盘|总结|改进|实践|客户|应用|试了|使用过程|收获|效果|局限/.test(combined)) {
+    return { category: "ai_practice_reflection", scoreDelta: 3 };
+  }
+  if (evidence.urls.length > 0 && /推荐|资源|工具|链接|案例|课程|文章|测评|适合|用途|场景/.test(combined)) {
+    return { category: "resource_recommendation", scoreDelta: 2 };
+  }
+  if (evidence.urls.length > 0 && text.length >= 20) {
+    return { category: "resource_recommendation", scoreDelta: 2 };
+  }
+
+  return null;
+}
+
+export function fallbackDecisionForScoringFailure(input: {
+  evidence: EvidenceBundle;
+  reason: string;
+  evidenceText?: string;
+  badges: string[];
+}): ScoringDecision {
+  if (isLowValueEvidence(input.evidence)) {
+    return parseScoringDecision({
+      status: "no_score",
+      category: "daily_participation",
+      scoreDelta: 0,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "LLM returned invalid output for low-value evidence; no operator review needed.",
+      evidence: summarizeEvidenceForFallback(input.evidence),
+      badges: [...input.badges, "low_value_no_review"],
+    });
+  }
+
+  const candidate = fallbackCandidate(input.evidence);
+  if (!candidate) {
+    return parseScoringDecision({
+      status: "no_score",
+      category: "daily_participation",
+      scoreDelta: 0,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "LLM scoring failed and evidence is insufficient for operator review.",
+      evidence: summarizeEvidenceForFallback(input.evidence),
+      badges: input.badges,
+    });
+  }
+
+  return parseScoringDecision({
+    status: "review_required",
+    category: candidate.category,
+    scoreDelta: candidate.scoreDelta,
+    confidence: "low",
+    notifyPolicy: "silent",
+    reason: input.reason,
+    evidence: input.evidenceText ?? summarizeEvidenceForFallback(input.evidence),
+    badges: input.badges,
+  });
+}
+
 function invalidOutputDecision(input: {
   client: AiBootLlmClient;
   evidence: EvidenceBundle;
 }): ScoringDecision {
-  return parseScoringDecision({
-    status: "review_required",
-    category: "operator_adjustment",
-    scoreDelta: 0,
-    confidence: "low",
-    notifyPolicy: "silent",
+  return fallbackDecisionForScoringFailure({
+    evidence: input.evidence,
     reason: "LLM returned invalid scoring output; operator review required.",
-    evidence:
+    evidenceText:
       `Invalid response from ${input.client.provider}/${input.client.model} ` +
       `while scoring content hash ${input.evidence.contentHash}.`,
     badges: ["llm_output_invalid"],

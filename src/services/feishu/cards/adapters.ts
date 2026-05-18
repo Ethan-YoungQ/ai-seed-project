@@ -114,6 +114,7 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
           memberId: row.memberId,
           memberName: member?.displayName || member?.name || "未知学员",
           itemCode: formatReviewQueueItemCode(row.category),
+          category: row.category,
           scoreDelta: row.scoreDelta,
           textExcerpt: formatReviewQueueExcerpt({
             evidence: row.evidence,

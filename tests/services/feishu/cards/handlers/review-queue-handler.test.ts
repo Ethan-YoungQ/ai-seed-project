@@ -207,6 +207,67 @@ describe("reviewApproveHandler", () => {
     expect(JSON.stringify(result.newCardJson)).toContain("暂无待审核事件");
   });
 
+  test("v3 approve applies the explicit category and score selected from the card", async () => {
+    const updateAiBootScoreDecision = vi.fn(() => true);
+    const deps = fakeDeps({
+      repo: {
+        ...fakeDeps().repo,
+        findMemberByOpenId: vi.fn(() => operatorMember()),
+        updateAiBootScoreDecision,
+        listReviewRequiredEvents: vi.fn(async () => []),
+        countReviewRequiredEvents: vi.fn(async () => 0),
+      } as never,
+    });
+    const ctx = fakeCtx({
+      actionPayload: {
+        action: "review_approve",
+        engine: "v3",
+        eventId: "score-1",
+        category: "ai_artifact",
+        scoreDelta: 5,
+        reason: "运营确认这是高质量 AI 图片作品。",
+      },
+    });
+
+    const result = await reviewApproveHandler(ctx, deps);
+
+    expect(updateAiBootScoreDecision).toHaveBeenCalledWith({
+      id: "score-1",
+      status: "approved",
+      reviewedByOpId: "m-op-1",
+      reviewNote: "approved_by_review_card",
+      category: "ai_artifact",
+      scoreDelta: 5,
+      reason: "运营确认这是高质量 AI 图片作品。",
+    });
+    expect(result.newCardJson).toBeDefined();
+  });
+
+  test("v3 approve rejects zero-point approvals without explicit positive score", async () => {
+    const updateAiBootScoreDecision = vi.fn(() => true);
+    const deps = fakeDeps({
+      repo: {
+        ...fakeDeps().repo,
+        findMemberByOpenId: vi.fn(() => operatorMember()),
+        updateAiBootScoreDecision,
+      } as never,
+    });
+    const ctx = fakeCtx({
+      actionPayload: {
+        action: "review_approve",
+        engine: "v3",
+        eventId: "score-1",
+        scoreDelta: 0,
+      },
+    });
+
+    const result = await reviewApproveHandler(ctx, deps);
+
+    expect(result.toast?.type).toBe("error");
+    expect(result.toast?.content).toContain("请选择带分值");
+    expect(updateAiBootScoreDecision).not.toHaveBeenCalled();
+  });
+
   test("v3 duplicate approve returns invalid toast and does not fall back to v2 aggregation", async () => {
     const updateAiBootScoreDecision = vi.fn(() => false);
     const deps = fakeDeps({

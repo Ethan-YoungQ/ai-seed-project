@@ -10,6 +10,7 @@
  */
 
 import { InvalidDecisionStateError } from "../../../../domain/v2/errors.js";
+import type { AiBootScoreCategory } from "../../../../domain/v3/ai-boot-types.js";
 import { buildReviewQueueCard, REVIEW_QUEUE_TEMPLATE_ID } from "../templates/review-queue-v1.js";
 import type {
   CardActionContext,
@@ -24,6 +25,16 @@ import type {
 // ============================================================================
 
 const PAGE_SIZE = 10;
+const V3_SCORE_CATEGORIES = new Set([
+  "daily_participation",
+  "ai_artifact",
+  "ai_practice_reflection",
+  "prompt_or_method",
+  "resource_recommendation",
+  "peer_help",
+  "formal_task",
+  "operator_adjustment",
+]);
 
 // ============================================================================
 // Helpers
@@ -60,6 +71,34 @@ function isV3ReviewAction(payload: Record<string, unknown>): boolean {
   return payload.engine === "v3";
 }
 
+function buildV3ApprovePatch(
+  payload: Record<string, unknown>,
+): { scoreDelta?: number; category?: AiBootScoreCategory; reason?: string } | CardActionResult {
+  if (!Object.hasOwn(payload, "scoreDelta")) {
+    return {};
+  }
+
+  const scoreDelta = Number(payload.scoreDelta);
+  if (!Number.isFinite(scoreDelta) || scoreDelta <= 0) {
+    return { toast: { type: "error", content: "请选择带分值的通过按钮" } };
+  }
+
+  const category = typeof payload.category === "string" ? payload.category : undefined;
+  if (category && !V3_SCORE_CATEGORIES.has(category)) {
+    return { toast: { type: "error", content: "审核分类无效,请刷新队列" } };
+  }
+
+  const reason = typeof payload.reason === "string" && payload.reason.trim().length > 0
+    ? payload.reason.trim()
+    : undefined;
+
+  return {
+    scoreDelta,
+    ...(category ? { category: category as AiBootScoreCategory } : {}),
+    ...(reason ? { reason } : {}),
+  };
+}
+
 async function applyV3Decision(
   ctx: CardActionContext,
   deps: CardHandlerDeps,
@@ -78,6 +117,13 @@ async function applyV3Decision(
     return { toast: { type: "error", content: "v3 审核链路未配置,请联系管理员" } };
   }
 
+  const approvePatch = status === "approved"
+    ? buildV3ApprovePatch(ctx.actionPayload)
+    : {};
+  if ("toast" in approvePatch) {
+    return approvePatch;
+  }
+
   const ok = deps.repo.updateAiBootScoreDecision({
     id: eventId,
     status,
@@ -85,7 +131,7 @@ async function applyV3Decision(
     reviewNote: status === "approved"
       ? "approved_by_review_card"
       : "rejected_by_review_card",
-    ...(status === "rejected" ? { scoreDelta: 0 } : {})
+    ...(status === "rejected" ? { scoreDelta: 0 } : approvePatch)
   });
   if (!ok) {
     return { toast: { type: "error", content: "此条已被其他运营处理,请刷新队列" } };

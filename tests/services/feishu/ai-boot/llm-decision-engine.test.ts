@@ -279,7 +279,7 @@ describe("decideWithLlm", () => {
       "shadow status",
       '{"status":"shadow","category":"formal_task","scoreDelta":10,"confidence":"high","notifyPolicy":"group_praise","reason":"ok","evidence":"ok","badges":[]}',
     ],
-  ])("returns zero-point review for invalid LLM output: %s", async (_name, response) => {
+  ])("returns a positive review candidate for invalid LLM output with strong evidence: %s", async (_name, response) => {
     const client: AiBootLlmClient = {
       provider: "test-provider",
       model: "test-model",
@@ -293,13 +293,44 @@ describe("decideWithLlm", () => {
       memberName: "学员",
     })).resolves.toEqual({
       status: "review_required",
-      category: "operator_adjustment",
-      scoreDelta: 0,
+      category: "ai_artifact",
+      scoreDelta: 3,
       confidence: "low",
       notifyPolicy: "silent",
       reason: "LLM returned invalid scoring output; operator review required.",
       evidence: "Invalid response from test-provider/test-model while scoring content hash hash-1.",
       badges: ["llm_output_invalid"],
+    });
+  });
+
+  it("returns no_score for invalid LLM output when text evidence is low-value chat", async () => {
+    const client: AiBootLlmClient = {
+      provider: "test-provider",
+      model: "test-model",
+      async chat() {
+        return "";
+      },
+    };
+
+    await expect(decideWithLlm(client, {
+      evidence: evidence({
+        sanitizedText: "太牛了",
+        urls: [],
+        attachments: [],
+        documentText: "",
+        extractionStatus: "not_applicable",
+        extractionReason: "non_file_message",
+      }),
+      memberName: "学员",
+    })).resolves.toEqual({
+      status: "no_score",
+      category: "daily_participation",
+      scoreDelta: 0,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "LLM returned invalid output for low-value evidence; no operator review needed.",
+      evidence: "太牛了",
+      badges: ["llm_output_invalid", "low_value_no_review"],
     });
   });
 });

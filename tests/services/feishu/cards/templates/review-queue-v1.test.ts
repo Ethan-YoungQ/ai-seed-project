@@ -88,6 +88,42 @@ describe("review-queue-v1 template", () => {
     expect((approveBtn!.value as Record<string, unknown>).eventId).toBe(event.eventId);
   });
 
+  test("v3 positive candidates include category and score in the approve payload", () => {
+    const event: ReviewQueueEventRow = {
+      ...makeEvent(7),
+      engine: "v3",
+      itemCode: "AI 作品/产物",
+      category: "ai_artifact",
+      scoreDelta: 3,
+    };
+    const card = buildReviewQueueCard(makeState([event]));
+    const json = JSON.stringify(card);
+
+    expect(json).toContain("按候选 +3分");
+    expect(json).toContain('"category":"ai_artifact"');
+    expect(json).toContain('"scoreDelta":3');
+  });
+
+  test("v3 zero-point candidates do not render a generic approve button and offer explicit image scores", () => {
+    const event: ReviewQueueEventRow = {
+      ...makeEvent(8),
+      engine: "v3",
+      itemCode: "运营调分",
+      category: "operator_adjustment",
+      scoreDelta: 0,
+      llmReason: "图片理解失败，需要运营判断",
+    };
+    const card = buildReviewQueueCard(makeState([event]));
+    const json = JSON.stringify(card);
+
+    expect(json).not.toContain("✅ 通过");
+    expect(json).toContain("作品 +3");
+    expect(json).toContain("高质量 +5");
+    expect(json).toContain('"category":"ai_artifact"');
+    expect(json).toContain('"scoreDelta":3');
+    expect(json).toContain('"scoreDelta":5');
+  });
+
   test("uses schema 2.0 column_set button rows instead of deprecated action tag", () => {
     const state = makeState([makeEvent(1)], 2, 3, 25);
     const card = buildReviewQueueCard(state);

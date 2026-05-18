@@ -51,6 +51,97 @@ function actionName(base: string, sequence: string | number, suffix?: string | n
     : `${base}_${sequence}_${safeSuffix}`;
 }
 
+function reviewRejectButton(
+  event: ReviewQueueEventRow,
+  rowIndex: number,
+): Record<string, unknown> {
+  return {
+    tag: "button",
+    name: actionName("review_reject", rowIndex, event.eventId),
+    text: { tag: "plain_text", content: "❌ 拒绝" },
+    type: "danger",
+    value: { action: "review_reject", eventId: event.eventId, engine: event.engine ?? "v2" }
+  };
+}
+
+function reviewApproveButton(input: {
+  event: ReviewQueueEventRow;
+  rowIndex: number;
+  label: string;
+  type?: "primary" | "default";
+  suffix?: string;
+  value?: Record<string, unknown>;
+}): Record<string, unknown> {
+  const { event, rowIndex } = input;
+  return {
+    tag: "button",
+    name: actionName("review_approve", rowIndex, input.suffix ?? event.eventId),
+    text: { tag: "plain_text", content: input.label },
+    type: input.type ?? "primary",
+    value: {
+      action: "review_approve",
+      eventId: event.eventId,
+      engine: event.engine ?? "v2",
+      ...(input.value ?? {}),
+    }
+  };
+}
+
+function buildActionButtons(
+  event: ReviewQueueEventRow,
+  rowIndex: number,
+): Array<Record<string, unknown>> {
+  if (event.engine !== "v3") {
+    return [
+      reviewApproveButton({ event, rowIndex, label: "✅ 通过" }),
+      reviewRejectButton(event, rowIndex),
+    ];
+  }
+
+  if (event.scoreDelta > 0 && event.category) {
+    return [
+      reviewApproveButton({
+        event,
+        rowIndex,
+        label: `按候选 +${event.scoreDelta}分`,
+        value: {
+          category: event.category,
+          scoreDelta: event.scoreDelta,
+          reason: event.llmReason,
+        },
+      }),
+      reviewRejectButton(event, rowIndex),
+    ];
+  }
+
+  return [
+    reviewApproveButton({
+      event,
+      rowIndex,
+      label: "作品 +3",
+      suffix: `${event.eventId}_artifact_3`,
+      value: {
+        category: "ai_artifact",
+        scoreDelta: 3,
+        reason: "运营确认这是 AI 图片/作品，按基础作品分通过。",
+      },
+    }),
+    reviewApproveButton({
+      event,
+      rowIndex,
+      label: "高质量 +5",
+      type: "default",
+      suffix: `${event.eventId}_artifact_5`,
+      value: {
+        category: "ai_artifact",
+        scoreDelta: 5,
+        reason: "运营确认这是高质量 AI 图片/作品，按高质量作品分通过。",
+      },
+    }),
+    reviewRejectButton(event, rowIndex),
+  ];
+}
+
 function buildEventRow(event: ReviewQueueEventRow, rowIndex: number): Array<Record<string, unknown>> {
   const excerpt =
     event.textExcerpt.length > 40
@@ -66,22 +157,7 @@ function buildEventRow(event: ReviewQueueEventRow, rowIndex: number): Array<Reco
         `LLM理由: ${event.llmReason}`
       ].join("\n")
     },
-    buttonRow([
-      {
-        tag: "button",
-        name: actionName("review_approve", rowIndex, event.eventId),
-        text: { tag: "plain_text", content: "✅ 通过" },
-        type: "primary",
-        value: { action: "review_approve", eventId: event.eventId, engine: event.engine ?? "v2" }
-      },
-      {
-        tag: "button",
-        name: actionName("review_reject", rowIndex, event.eventId),
-        text: { tag: "plain_text", content: "❌ 拒绝" },
-        type: "danger",
-        value: { action: "review_reject", eventId: event.eventId, engine: event.engine ?? "v2" }
-      }
-    ])
+    buttonRow(buildActionButtons(event, rowIndex))
   ];
 }
 

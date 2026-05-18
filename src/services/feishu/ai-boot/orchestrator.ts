@@ -30,6 +30,7 @@ import {
 import {
   AI_BOOT_PROMPT_VERSION,
   decideWithLlm,
+  fallbackDecisionForScoringFailure,
   type AiBootLlmClient,
 } from "./llm-decision-engine.js";
 import {
@@ -387,6 +388,7 @@ async function pushReviewQueueCard(input: {
       memberId: row.memberId,
       memberName: rowMember?.displayName || rowMember?.name || member.displayName || "未知学员",
       itemCode: formatReviewQueueItemCode(row.category),
+      category: row.category,
       scoreDelta: row.scoreDelta,
       textExcerpt: formatReviewQueueExcerpt({
         evidence: row.evidence,
@@ -648,14 +650,9 @@ async function decideContribution(input: {
   const { deps, evidence, member } = input;
 
   if (!deps.llmClient) {
-    return parseScoringDecision({
-      status: "review_required",
-      category: "operator_adjustment",
-      scoreDelta: 0,
-      confidence: "low",
-      notifyPolicy: "silent",
+    return fallbackDecisionForScoringFailure({
+      evidence,
       reason: "LLM scoring client is not configured.",
-      evidence: `Scoring requires operator review for content hash ${evidence.contentHash}.`,
       badges: ["llm_missing"],
     });
   }
@@ -667,14 +664,9 @@ async function decideContribution(input: {
     });
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err);
-    return parseScoringDecision({
-      status: "review_required",
-      category: "operator_adjustment",
-      scoreDelta: 0,
-      confidence: "low",
-      notifyPolicy: "silent",
+    return fallbackDecisionForScoringFailure({
+      evidence,
       reason: `LLM scoring failed; operator review required: ${reason.slice(0, 160)}`,
-      evidence: summarizeEvidence(evidence),
       badges: ["llm_error"],
     });
   }
@@ -816,16 +808,17 @@ function decisionFromImageUnderstandingFailure(
 ): ScoringDecision {
   return parseScoringDecision({
     status: "review_required",
-    category: "operator_adjustment",
-    scoreDelta: 0,
+    category: "ai_artifact",
+    scoreDelta: 3,
     confidence: "low",
     notifyPolicy: "silent",
     reason: [
       "image_understanding_failed",
+      "candidate=ai_artifact_minimum",
       record.errorReason ? `reason=${record.errorReason}` : "",
     ].filter(Boolean).join("; "),
     evidence: summarizeEvidence(evidence),
-    badges: ["image_understanding_failed"],
+    badges: ["image_understanding_failed", "image_review_candidate"],
   });
 }
 
