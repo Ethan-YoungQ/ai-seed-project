@@ -20,10 +20,12 @@ const LEVEL_STATUS_PATTERNS = [
 const LEVEL_QUESTION_PATTERNS = [
   /为什么|为啥|怎么|怎样|如何/,
   /还是|成为|升(?:级|阶)|晋级|差.*多少|还差/,
+  /是什么|什么|多少|现在/,
 ];
 
 const CS_INTERACTION_PATTERNS = [
-  /c\s*\/\s*s/i,
+  /(?:c\s*[-/]\s*s|cs)\s*(?:点赞|互动).*?(?:算|计|有分|加分|得分|没算|没记|漏分)?/i,
+  /(?:点赞|互动).*?(?:c\s*[-/]\s*s|cs).*?(?:算|计|有分|加分|得分|没算|没记|漏分)?/i,
   /(?:同学|互助|点赞|给同学).*?(?:算|计|有分|加分|得分|没算|没记|漏分)/,
   /(?:算|计|有分|加分|得分|没算|没记|漏分).*?(?:同学|互助|点赞|给同学)/,
 ];
@@ -42,7 +44,8 @@ const RULES_PATTERNS = [
 
 const SCORE_BREAKDOWN_PATTERNS = [
   /(?:多少分|几分|排名第几|第几名)/,
-  /(?:我的|我).*?(?:维度分|分数|排名)/,
+  /(?:天梯榜|排行榜).*?(?:第几|排名|名次)/,
+  /(?:我的|我).*?(?:维度分|分数|排名|天梯榜|排行榜)/,
   /(?:维度分|分数|排名).*?(?:多少|第几|明细|详情)/,
 ];
 
@@ -79,12 +82,12 @@ export function classifyBotQuestionIntent(rawText: string): BotQuestionIntent {
     return { kind: "score_missing_check" };
   }
 
-  if (matchesAny(text, RULES_PATTERNS)) {
-    return { kind: "rules_query" };
-  }
-
   if (matchesAny(text, SCORE_BREAKDOWN_PATTERNS)) {
     return { kind: "score_breakdown" };
+  }
+
+  if (matchesAny(text, RULES_PATTERNS)) {
+    return { kind: "rules_query" };
   }
 
   if (matchesAny(text, COURSE_OR_HOMEWORK_PATTERNS)) {
