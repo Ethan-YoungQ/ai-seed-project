@@ -2,6 +2,7 @@ export type BotQuestionIntentKind =
   | "level_status"
   | "cs_interaction_check"
   | "score_missing_check"
+  | "score_breakdown"
   | "rules_query"
   | "course_or_homework_qa"
   | "general_chat";
@@ -23,8 +24,8 @@ const LEVEL_QUESTION_PATTERNS = [
 
 const CS_INTERACTION_PATTERNS = [
   /c\s*\/\s*s/i,
-  /点赞|评论|互动|同学.*(?:赞|点赞)|给同学/,
-  /(?:点赞|评论|互动).*?(?:算|计|有分|加分|得分)/,
+  /(?:同学|互助|点赞|给同学).*?(?:算|计|有分|加分|得分|没算|没记|漏分)/,
+  /(?:算|计|有分|加分|得分|没算|没记|漏分).*?(?:同学|互助|点赞|给同学)/,
 ];
 
 const SCORE_MISSING_PATTERNS = [
@@ -33,13 +34,22 @@ const SCORE_MISSING_PATTERNS = [
 ];
 
 const RULES_PATTERNS = [
-  /规则|天梯榜|排行榜|计分|评分|加分|得分|积分/,
-  /prompt|提示词|必须发|一定要发|要不要发/,
+  /规则|天梯榜|排行榜|计分规则|评分规则|积分规则/,
+  /(?:prompt|提示词).*?(?:必须|一定|要不要|要发|发吗)/i,
+  /(?:必须|一定|要不要).*?(?:prompt|提示词)/i,
+  /得分攻略|加分攻略|积分攻略|怎么得分|如何得分|怎么加分|如何加分/,
+];
+
+const SCORE_BREAKDOWN_PATTERNS = [
+  /(?:多少分|几分|排名第几|第几名)/,
+  /(?:我的|我).*?(?:维度分|分数|排名)/,
+  /(?:维度分|分数|排名).*?(?:多少|第几|明细|详情)/,
 ];
 
 const COURSE_OR_HOMEWORK_PATTERNS = [
   /结合(?:上文|前文|刚才|上下文|我交的|作业|文件)/,
   /rag|prompt|提示词|作业|课程|课上|题目|解释|帮我看|分析一下/i,
+  /(?:案例|这段|这题).*?(?:怎么理解|是什么意思|解释一下)/,
 ];
 
 function normalizeQuestion(rawText: string): string {
@@ -69,8 +79,12 @@ export function classifyBotQuestionIntent(rawText: string): BotQuestionIntent {
     return { kind: "score_missing_check" };
   }
 
-  if (matchesAny(text, RULES_PATTERNS.slice(0, 1)) && matchesAny(text, RULES_PATTERNS.slice(1))) {
+  if (matchesAny(text, RULES_PATTERNS)) {
     return { kind: "rules_query" };
+  }
+
+  if (matchesAny(text, SCORE_BREAKDOWN_PATTERNS)) {
+    return { kind: "score_breakdown" };
   }
 
   if (matchesAny(text, COURSE_OR_HOMEWORK_PATTERNS)) {
