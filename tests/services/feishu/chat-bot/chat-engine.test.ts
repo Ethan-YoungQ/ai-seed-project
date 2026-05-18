@@ -229,4 +229,98 @@ describe("ChatEngine.reply", () => {
     expect(result.used).toBe("llm");
     expect(result.replyText).not.toContain("欢迎其他同学");
   });
+
+  it("answers level and potential-stock questions from score facts without calling the LLM", async () => {
+    const llm = vi.fn().mockResolvedValue("泛泛而谈的回答");
+    const engine = createChatEngine({
+      llmClient: {
+        provider: "fake",
+        model: "fake-v1",
+        chat: llm,
+      },
+      memory: createConversationMemory(),
+      rateLimiter: createRateLimiter(),
+      repo: {
+        findMemberByOpenId(openId: string) {
+          if (openId !== "grace") return null;
+          return {
+            id: "member-grace",
+            displayName: "Grace",
+            roleType: "student",
+            isParticipant: true,
+            isExcludedFromBoard: false,
+            currentLevel: 1,
+          };
+        },
+        getLevelStatus(memberId: string) {
+          expect(memberId).toBe("member-grace");
+          return {
+            memberName: "Grace",
+            rank: 4,
+            currentLevel: 1,
+            currentLevelName: "AI 潜力股",
+            nextLevel: 2,
+            nextLevelName: "AI 研究员",
+            totalScore: 26,
+            dimensions: { K: 13, H: 13, C: 0, S: 0, G: 0 },
+          };
+        },
+      },
+    });
+
+    const result = await engine.reply({
+      chatId: "c1",
+      openId: "grace",
+      messageId: "m1",
+      cleanedText: "为什么我还是潜力股[泣不成声]",
+    });
+
+    expect(result.used).toBe("level_status");
+    expect(llm).not.toHaveBeenCalled();
+    expect(result.replyText).toContain("Grace");
+    expect(result.replyText).toContain("26 分");
+    expect(result.replyText).toContain("K13 / H13 / C0 / S0 / G0");
+    expect(result.replyText).toContain("缺少 C/S/G");
+    expect(result.replyText).toContain("AI 研究员");
+  });
+
+  it("does not send level questions to the LLM when the sender is not on the student board", async () => {
+    const llm = vi.fn().mockResolvedValue("泛泛而谈的回答");
+    const engine = createChatEngine({
+      llmClient: {
+        provider: "fake",
+        model: "fake-v1",
+        chat: llm,
+      },
+      memory: createConversationMemory(),
+      rateLimiter: createRateLimiter(),
+      repo: {
+        findMemberByOpenId(openId: string) {
+          if (openId !== "operator") return null;
+          return {
+            id: "member-operator",
+            displayName: "运营",
+            roleType: "operator",
+            isParticipant: true,
+            isExcludedFromBoard: false,
+            currentLevel: 1,
+          };
+        },
+        getLevelStatus() {
+          return null;
+        },
+      },
+    });
+
+    const result = await engine.reply({
+      chatId: "c1",
+      openId: "operator",
+      messageId: "m1",
+      cleanedText: "为什么我还是潜力股？",
+    });
+
+    expect(result.used).toBe("level_status");
+    expect(llm).not.toHaveBeenCalled();
+    expect(result.replyText).toContain("没有在学员天梯榜里找到");
+  });
 });

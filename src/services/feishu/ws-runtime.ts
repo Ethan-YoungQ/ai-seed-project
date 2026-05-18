@@ -188,16 +188,24 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
       },
 
       // C2 表情回应: 学员在群内给消息点赞/加表情 → K1 签到(群活动)
-      "im.message.reaction_created_v1": async (data: unknown) => {
+      "im.message.reaction.created_v1": async (data: unknown) => {
         const d = data as {
           message_id?: string;
           reaction_type?: { emoji_type?: string };
+          operator?: { operator_id?: string; operator_type?: string };
           operator_type?: string;
           user_id?: { open_id?: string };
+          event?: {
+            message_id?: string;
+            reaction_type?: { emoji_type?: string };
+            operator?: { operator_id?: string; operator_type?: string };
+            user_id?: { open_id?: string };
+          };
         };
-        const openId = d?.user_id?.open_id ?? "";
-        const messageId = d?.message_id ?? "";
-        const emoji = d?.reaction_type?.emoji_type ?? "";
+        const event = d.event ?? d;
+        const openId = event?.user_id?.open_id ?? event?.operator?.operator_id ?? "";
+        const messageId = event?.message_id ?? "";
+        const emoji = event?.reaction_type?.emoji_type ?? "";
 
         if (!openId || !messageId) return;
 

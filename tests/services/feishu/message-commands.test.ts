@@ -747,6 +747,44 @@ describe("message-commands AI Boot v3 routing", () => {
     expect(deps.ingestor?.ingest).not.toHaveBeenCalled();
   });
 
+  it("keeps C2 reaction scoring in v3_live before routing to AI Boot v3", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+    const msg = makeMsg({
+      messageId: "reaction:om-source:user-001",
+      rawText: "[表情回应: SMIRK]",
+      cleanedText: "[表情回应: SMIRK]",
+    });
+
+    await handler(msg);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).toHaveBeenCalledWith(msg);
+    expect(deps.ingestor?.ingest).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: "member-001",
+      itemCode: "C2",
+      sourceRef: `msg:${msg.messageId}:C2`,
+    }));
+  });
+
+  it("keeps S1 peer interaction scoring in v3_live before routing to AI Boot v3", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+    const msg = makeMsg({
+      rawText: "@张本一 这个问题我刚试过，可以先用客户画像再让 AI 出三个版本。",
+      cleanedText: "@张本一 这个问题我刚试过，可以先用客户画像再让 AI 出三个版本。",
+      mentionedBotIds: [],
+    });
+
+    await handler(msg);
+
+    expect(deps.aiBootOrchestrator?.handleMessage).toHaveBeenCalledWith(msg);
+    expect(deps.ingestor?.ingest).toHaveBeenCalledWith(expect.objectContaining({
+      memberId: "member-001",
+      itemCode: "S1",
+      sourceRef: `msg:${msg.messageId}:S1`,
+    }));
+  });
+
   it("runs v3_shadow as a sidecar while keeping legacy auto-capture scoring", async () => {
     const deps = buildDeps({
       aiBootConfig: {

@@ -31,6 +31,11 @@ import type {
   AiBootScoreCategory,
   AiBootScoreEventRecord
 } from "../domain/v3/ai-boot-types.js";
+import {
+  emptyAiBootScoreDimensions,
+  resolveAiBootV3CategoryDimension,
+  type AiBootScoreDimensions,
+} from "../domain/v3/category-dimensions.js";
 
 // ---------------------------------------------------------------------------
 // Inlined from domain/ranking.ts (deleted as part of v1 legacy cleanup)
@@ -1826,6 +1831,24 @@ export class SqliteRepository {
       )
       .get(campId, memberId) as { total: number };
     return Number(row.total ?? 0);
+  }
+
+  sumApprovedAiBootScoreDimensions(campId: string, memberId: string): AiBootScoreDimensions {
+    const rows = this.db
+      .prepare(
+        `SELECT category, COALESCE(SUM(score_delta), 0) AS total
+         FROM ai_boot_score_events
+         WHERE camp_id = ? AND member_id = ? AND status = 'approved'
+         GROUP BY category`
+      )
+      .all(campId, memberId) as Array<{ category: AiBootScoreCategory; total: number }>;
+
+    const dimensions = emptyAiBootScoreDimensions();
+    for (const row of rows) {
+      const dimension = resolveAiBootV3CategoryDimension(row.category);
+      dimensions[dimension] += Number(row.total ?? 0);
+    }
+    return dimensions;
   }
 
   countAiBootLegacyScoreSnapshots(campId?: string): number {

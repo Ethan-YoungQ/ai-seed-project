@@ -7,6 +7,7 @@ import {
   evaluateContinuousPromotion,
   type ContinuousLevelValue,
 } from "../domain/v2/continuous-promotion.js";
+import { resolveAiBootV3CategoryDimension } from "../domain/v3/category-dimensions.js";
 
 interface LegacyCorrection {
   originalEventId: string;
@@ -84,17 +85,6 @@ const V3_CORRECTIONS: readonly V3Correction[] = [
     reason: "单张 AI 海报仅展示成品，按 ai_artifact 基准分 3 分下修",
   },
 ];
-
-const V3_CATEGORY_DIMENSION: Record<string, "K" | "H" | "C" | "S" | "G"> = {
-  daily_participation: "K",
-  formal_task: "H",
-  ai_artifact: "C",
-  prompt_or_method: "C",
-  peer_help: "S",
-  ai_practice_reflection: "G",
-  resource_recommendation: "G",
-  operator_adjustment: "K",
-};
 
 interface LegacyEventRow {
   id: string;
@@ -305,7 +295,7 @@ export function runScoreTightening20260518(input: {
          GROUP BY category`
       ).all(input.campId, member.id) as Array<{ category: string; score: number }>;
       for (const row of v3Rows) {
-        const dimension = V3_CATEGORY_DIMENSION[row.category] ?? "K";
+        const dimension = resolveAiBootV3CategoryDimension(row.category);
         dimensions[dimension] += Number(row.score);
       }
 

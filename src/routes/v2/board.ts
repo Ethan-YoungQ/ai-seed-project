@@ -8,6 +8,12 @@
  */
 import type { FastifyInstance } from "fastify";
 import type { V2Runtime } from "../../app.js";
+import {
+  addAiBootScoreDimensions,
+  emptyAiBootScoreDimensions,
+  parseAiBootScoreDimensions,
+  type AiBootScoreDimensions,
+} from "../../domain/v3/category-dimensions.js";
 import { combineLegacyAndV3Score } from "../../domain/v3/scorebook.js";
 import type { FeishuApiClient } from "../../services/feishu/client.js";
 
@@ -25,6 +31,7 @@ type AdditiveScoreFields = {
   legacyScore: number;
   v3Score: number;
   totalScore: number;
+  dimensions: AiBootScoreDimensions;
 };
 
 function resolveAdditiveScoreFields(
@@ -37,8 +44,18 @@ function resolveAdditiveScoreFields(
   }
 
   const legacySnapshot = deps.repository.getAiBootLegacyScoreSnapshot(campId, memberId);
-  const legacyScore = legacySnapshot?.totalScore ?? 0;
+  const currentLegacyTotals = deps.repository.fetchAiBootLegacyDimensionScoreTotals(campId, memberId);
+  const hasCurrentLegacyScore = currentLegacyTotals.totalScore !== 0;
+  const legacyScore = hasCurrentLegacyScore
+    ? currentLegacyTotals.totalScore
+    : legacySnapshot?.totalScore ?? 0;
+  const legacyDimensions = hasCurrentLegacyScore
+    ? currentLegacyTotals.dimensions
+    : parseAiBootScoreDimensions(legacySnapshot?.dimensionJson);
   const v3Score = deps.repository.sumApprovedAiBootScore(campId, memberId);
+  const v3Dimensions = typeof deps.repository.sumApprovedAiBootScoreDimensions === "function"
+    ? deps.repository.sumApprovedAiBootScoreDimensions(campId, memberId)
+    : emptyAiBootScoreDimensions();
   const approvedV3ScoreEventCount = deps.repository.countApprovedAiBootScoreEventsForMember(
     campId,
     memberId
@@ -51,6 +68,7 @@ function resolveAdditiveScoreFields(
   return {
     legacyScore,
     v3Score,
+    dimensions: addAiBootScoreDimensions(legacyDimensions, v3Dimensions),
     totalScore: combineLegacyAndV3Score({
       legacyTotal: legacyScore,
       approvedV3Total: v3Score,
@@ -177,9 +195,9 @@ export function registerV2BoardRoutes(
         avatarUrl: raw.avatarUrl,
         currentLevel: raw.currentLevel,
         cumulativeAq: scoreFields?.totalScore ?? latestSnap?.cumulativeAq ?? 0,
-        dimensions: latestDims
+        dimensions: scoreFields?.dimensions ?? (latestDims
           ? { K: latestDims.K, H: latestDims.H, C: latestDims.C, S: latestDims.S, G: latestDims.G }
-          : { K: 0, H: 0, C: 0, S: 0, G: 0 },
+          : { K: 0, H: 0, C: 0, S: 0, G: 0 }),
         dimensionSeries: raw.dimensionSeries,
         windowSnapshots: raw.windowSnapshots.map((s) => ({
           windowId: s.windowId,

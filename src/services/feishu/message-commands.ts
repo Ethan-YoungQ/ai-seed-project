@@ -64,6 +64,7 @@ const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板", "�
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
 const MEMBER_MGMT_KEYWORDS = ["成员", "成员管理"];
 const REVIEW_QUEUE_PAGE_SIZE = 10;
+const V3_LIVE_STRUCTURAL_LEGACY_ITEMS = new Set<ScoringItemCode>(["C2", "S1"]);
 
 /**
  * 清洗指令文本：去除 @mention、全角/半角空格、零宽字符、标点符号
@@ -270,6 +271,7 @@ async function handleAutoCapture(
   }
 
   if (deps.aiBootOrchestrator && deps.aiBootConfig?.engineMode === "v3_live") {
+    ingestV3LiveStructuralLegacyItems(message, member.id, deps);
     await deps.aiBootOrchestrator.handleMessage(message);
     return;
   }
@@ -396,6 +398,34 @@ function ingestSemanticFastPathItems(
   }
 
   return primaryResult;
+}
+
+function ingestV3LiveStructuralLegacyItems(
+  message: NormalizedFeishuMessage,
+  memberId: string,
+  deps: MessageCommandDeps,
+): void {
+  if (!deps.ingestor) return;
+
+  const results = classifyMessage(message)
+    .filter((result) => V3_LIVE_STRUCTURAL_LEGACY_ITEMS.has(result.itemCode));
+
+  for (const result of results) {
+    try {
+      const outcome = deps.ingestor.ingest({
+        memberId,
+        itemCode: result.itemCode,
+        scoreDelta: 0,
+        sourceRef: `msg:${message.messageId}:${result.itemCode}`,
+        payloadText: (message.rawText || message.fileName || "").slice(0, 500),
+      });
+      console.log(
+        `[AutoCapture] V3Live Structural ${result.itemCode}: accepted=${outcome.accepted}${outcome.accepted ? "" : `, reason=${(outcome as any).reason}`}`,
+      );
+    } catch (err) {
+      console.error(`[AutoCapture] V3Live structural ingest error for ${result.itemCode}:`, err);
+    }
+  }
 }
 
 // ============================================================================

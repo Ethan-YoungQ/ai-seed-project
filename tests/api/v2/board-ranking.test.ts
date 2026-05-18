@@ -257,7 +257,13 @@ describe("GET /api/v2/board/ranking", () => {
         campId: "demo-camp",
         memberId: member.id,
         totalScore: member.v2Aq,
-        dimensionJson: "{}",
+        dimensionJson: JSON.stringify(
+          member.id === "s1"
+            ? { K: 70, H: 30, C: 0, S: 0, G: 0 }
+            : member.id === "s2"
+              ? { K: 40, H: 40, C: 5, S: 5, G: 0 }
+              : {}
+        ),
         sourceNote: "test",
         snapshotAt: "2026-05-16T00:00:00.000Z",
       });
@@ -363,6 +369,7 @@ describe("GET /api/v2/board/ranking", () => {
     expect(rows[0]).toMatchObject({
       memberId: "s2",
       cumulativeAq: 150,
+      dimensions: { K: 100, H: 40, C: 5, S: 5, G: 0 },
       legacyScore: 90,
       v3Score: 60,
       totalScore: 150,
@@ -370,6 +377,7 @@ describe("GET /api/v2/board/ranking", () => {
     expect(rows[1]).toMatchObject({
       memberId: "s1",
       cumulativeAq: 110,
+      dimensions: { K: 70, H: 30, C: 10, S: 0, G: 0 },
       legacyScore: 100,
       v3Score: 10,
       totalScore: 110,

@@ -247,7 +247,7 @@ describe("GET /api/v2/board/member/:id", () => {
       totalScore: 20,
     });
     expect(body.detail.windowSnapshots).toEqual([]);
-    expect(body.detail.dimensions).toEqual({ K: 0, H: 0, C: 0, S: 0, G: 0 });
+    expect(body.detail.dimensions).toEqual({ K: 0, H: 0, C: 8, S: 0, G: 0 });
   });
 
   it("keeps v2 detail in v3_live when legacy snapshots are incomplete", async () => {

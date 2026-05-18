@@ -27,6 +27,7 @@ import {
   evaluateContinuousPromotion,
   type ContinuousLevelValue,
 } from "./domain/v2/continuous-promotion.js";
+import { resolveAiBootV3CategoryDimension } from "./domain/v3/category-dimensions.js";
 
 // ---------------------------------------------------------------------------
 // IngestorDeps adapter
@@ -36,17 +37,6 @@ interface ContinuousPromotionRuntime {
   trigger(memberId: string): void;
   backfillEligible(): void;
 }
-
-const AI_BOOT_V3_CATEGORY_DIMENSION: Record<string, "K" | "H" | "C" | "S" | "G"> = {
-  daily_participation: "K",
-  formal_task: "H",
-  ai_artifact: "C",
-  prompt_or_method: "C",
-  peer_help: "S",
-  ai_practice_reflection: "G",
-  resource_recommendation: "G",
-  operator_adjustment: "K",
-};
 
 function buildIngestorDeps(
   repo: SqliteRepository,
@@ -562,7 +552,7 @@ function buildContinuousPromotionRuntime(
     for (const row of rows) {
       const score = Number(row.score);
       v3Total += score;
-      const dimension = AI_BOOT_V3_CATEGORY_DIMENSION[row.category] ?? "K";
+      const dimension = resolveAiBootV3CategoryDimension(row.category);
       dimensions[dimension] += score;
     }
 

@@ -59,6 +59,11 @@ import { createChatEngine } from "./services/feishu/chat-bot/chat-engine.js";
 import { createConversationMemory } from "./services/feishu/chat-bot/conversation-memory.js";
 import { createRateLimiter } from "./services/feishu/chat-bot/rate-limiter.js";
 import { OpenAiCompatibleLlmScoringClient } from "./services/v2/llm-scoring-client.js";
+import {
+  addAiBootScoreDimensions,
+  parseAiBootScoreDimensions,
+} from "./domain/v3/category-dimensions.js";
+import { combineLegacyAndV3Score } from "./domain/v3/scorebook.js";
 
 // ---------------------------------------------------------------------------
 // v2 admin middleware
@@ -83,6 +88,83 @@ function readSemanticScoringConfig(
   return {
     enabled: true,
     llmClient: new OpenAiCompatibleLlmScoringClient(llmConfig),
+  };
+}
+
+const LEVEL_NAMES: Record<number, string> = {
+  1: "AI 潜力股",
+  2: "AI 研究员",
+  3: "AI 操盘手",
+  4: "AI 智慧顾问",
+  5: "AI 奇点玩家",
+};
+
+function resolveChatLevelStatus(
+  repository: SqliteRepository,
+  aiBootConfig: AiBootConfig,
+  memberId: string,
+) {
+  const member = repository.getMember(memberId);
+  if (!member) return null;
+
+  const campId = member.campId;
+  const additiveEnabled =
+    aiBootConfig.engineMode === "v3_live" &&
+    repository.hasCompleteAiBootLegacyScoreSnapshots(campId);
+
+  const rows = repository.fetchRankingByCamp(campId).map((row) => {
+    if (!additiveEnabled) return row;
+
+    const legacySnapshot = repository.getAiBootLegacyScoreSnapshot(campId, row.memberId);
+    const currentLegacyTotals = repository.fetchAiBootLegacyDimensionScoreTotals(campId, row.memberId);
+    const hasCurrentLegacyScore = currentLegacyTotals.totalScore !== 0;
+    const legacyScore = hasCurrentLegacyScore
+      ? currentLegacyTotals.totalScore
+      : legacySnapshot?.totalScore ?? 0;
+    const v3Score = repository.sumApprovedAiBootScore(campId, row.memberId);
+    const legacyDimensions = hasCurrentLegacyScore
+      ? currentLegacyTotals.dimensions
+      : parseAiBootScoreDimensions(legacySnapshot?.dimensionJson);
+    const v3Dimensions = repository.sumApprovedAiBootScoreDimensions(campId, row.memberId);
+
+    return {
+      ...row,
+      cumulativeAq: combineLegacyAndV3Score({
+        legacyTotal: legacyScore,
+        approvedV3Total: v3Score,
+      }),
+      dimensions: addAiBootScoreDimensions(legacyDimensions, v3Dimensions),
+    };
+  }).sort((left, right) => {
+    const diff = right.cumulativeAq - left.cumulativeAq;
+    if (diff !== 0) return diff;
+    return left.memberName.localeCompare(right.memberName);
+  });
+
+  let currentRank = 1;
+  let lastScore: number | null = null;
+  const rankedRows = rows.map((row, index) => {
+    if (lastScore !== null && row.cumulativeAq < lastScore) {
+      currentRank = index + 1;
+    }
+    lastScore = row.cumulativeAq;
+    return { ...row, rank: currentRank };
+  });
+
+  const row = rankedRows.find((candidate) => candidate.memberId === memberId);
+  if (!row) return null;
+
+  const currentLevel = Math.max(1, Math.min(5, Number(row.currentLevel) || 1));
+  const nextLevel = currentLevel < 5 ? currentLevel + 1 : null;
+  return {
+    memberName: row.memberName,
+    rank: row.rank,
+    currentLevel,
+    currentLevelName: LEVEL_NAMES[currentLevel] ?? `Lv${currentLevel}`,
+    nextLevel,
+    nextLevelName: nextLevel ? LEVEL_NAMES[nextLevel] ?? `Lv${nextLevel}` : null,
+    totalScore: row.cumulativeAq,
+    dimensions: row.dimensions,
   };
 }
 
@@ -208,14 +290,18 @@ export async function createApp(options?: {
               findMemberByOpenId(openId: string) {
                 const m = repository.findMemberByFeishuOpenId(openId);
                 if (!m) return null;
+                const level = repository.getMemberLevel(m.id);
                 return {
                   id: m.id,
                   displayName: m.displayName || m.name || "同学",
                   roleType: m.roleType,
                   isParticipant: m.isParticipant,
                   isExcludedFromBoard: m.isExcludedFromBoard,
-                  currentLevel: 1,
+                  currentLevel: level.currentLevel,
                 };
+              },
+              getLevelStatus(memberId: string) {
+                return resolveChatLevelStatus(repository, aiBootConfig, memberId);
               }
             }
           })
