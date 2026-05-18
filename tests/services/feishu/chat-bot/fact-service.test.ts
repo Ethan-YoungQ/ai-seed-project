@@ -32,18 +32,29 @@ function makeRepo(overrides: Partial<BotFactServiceRepo> = {}): BotFactServiceRe
         dimension: "S",
         scoreDelta: 3,
         status: "approved",
+        createdAt: "2026-05-18T07:59:00.000Z",
         decidedAt: "2026-05-18T08:00:00.000Z",
+        eventId: "evt-1",
+        sourceRef: null,
+        sourceMessageId: "om-1",
+        reason: "帮助同学",
+        reviewNote: null,
         note: "category=peer_help source_ref=om-1",
       },
     ]),
     listInteractionFacts: vi.fn().mockReturnValue([
       {
         type: "peer_help",
-        actorName: "Grace",
-        targetName: "Grace",
+        actorName: null,
+        targetName: null,
+        scoredMemberName: "Grace",
         scoreDelta: 3,
         status: "approved",
         occurredAt: "2026-05-18T08:00:00.000Z",
+        eventId: "evt-1",
+        sourceRef: null,
+        sourceMessageId: "om-1",
+        categoryOrItem: "peer_help",
         note: "source_ref=om-1 category=peer_help item=peer_help",
       },
     ]),
@@ -88,6 +99,34 @@ describe("createBotFactService", () => {
       question: "查一下我的评分",
     });
     expect(repo.getLevelStatus).not.toHaveBeenCalled();
+    expect(repo.listRecentScoreFacts).not.toHaveBeenCalled();
+    expect(repo.listInteractionFacts).not.toHaveBeenCalled();
+  });
+
+  it("returns missing_status when member exists but has no level status", async () => {
+    const repo = makeRepo({
+      getLevelStatus: vi.fn().mockReturnValue(null),
+    });
+    const service = createBotFactService({ repo });
+
+    const result = await service.getOperationalFacts({
+      openId: "ou_grace",
+      question: "我的段位呢？",
+    });
+
+    expect(result).toEqual({
+      kind: "missing_status",
+      openId: "ou_grace",
+      question: "我的段位呢？",
+      member: {
+        id: "member-1",
+        displayName: "Grace",
+        roleType: "student",
+        isParticipant: true,
+        isExcludedFromBoard: false,
+        currentLevel: 2,
+      },
+    });
     expect(repo.listRecentScoreFacts).not.toHaveBeenCalled();
     expect(repo.listInteractionFacts).not.toHaveBeenCalled();
   });

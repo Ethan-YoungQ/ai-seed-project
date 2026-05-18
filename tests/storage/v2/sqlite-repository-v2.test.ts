@@ -1322,11 +1322,12 @@ describe("SqliteRepository v2 members extensions", () => {
 });
 
 describe("SqliteRepository bot operational facts", () => {
-  test("listRecentScoreFacts merges v2 and v3 score facts newest first", () => {
+  test("listRecentScoreFacts returns auditable v2/v3 facts without mixing created and decided times", () => {
     const repo = new SqliteRepository(":memory:");
     repo.seedDemo();
     const campId = repo.getDefaultCampId()!;
     const memberId = "user-alice";
+    const otherMemberId = "user-ops";
     const periodId = `period-${campId}-facts`;
 
     repo.insertPeriod({
@@ -1338,6 +1339,20 @@ describe("SqliteRepository bot operational facts", () => {
       openedByOpId: null,
       createdAt: "2026-05-17T00:00:00.000Z",
       updatedAt: "2026-05-17T00:00:00.000Z"
+    });
+    repo.insertScoringItemEvent({
+      id: "v2-pending-c2",
+      memberId,
+      periodId,
+      itemCode: "C2",
+      dimension: "C",
+      scoreDelta: 1,
+      sourceType: "reaction",
+      sourceRef: "om-pending-c2",
+      status: "pending",
+      llmTaskId: null,
+      createdAt: "2026-05-18T11:00:00.000Z",
+      decidedAt: null
     });
     repo.insertScoringItemEvent({
       id: "v2-h1",
@@ -1352,6 +1367,40 @@ describe("SqliteRepository bot operational facts", () => {
       llmTaskId: null,
       createdAt: "2026-05-18T08:00:00.000Z",
       decidedAt: "2026-05-18T09:00:00.000Z"
+    });
+    (repo as unknown as { db: Database.Database }).db
+      .prepare("UPDATE v2_scoring_item_events SET review_note = ? WHERE id = ?")
+      .run("人工确认", "v2-h1");
+    repo.insertScoringItemEvent({
+      id: "v2-other-member",
+      memberId: otherMemberId,
+      periodId,
+      itemCode: "H1",
+      dimension: "H",
+      scoreDelta: 99,
+      sourceType: "homework_card",
+      sourceRef: "card:other",
+      status: "approved",
+      llmTaskId: null,
+      createdAt: "2026-05-18T12:00:00.000Z",
+      decidedAt: "2026-05-18T12:10:00.000Z"
+    });
+    repo.insertAiBootEvent({
+      id: "evt-peer-help",
+      campId,
+      chatId: "chat-1",
+      memberId,
+      sourceMessageId: "om-v3-peer-help",
+      eventType: "text",
+      rawText: "我帮同学排查了自动化问题",
+      sanitizedText: "我帮同学排查了自动化问题",
+      attachmentJson: "[]",
+      evidenceJson: "{}",
+      contentHash: "hash-peer-help",
+      status: "decided",
+      engineVersion: "v3.0.0",
+      rulesetVersion: "test",
+      createdAt: "2026-05-18T09:50:00.000Z"
     });
     repo.insertAiBootScoreEvent({
       id: "v3-peer-help",
@@ -1373,27 +1422,99 @@ describe("SqliteRepository bot operational facts", () => {
       reviewNote: null,
       decidedAt: "2026-05-18T10:00:00.000Z"
     });
+    repo.insertAiBootEvent({
+      id: "evt-other-member",
+      campId,
+      chatId: "chat-1",
+      memberId: otherMemberId,
+      sourceMessageId: "om-v3-other",
+      eventType: "text",
+      rawText: "other",
+      sanitizedText: "other",
+      attachmentJson: "[]",
+      evidenceJson: "{}",
+      contentHash: "hash-other",
+      status: "decided",
+      engineVersion: "v3.0.0",
+      rulesetVersion: "test",
+      createdAt: "2026-05-18T12:20:00.000Z"
+    });
+    repo.insertAiBootScoreEvent({
+      id: "v3-other-member",
+      eventId: "evt-other-member",
+      campId,
+      memberId: otherMemberId,
+      category: "ai_artifact",
+      scoreDelta: 99,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      reason: "other",
+      evidence: "other",
+      badgesJson: "[]",
+      modelProvider: "fake",
+      modelName: "fake",
+      promptVersion: "test",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-18T12:30:00.000Z"
+    });
 
     const facts = repo.listRecentScoreFacts(memberId, 10);
 
-    expect(facts.map((fact) => fact.source)).toEqual(["v3", "v2"]);
+    expect(facts.map((fact) => fact.categoryOrItem)).toEqual([
+      "C2",
+      "peer_help",
+      "H1"
+    ]);
+    expect(facts.map((fact) => fact.scoreDelta)).not.toContain(99);
     expect(facts[0]).toMatchObject({
+      source: "v2",
+      categoryOrItem: "C2",
+      dimension: "C",
+      scoreDelta: 1,
+      status: "pending",
+      createdAt: "2026-05-18T11:00:00.000Z",
+      decidedAt: null,
+      sourceRef: "om-pending-c2",
+      eventId: null,
+      sourceMessageId: null,
+      reason: null,
+      reviewNote: null
+    });
+    expect(facts[1]).toMatchObject({
       source: "v3",
       categoryOrItem: "peer_help",
       dimension: "S",
       scoreDelta: 3,
       status: "approved",
-      decidedAt: "2026-05-18T10:00:00.000Z"
+      createdAt: "2026-05-18T09:50:00.000Z",
+      decidedAt: "2026-05-18T10:00:00.000Z",
+      eventId: "evt-peer-help",
+      sourceRef: null,
+      sourceMessageId: "om-v3-peer-help",
+      reason: "帮助同学排查问题",
+      reviewNote: null
     });
-    expect(facts[0].note).toContain("category=peer_help");
-    expect(facts[1]).toMatchObject({
+    expect(facts[1].note).toContain("category=peer_help");
+    expect(facts[2]).toMatchObject({
       source: "v2",
       categoryOrItem: "H1",
       dimension: "H",
       scoreDelta: 6,
       status: "approved",
-      decidedAt: "2026-05-18T09:00:00.000Z"
+      createdAt: "2026-05-18T08:00:00.000Z",
+      decidedAt: "2026-05-18T09:00:00.000Z",
+      sourceRef: "card:h1",
+      eventId: null,
+      sourceMessageId: null,
+      reason: null,
+      reviewNote: "人工确认"
     });
+    expect(repo.listRecentScoreFacts(memberId, 0)).toEqual([]);
+    expect(repo.listRecentScoreFacts(memberId, 1).map((fact) => fact.categoryOrItem)).toEqual(["C2"]);
+    expect(repo.listRecentScoreFacts(memberId, -1)).toEqual([]);
+    expect(repo.listRecentScoreFacts(memberId, 1.8)).toHaveLength(1);
 
     repo.close();
   });
@@ -1443,9 +1564,26 @@ describe("SqliteRepository bot operational facts", () => {
       createdAt: "2026-05-18T08:10:00.000Z",
       decidedAt: "2026-05-18T08:15:00.000Z"
     });
+    repo.insertAiBootEvent({
+      id: "evt-peer-help-interaction",
+      campId,
+      chatId: "chat-1",
+      memberId,
+      sourceMessageId: "om-v3-peer-help-interaction",
+      eventType: "text",
+      rawText: "答疑",
+      sanitizedText: "答疑",
+      attachmentJson: "[]",
+      evidenceJson: "{}",
+      contentHash: "hash-peer-help-interaction",
+      status: "decided",
+      engineVersion: "v3.0.0",
+      rulesetVersion: "test",
+      createdAt: "2026-05-18T08:18:00.000Z"
+    });
     repo.insertAiBootScoreEvent({
       id: "v3-peer-help",
-      eventId: "evt-peer-help",
+      eventId: "evt-peer-help-interaction",
       campId,
       memberId,
       category: "peer_help",
@@ -1471,10 +1609,39 @@ describe("SqliteRepository bot operational facts", () => {
       "peer_help",
       "reaction"
     ]);
+    expect(facts.map((fact) => fact.actorName)).toEqual([null, null, null]);
+    expect(facts.map((fact) => fact.targetName)).toEqual([null, null, null]);
+    expect(facts.map((fact) => fact.scoredMemberName)).toEqual([
+      "Alice",
+      "Alice",
+      "Alice"
+    ]);
+    expect(facts[0]).toMatchObject({
+      categoryOrItem: "peer_help",
+      eventId: "evt-peer-help-interaction",
+      sourceRef: null,
+      sourceMessageId: "om-v3-peer-help-interaction",
+      occurredAt: "2026-05-18T08:20:00.000Z"
+    });
+    expect(facts[1]).toMatchObject({
+      categoryOrItem: "S1",
+      eventId: null,
+      sourceRef: "om-s1",
+      sourceMessageId: null,
+      occurredAt: "2026-05-18T08:15:00.000Z"
+    });
+    expect(facts[2]).toMatchObject({
+      categoryOrItem: "C2",
+      eventId: null,
+      sourceRef: "om-c2",
+      sourceMessageId: null,
+      occurredAt: "2026-05-18T08:05:00.000Z"
+    });
     expect(facts[0].note).toContain("category=peer_help");
     expect(facts[1].note).toContain("item=S1");
     expect(facts[2].note).toContain("item=C2");
-    expect(new Set(facts.map((fact) => fact.actorName))).toEqual(new Set(["Alice"]));
+    expect(repo.listInteractionFacts(memberId, 0)).toEqual([]);
+    expect(repo.listInteractionFacts(memberId, 1)).toHaveLength(1);
 
     repo.close();
   });

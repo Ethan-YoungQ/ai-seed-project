@@ -6,14 +6,25 @@ export interface ScoreFact {
   dimension: FactDimension;
   scoreDelta: number;
   status: string;
-  decidedAt: string;
+  eventId?: string | null;
+  sourceRef?: string | null;
+  sourceMessageId?: string | null;
+  reason?: string | null;
+  reviewNote?: string | null;
+  createdAt: string;
+  decidedAt: string | null;
   note: string;
 }
 
 export interface InteractionFact {
   type: "reaction" | "peer_help" | "peer_review" | "mention";
-  actorName: string;
-  targetName: string;
+  actorName?: string | null;
+  targetName?: string | null;
+  scoredMemberName: string;
+  sourceRef?: string | null;
+  eventId?: string | null;
+  sourceMessageId?: string | null;
+  categoryOrItem: string;
   scoreDelta: number;
   status: string;
   occurredAt: string;

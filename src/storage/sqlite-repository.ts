@@ -669,6 +669,16 @@ function normalizeBotFactDimension(value: unknown): BotFactDimension {
     : "K";
 }
 
+function clampBotFactLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return 0;
+  return Math.max(0, Math.min(50, Math.floor(limit)));
+}
+
+function nullableString(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return String(value);
+}
+
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (rows.some((row) => row.name === column)) {
@@ -3291,16 +3301,23 @@ export class SqliteRepository {
     dimension: BotFactDimension;
     scoreDelta: number;
     status: string;
-    decidedAt: string;
+    eventId: string | null;
+    sourceRef: string | null;
+    sourceMessageId: string | null;
+    reason: string | null;
+    reviewNote: string | null;
+    createdAt: string;
+    decidedAt: string | null;
     note: string;
   }> {
-    const boundedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
+    const boundedLimit = clampBotFactLimit(limit);
     if (boundedLimit === 0) return [];
 
     const v2Rows = this.db
       .prepare(
         `SELECT item_code, dimension, score_delta, source_type, source_ref,
-                status, review_note, created_at, COALESCE(decided_at, created_at) AS decided_at
+                status, review_note, created_at, decided_at,
+                COALESCE(decided_at, created_at) AS sort_at
          FROM v2_scoring_item_events
          WHERE member_id = ?
          ORDER BY COALESCE(decided_at, created_at) DESC, id DESC
@@ -3310,67 +3327,109 @@ export class SqliteRepository {
     const v3Rows = this.db
       .prepare(
         `SELECT s.category, s.score_delta, s.status, s.reason, s.review_note,
-                s.event_id, s.decided_at, e.source_message_id
+                s.event_id, s.decided_at, e.source_message_id,
+                e.created_at AS event_created_at,
+                COALESCE(s.decided_at, e.created_at) AS sort_at
          FROM ai_boot_score_events s
          LEFT JOIN ai_boot_events e ON e.id = s.event_id
          WHERE s.member_id = ?
-         ORDER BY s.decided_at DESC, s.id DESC
+         ORDER BY COALESCE(s.decided_at, e.created_at) DESC, s.id DESC
          LIMIT ?`
       )
       .all(memberId, boundedLimit) as Array<Record<string, unknown>>;
 
-    const facts = [
+    const facts: Array<{
+      source: "v2" | "v3";
+      categoryOrItem: string;
+      dimension: BotFactDimension;
+      scoreDelta: number;
+      status: string;
+      eventId: string | null;
+      sourceRef: string | null;
+      sourceMessageId: string | null;
+      reason: string | null;
+      reviewNote: string | null;
+      createdAt: string;
+      decidedAt: string | null;
+      note: string;
+      sortAt: string;
+    }> = [
       ...v2Rows.map((row) => {
-        const sourceRef = String(row.source_ref ?? "");
+        const sourceRef = nullableString(row.source_ref);
         const itemCode = String(row.item_code ?? "");
         const sourceType = String(row.source_type ?? "");
-        const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
+        const reviewNote = nullableString(row.review_note);
+        const createdAt = String(row.created_at ?? "");
+        const decidedAt = nullableString(row.decided_at);
         return {
           source: "v2" as const,
           categoryOrItem: itemCode,
           dimension: normalizeBotFactDimension(row.dimension),
           scoreDelta: Number(row.score_delta ?? 0),
           status: String(row.status ?? ""),
-          decidedAt: String(row.decided_at ?? row.created_at ?? ""),
-          note: `source_ref=${sourceRef} item=${itemCode} source_type=${sourceType}${reviewNote}`,
+          eventId: null,
+          sourceRef,
+          sourceMessageId: null,
+          reason: null,
+          reviewNote,
+          createdAt,
+          decidedAt,
+          note: `source_ref=${sourceRef ?? ""} item=${itemCode} source_type=${sourceType}${reviewNote ? ` review_note=${reviewNote}` : ""}`,
+          sortAt: String(row.sort_at ?? createdAt),
         };
       }),
       ...v3Rows.map((row) => {
         const category = String(row.category ?? "");
-        const sourceRef = String(row.source_message_id ?? row.event_id ?? "");
-        const reason = row.reason ? ` reason=${String(row.reason)}` : "";
-        const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
+        const eventId = nullableString(row.event_id);
+        const sourceMessageId = nullableString(row.source_message_id);
+        const reason = nullableString(row.reason);
+        const reviewNote = nullableString(row.review_note);
+        const decidedAt = nullableString(row.decided_at);
+        const createdAt = String(row.event_created_at ?? row.decided_at ?? "");
         return {
           source: "v3" as const,
           categoryOrItem: category,
           dimension: resolveAiBootV3CategoryDimension(category),
           scoreDelta: Number(row.score_delta ?? 0),
           status: String(row.status ?? ""),
-          decidedAt: String(row.decided_at ?? ""),
-          note: `source_ref=${sourceRef} category=${category} event_id=${String(row.event_id ?? "")}${reason}${reviewNote}`,
+          eventId,
+          sourceRef: null,
+          sourceMessageId,
+          reason,
+          reviewNote,
+          createdAt,
+          decidedAt,
+          note: `source_ref=${sourceMessageId ?? eventId ?? ""} category=${category} event_id=${eventId ?? ""}${reason ? ` reason=${reason}` : ""}${reviewNote ? ` review_note=${reviewNote}` : ""}`,
+          sortAt: String(row.sort_at ?? decidedAt ?? createdAt),
         };
       }),
     ];
 
     return facts
-      .sort((left, right) => right.decidedAt.localeCompare(left.decidedAt))
-      .slice(0, boundedLimit);
+      .sort((left, right) => right.sortAt.localeCompare(left.sortAt))
+      .slice(0, boundedLimit)
+      .map(({ sortAt: _sortAt, ...fact }) => fact);
   }
 
   listInteractionFacts(memberId: string, limit: number): Array<{
     type: "reaction" | "peer_help" | "peer_review" | "mention";
-    actorName: string;
-    targetName: string;
+    actorName: string | null;
+    targetName: string | null;
+    scoredMemberName: string;
+    sourceRef: string | null;
+    eventId: string | null;
+    sourceMessageId: string | null;
+    categoryOrItem: string;
     scoreDelta: number;
     status: string;
     occurredAt: string;
     note: string;
   }> {
-    const boundedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
+    const boundedLimit = clampBotFactLimit(limit);
     if (boundedLimit === 0) return [];
 
     const member = this.getMember(memberId);
-    const memberName = member?.displayName || member?.name || "";
+    const scoredMemberName = member?.displayName || member?.name || "";
     const v2Rows = this.db
       .prepare(
         `SELECT item_code, score_delta, source_type, source_ref, status, review_note,
@@ -3385,7 +3444,7 @@ export class SqliteRepository {
     const v3Rows = this.db
       .prepare(
         `SELECT s.category, s.score_delta, s.status, s.reason, s.review_note,
-                s.event_id, s.decided_at, e.source_message_id
+                s.event_id, s.decided_at, e.source_message_id, e.created_at AS event_created_at
          FROM ai_boot_score_events s
          LEFT JOIN ai_boot_events e ON e.id = s.event_id
          WHERE s.member_id = ?
@@ -3398,32 +3457,43 @@ export class SqliteRepository {
     const facts = [
       ...v2Rows.map((row) => {
         const itemCode = String(row.item_code ?? "");
-        const sourceRef = String(row.source_ref ?? "");
+        const sourceRef = nullableString(row.source_ref);
         const sourceType = String(row.source_type ?? "");
         const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
         return {
           type: itemCode === "C2" ? ("reaction" as const) : ("peer_help" as const),
-          actorName: memberName,
-          targetName: memberName,
+          actorName: null,
+          targetName: null,
+          scoredMemberName,
+          sourceRef,
+          eventId: null,
+          sourceMessageId: null,
+          categoryOrItem: itemCode,
           scoreDelta: Number(row.score_delta ?? 0),
           status: String(row.status ?? ""),
           occurredAt: String(row.occurred_at ?? row.created_at ?? ""),
-          note: `source_ref=${sourceRef} category=v2 item=${itemCode} source_type=${sourceType}${reviewNote}`,
+          note: `source_ref=${sourceRef ?? ""} category=v2 item=${itemCode} source_type=${sourceType}${reviewNote}`,
         };
       }),
       ...v3Rows.map((row) => {
         const category = String(row.category ?? "");
-        const sourceRef = String(row.source_message_id ?? row.event_id ?? "");
+        const eventId = nullableString(row.event_id);
+        const sourceMessageId = nullableString(row.source_message_id);
         const reason = row.reason ? ` reason=${String(row.reason)}` : "";
         const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
         return {
           type: "peer_help" as const,
-          actorName: memberName,
-          targetName: memberName,
+          actorName: null,
+          targetName: null,
+          scoredMemberName,
+          sourceRef: null,
+          eventId,
+          sourceMessageId,
+          categoryOrItem: category,
           scoreDelta: Number(row.score_delta ?? 0),
           status: String(row.status ?? ""),
-          occurredAt: String(row.decided_at ?? ""),
-          note: `source_ref=${sourceRef} category=${category} item=peer_help event_id=${String(row.event_id ?? "")}${reason}${reviewNote}`,
+          occurredAt: String(row.decided_at ?? row.event_created_at ?? ""),
+          note: `source_ref=${sourceMessageId ?? eventId ?? ""} category=${category} item=peer_help event_id=${eventId ?? ""}${reason}${reviewNote}`,
         };
       }),
     ];
