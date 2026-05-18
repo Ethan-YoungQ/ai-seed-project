@@ -648,6 +648,27 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+type BotFactDimension = "K" | "H" | "C" | "S" | "G";
+
+const BOT_FACT_LEVEL_NAMES: Record<number, string> = {
+  1: "AI 潜力股",
+  2: "AI 研究员",
+  3: "AI 操盘手",
+  4: "AI 智慧顾问",
+  5: "AI 奇点玩家",
+};
+
+function normalizeBotFactDimension(value: unknown): BotFactDimension {
+  const dimension = String(value ?? "K");
+  return dimension === "K" ||
+    dimension === "H" ||
+    dimension === "C" ||
+    dimension === "S" ||
+    dimension === "G"
+    ? dimension
+    : "K";
+}
+
 function ensureColumn(db: Database.Database, table: string, column: string, definition: string) {
   const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (rows.some((row) => row.name === column)) {
@@ -3210,6 +3231,206 @@ export class SqliteRepository {
       isExcludedFromBoard: asBoolean(Number(row.is_excluded_from_board)),
       status: row.status as MemberProfile["status"]
     };
+  }
+
+  findMemberByOpenId(openId: string): {
+    id: string;
+    displayName: string;
+    roleType: string;
+    isParticipant: boolean;
+    isExcludedFromBoard: boolean;
+    currentLevel: number;
+  } | null {
+    const member = this.findMemberByFeishuOpenId(openId);
+    if (!member) return null;
+    const level = this.getMemberLevel(member.id);
+    return {
+      id: member.id,
+      displayName: member.displayName || member.name || "同学",
+      roleType: member.roleType,
+      isParticipant: member.isParticipant,
+      isExcludedFromBoard: member.isExcludedFromBoard,
+      currentLevel: level.currentLevel,
+    };
+  }
+
+  getLevelStatus(memberId: string): {
+    memberName: string;
+    rank: number | null;
+    currentLevel: number;
+    currentLevelName: string;
+    nextLevel: number | null;
+    nextLevelName: string | null;
+    totalScore: number;
+    dimensions: Record<BotFactDimension, number>;
+  } | null {
+    const member = this.getMember(memberId);
+    if (!member) return null;
+
+    const ranking = this.fetchRankingByCamp(member.campId);
+    const row = ranking.find((candidate) => candidate.memberId === memberId);
+    if (!row) return null;
+
+    const currentLevel = Math.max(1, Math.min(5, Number(row.currentLevel) || 1));
+    const nextLevel = currentLevel < 5 ? currentLevel + 1 : null;
+    return {
+      memberName: row.memberName,
+      rank: row.rank,
+      currentLevel,
+      currentLevelName: BOT_FACT_LEVEL_NAMES[currentLevel] ?? `Lv${currentLevel}`,
+      nextLevel,
+      nextLevelName: nextLevel ? BOT_FACT_LEVEL_NAMES[nextLevel] ?? `Lv${nextLevel}` : null,
+      totalScore: row.cumulativeAq,
+      dimensions: row.dimensions,
+    };
+  }
+
+  listRecentScoreFacts(memberId: string, limit: number): Array<{
+    source: "v2" | "v3";
+    categoryOrItem: string;
+    dimension: BotFactDimension;
+    scoreDelta: number;
+    status: string;
+    decidedAt: string;
+    note: string;
+  }> {
+    const boundedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
+    if (boundedLimit === 0) return [];
+
+    const v2Rows = this.db
+      .prepare(
+        `SELECT item_code, dimension, score_delta, source_type, source_ref,
+                status, review_note, created_at, COALESCE(decided_at, created_at) AS decided_at
+         FROM v2_scoring_item_events
+         WHERE member_id = ?
+         ORDER BY COALESCE(decided_at, created_at) DESC, id DESC
+         LIMIT ?`
+      )
+      .all(memberId, boundedLimit) as Array<Record<string, unknown>>;
+    const v3Rows = this.db
+      .prepare(
+        `SELECT s.category, s.score_delta, s.status, s.reason, s.review_note,
+                s.event_id, s.decided_at, e.source_message_id
+         FROM ai_boot_score_events s
+         LEFT JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE s.member_id = ?
+         ORDER BY s.decided_at DESC, s.id DESC
+         LIMIT ?`
+      )
+      .all(memberId, boundedLimit) as Array<Record<string, unknown>>;
+
+    const facts = [
+      ...v2Rows.map((row) => {
+        const sourceRef = String(row.source_ref ?? "");
+        const itemCode = String(row.item_code ?? "");
+        const sourceType = String(row.source_type ?? "");
+        const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
+        return {
+          source: "v2" as const,
+          categoryOrItem: itemCode,
+          dimension: normalizeBotFactDimension(row.dimension),
+          scoreDelta: Number(row.score_delta ?? 0),
+          status: String(row.status ?? ""),
+          decidedAt: String(row.decided_at ?? row.created_at ?? ""),
+          note: `source_ref=${sourceRef} item=${itemCode} source_type=${sourceType}${reviewNote}`,
+        };
+      }),
+      ...v3Rows.map((row) => {
+        const category = String(row.category ?? "");
+        const sourceRef = String(row.source_message_id ?? row.event_id ?? "");
+        const reason = row.reason ? ` reason=${String(row.reason)}` : "";
+        const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
+        return {
+          source: "v3" as const,
+          categoryOrItem: category,
+          dimension: resolveAiBootV3CategoryDimension(category),
+          scoreDelta: Number(row.score_delta ?? 0),
+          status: String(row.status ?? ""),
+          decidedAt: String(row.decided_at ?? ""),
+          note: `source_ref=${sourceRef} category=${category} event_id=${String(row.event_id ?? "")}${reason}${reviewNote}`,
+        };
+      }),
+    ];
+
+    return facts
+      .sort((left, right) => right.decidedAt.localeCompare(left.decidedAt))
+      .slice(0, boundedLimit);
+  }
+
+  listInteractionFacts(memberId: string, limit: number): Array<{
+    type: "reaction" | "peer_help" | "peer_review" | "mention";
+    actorName: string;
+    targetName: string;
+    scoreDelta: number;
+    status: string;
+    occurredAt: string;
+    note: string;
+  }> {
+    const boundedLimit = Math.max(0, Math.min(100, Math.floor(limit)));
+    if (boundedLimit === 0) return [];
+
+    const member = this.getMember(memberId);
+    const memberName = member?.displayName || member?.name || "";
+    const v2Rows = this.db
+      .prepare(
+        `SELECT item_code, score_delta, source_type, source_ref, status, review_note,
+                created_at, COALESCE(decided_at, created_at) AS occurred_at
+         FROM v2_scoring_item_events
+         WHERE member_id = ?
+           AND item_code IN ('C2', 'S1')
+         ORDER BY COALESCE(decided_at, created_at) DESC, id DESC
+         LIMIT ?`
+      )
+      .all(memberId, boundedLimit) as Array<Record<string, unknown>>;
+    const v3Rows = this.db
+      .prepare(
+        `SELECT s.category, s.score_delta, s.status, s.reason, s.review_note,
+                s.event_id, s.decided_at, e.source_message_id
+         FROM ai_boot_score_events s
+         LEFT JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE s.member_id = ?
+           AND s.category = 'peer_help'
+         ORDER BY s.decided_at DESC, s.id DESC
+         LIMIT ?`
+      )
+      .all(memberId, boundedLimit) as Array<Record<string, unknown>>;
+
+    const facts = [
+      ...v2Rows.map((row) => {
+        const itemCode = String(row.item_code ?? "");
+        const sourceRef = String(row.source_ref ?? "");
+        const sourceType = String(row.source_type ?? "");
+        const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
+        return {
+          type: itemCode === "C2" ? ("reaction" as const) : ("peer_help" as const),
+          actorName: memberName,
+          targetName: memberName,
+          scoreDelta: Number(row.score_delta ?? 0),
+          status: String(row.status ?? ""),
+          occurredAt: String(row.occurred_at ?? row.created_at ?? ""),
+          note: `source_ref=${sourceRef} category=v2 item=${itemCode} source_type=${sourceType}${reviewNote}`,
+        };
+      }),
+      ...v3Rows.map((row) => {
+        const category = String(row.category ?? "");
+        const sourceRef = String(row.source_message_id ?? row.event_id ?? "");
+        const reason = row.reason ? ` reason=${String(row.reason)}` : "";
+        const reviewNote = row.review_note ? ` review_note=${String(row.review_note)}` : "";
+        return {
+          type: "peer_help" as const,
+          actorName: memberName,
+          targetName: memberName,
+          scoreDelta: Number(row.score_delta ?? 0),
+          status: String(row.status ?? ""),
+          occurredAt: String(row.decided_at ?? ""),
+          note: `source_ref=${sourceRef} category=${category} item=peer_help event_id=${String(row.event_id ?? "")}${reason}${reviewNote}`,
+        };
+      }),
+    ];
+
+    return facts
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, boundedLimit);
   }
 
   setMemberFeishuOpenId(memberId: string, openId: string): void {

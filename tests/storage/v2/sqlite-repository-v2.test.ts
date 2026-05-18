@@ -1320,3 +1320,162 @@ describe("SqliteRepository v2 members extensions", () => {
     repo.close();
   });
 });
+
+describe("SqliteRepository bot operational facts", () => {
+  test("listRecentScoreFacts merges v2 and v3 score facts newest first", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "user-alice";
+    const periodId = `period-${campId}-facts`;
+
+    repo.insertPeriod({
+      id: periodId,
+      campId,
+      number: 99,
+      isIceBreaker: false,
+      startedAt: "2026-05-17T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-05-17T00:00:00.000Z",
+      updatedAt: "2026-05-17T00:00:00.000Z"
+    });
+    repo.insertScoringItemEvent({
+      id: "v2-h1",
+      memberId,
+      periodId,
+      itemCode: "H1",
+      dimension: "H",
+      scoreDelta: 6,
+      sourceType: "homework_card",
+      sourceRef: "card:h1",
+      status: "approved",
+      llmTaskId: null,
+      createdAt: "2026-05-18T08:00:00.000Z",
+      decidedAt: "2026-05-18T09:00:00.000Z"
+    });
+    repo.insertAiBootScoreEvent({
+      id: "v3-peer-help",
+      eventId: "evt-peer-help",
+      campId,
+      memberId,
+      category: "peer_help",
+      scoreDelta: 3,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      reason: "帮助同学排查问题",
+      evidence: "群聊记录",
+      badgesJson: "[]",
+      modelProvider: "fake",
+      modelName: "fake",
+      promptVersion: "test",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-18T10:00:00.000Z"
+    });
+
+    const facts = repo.listRecentScoreFacts(memberId, 10);
+
+    expect(facts.map((fact) => fact.source)).toEqual(["v3", "v2"]);
+    expect(facts[0]).toMatchObject({
+      source: "v3",
+      categoryOrItem: "peer_help",
+      dimension: "S",
+      scoreDelta: 3,
+      status: "approved",
+      decidedAt: "2026-05-18T10:00:00.000Z"
+    });
+    expect(facts[0].note).toContain("category=peer_help");
+    expect(facts[1]).toMatchObject({
+      source: "v2",
+      categoryOrItem: "H1",
+      dimension: "H",
+      scoreDelta: 6,
+      status: "approved",
+      decidedAt: "2026-05-18T09:00:00.000Z"
+    });
+
+    repo.close();
+  });
+
+  test("listInteractionFacts returns v2 C2/S1 and v3 peer_help facts", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const memberId = "user-alice";
+    const periodId = `period-${campId}-interaction-facts`;
+
+    repo.insertPeriod({
+      id: periodId,
+      campId,
+      number: 100,
+      isIceBreaker: false,
+      startedAt: "2026-05-18T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-05-18T00:00:00.000Z",
+      updatedAt: "2026-05-18T00:00:00.000Z"
+    });
+    repo.insertScoringItemEvent({
+      id: "v2-c2",
+      memberId,
+      periodId,
+      itemCode: "C2",
+      dimension: "C",
+      scoreDelta: 1,
+      sourceType: "reaction",
+      sourceRef: "om-c2",
+      status: "approved",
+      llmTaskId: null,
+      createdAt: "2026-05-18T08:00:00.000Z",
+      decidedAt: "2026-05-18T08:05:00.000Z"
+    });
+    repo.insertScoringItemEvent({
+      id: "v2-s1",
+      memberId,
+      periodId,
+      itemCode: "S1",
+      dimension: "S",
+      scoreDelta: 2,
+      sourceType: "peer_help",
+      sourceRef: "om-s1",
+      status: "approved",
+      llmTaskId: null,
+      createdAt: "2026-05-18T08:10:00.000Z",
+      decidedAt: "2026-05-18T08:15:00.000Z"
+    });
+    repo.insertAiBootScoreEvent({
+      id: "v3-peer-help",
+      eventId: "evt-peer-help",
+      campId,
+      memberId,
+      category: "peer_help",
+      scoreDelta: 3,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "group_praise",
+      reason: "答疑",
+      evidence: "群聊记录",
+      badgesJson: "[]",
+      modelProvider: "fake",
+      modelName: "fake",
+      promptVersion: "test",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-18T08:20:00.000Z"
+    });
+
+    const facts = repo.listInteractionFacts(memberId, 10);
+
+    expect(facts.map((fact) => fact.type)).toEqual([
+      "peer_help",
+      "peer_help",
+      "reaction"
+    ]);
+    expect(facts[0].note).toContain("category=peer_help");
+    expect(facts[1].note).toContain("item=S1");
+    expect(facts[2].note).toContain("item=C2");
+    expect(new Set(facts.map((fact) => fact.actorName))).toEqual(new Set(["Alice"]));
+
+    repo.close();
+  });
+});
