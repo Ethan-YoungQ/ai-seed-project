@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createChatEngine } from "../../../../src/services/feishu/chat-bot/chat-engine";
 import { createConversationMemory } from "../../../../src/services/feishu/chat-bot/conversation-memory";
 import { createRateLimiter } from "../../../../src/services/feishu/chat-bot/rate-limiter";
+import type { BotFactService } from "../../../../src/services/feishu/chat-bot/fact-service";
 import type { LlmChatClient, ChatMessage } from "../../../../src/services/v2/llm-scoring-client";
 import { LlmRetryableError } from "../../../../src/domain/v2/errors";
 
@@ -42,6 +43,12 @@ function makeRepoStub(members: Record<string, { displayName: string; roleType: s
         currentLevel: 1
       };
     }
+  };
+}
+
+function makeFactService(result: Awaited<ReturnType<BotFactService["getOperationalFacts"]>>): BotFactService {
+  return {
+    getOperationalFacts: vi.fn().mockResolvedValue(result),
   };
 }
 
@@ -230,42 +237,50 @@ describe("ChatEngine.reply", () => {
     expect(result.replyText).not.toContain("欢迎其他同学");
   });
 
-  it("answers level and potential-stock questions from score facts without calling the LLM", async () => {
+  it("answers operational fact questions with fact_answer without calling LLM, memory, or rate limit", async () => {
     const llm = vi.fn().mockResolvedValue("泛泛而谈的回答");
+    const rateLimiter = {
+      check: vi.fn().mockReturnValue({ allowed: true }),
+      markUsed: vi.fn(),
+    };
+    const memory = {
+      get: vi.fn().mockReturnValue([]),
+      append: vi.fn(),
+    };
     const engine = createChatEngine({
       llmClient: {
         provider: "fake",
         model: "fake-v1",
         chat: llm,
       },
-      memory: createConversationMemory(),
-      rateLimiter: createRateLimiter(),
-      repo: {
-        findMemberByOpenId(openId: string) {
-          if (openId !== "grace") return null;
-          return {
+      memory,
+      rateLimiter,
+      repo: makeRepoStub({ grace: { displayName: "Grace", roleType: "student" } }),
+      factService: makeFactService({
+        kind: "found",
+        openId: "grace",
+        question: "为什么我还是潜力股[泣不成声]",
+        member: {
             id: "member-grace",
             displayName: "Grace",
             roleType: "student",
             isParticipant: true,
             isExcludedFromBoard: false,
             currentLevel: 1,
-          };
         },
-        getLevelStatus(memberId: string) {
-          expect(memberId).toBe("member-grace");
-          return {
-            memberName: "Grace",
-            rank: 4,
-            currentLevel: 1,
-            currentLevelName: "AI 潜力股",
-            nextLevel: 2,
-            nextLevelName: "AI 研究员",
-            totalScore: 26,
-            dimensions: { K: 13, H: 13, C: 0, S: 0, G: 0 },
-          };
+        status: {
+          memberName: "Grace",
+          rank: 4,
+          currentLevel: 1,
+          currentLevelName: "AI 潜力股",
+          nextLevel: 2,
+          nextLevelName: "AI 研究员",
+          totalScore: 26,
+          dimensions: { K: 13, H: 13, C: 0, S: 0, G: 0 },
         },
-      },
+        scoreFacts: [],
+        interactionFacts: [],
+      }),
     });
 
     const result = await engine.reply({
@@ -275,16 +290,51 @@ describe("ChatEngine.reply", () => {
       cleanedText: "为什么我还是潜力股[泣不成声]",
     });
 
-    expect(result.used).toBe("level_status");
+    expect(result.used).toBe("fact_answer");
     expect(llm).not.toHaveBeenCalled();
+    expect(memory.get).not.toHaveBeenCalled();
+    expect(memory.append).not.toHaveBeenCalled();
+    expect(rateLimiter.check).not.toHaveBeenCalled();
+    expect(rateLimiter.markUsed).not.toHaveBeenCalled();
     expect(result.replyText).toContain("Grace");
-    expect(result.replyText).toContain("26 分");
+    expect(result.replyText).toContain("总分 26 分");
     expect(result.replyText).toContain("K13 / H13 / C0 / S0 / G0");
-    expect(result.replyText).toContain("缺少 C/S/G");
+    expect(result.replyText).toContain("缺口");
     expect(result.replyText).toContain("AI 研究员");
   });
 
-  it("does not send level questions to the LLM when the sender is not on the student board", async () => {
+  it("keeps course and homework questions on the LLM path", async () => {
+    const llm = vi.fn().mockResolvedValue("结合你的作业看，第二提问需要更具体。");
+    const factService = makeFactService({
+      kind: "missing_member",
+      openId: "u1",
+      question: "结合我交的作业，分析第二提问是否准确",
+    });
+    const engine = createChatEngine({
+      llmClient: {
+        provider: "fake",
+        model: "fake-v1",
+        chat: llm,
+      },
+      memory: createConversationMemory(),
+      rateLimiter: { check: () => ({ allowed: true }), markUsed: () => { /* noop */ } },
+      repo: makeRepoStub({ u1: { displayName: "李洁娴", roleType: "student" } }),
+      factService,
+    });
+
+    const result = await engine.reply({
+      chatId: "c1",
+      openId: "u1",
+      messageId: "m1",
+      cleanedText: "结合我交的作业，分析第二提问是否准确",
+    });
+
+    expect(result.used).toBe("llm");
+    expect(llm).toHaveBeenCalledTimes(1);
+    expect(factService.getOperationalFacts).not.toHaveBeenCalled();
+  });
+
+  it("returns missing_member fact answers without calling the LLM", async () => {
     const llm = vi.fn().mockResolvedValue("泛泛而谈的回答");
     const engine = createChatEngine({
       llmClient: {
@@ -294,32 +344,22 @@ describe("ChatEngine.reply", () => {
       },
       memory: createConversationMemory(),
       rateLimiter: createRateLimiter(),
-      repo: {
-        findMemberByOpenId(openId: string) {
-          if (openId !== "operator") return null;
-          return {
-            id: "member-operator",
-            displayName: "运营",
-            roleType: "operator",
-            isParticipant: true,
-            isExcludedFromBoard: false,
-            currentLevel: 1,
-          };
-        },
-        getLevelStatus() {
-          return null;
-        },
-      },
+      repo: makeRepoStub({}),
+      factService: makeFactService({
+        kind: "missing_member",
+        openId: "unknown",
+        question: "为什么我还是潜力股？",
+      }),
     });
 
     const result = await engine.reply({
       chatId: "c1",
-      openId: "operator",
+      openId: "unknown",
       messageId: "m1",
       cleanedText: "为什么我还是潜力股？",
     });
 
-    expect(result.used).toBe("level_status");
+    expect(result.used).toBe("fact_answer");
     expect(llm).not.toHaveBeenCalled();
     expect(result.replyText).toContain("没有在学员天梯榜里找到");
   });

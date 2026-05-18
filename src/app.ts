@@ -57,6 +57,7 @@ import {
 } from "./services/feishu/cards/handlers/review-queue-handler.js";
 import { createChatEngine } from "./services/feishu/chat-bot/chat-engine.js";
 import { createConversationMemory } from "./services/feishu/chat-bot/conversation-memory.js";
+import { createBotFactService } from "./services/feishu/chat-bot/fact-service.js";
 import { createRateLimiter } from "./services/feishu/chat-bot/rate-limiter.js";
 import { OpenAiCompatibleLlmScoringClient } from "./services/v2/llm-scoring-client.js";
 import {
@@ -278,6 +279,30 @@ export async function createApp(options?: {
     (process.env.FEISHU_CHAT_BOT_ENABLED ?? "false").toLowerCase() === "true";
   const botOpenId = process.env.FEISHU_BOT_OPEN_ID?.trim();
   const llmConfigForChat = readLlmProviderConfig(process.env);
+  const chatFactRepo = {
+    findMemberByOpenId(openId: string) {
+      const m = repository.findMemberByFeishuOpenId(openId);
+      if (!m) return null;
+      const level = repository.getMemberLevel(m.id);
+      return {
+        id: m.id,
+        displayName: m.displayName || m.name || "同学",
+        roleType: m.roleType,
+        isParticipant: m.isParticipant,
+        isExcludedFromBoard: m.isExcludedFromBoard,
+        currentLevel: level.currentLevel,
+      };
+    },
+    getLevelStatus(memberId: string) {
+      return resolveChatLevelStatus(repository, aiBootConfig, memberId);
+    },
+    listRecentScoreFacts(memberId: string, limit: number) {
+      return repository.listRecentScoreFacts(memberId, limit);
+    },
+    listInteractionFacts(memberId: string, limit: number) {
+      return repository.listInteractionFacts(memberId, limit);
+    },
+  };
   const chatBot: MessageCommandDeps["chatBot"] =
     chatBotEnabled && botOpenId && llmConfigForChat.enabled
       ? {
@@ -287,23 +312,9 @@ export async function createApp(options?: {
             memory: createConversationMemory(),
             rateLimiter: createRateLimiter(),
             repo: {
-              findMemberByOpenId(openId: string) {
-                const m = repository.findMemberByFeishuOpenId(openId);
-                if (!m) return null;
-                const level = repository.getMemberLevel(m.id);
-                return {
-                  id: m.id,
-                  displayName: m.displayName || m.name || "同学",
-                  roleType: m.roleType,
-                  isParticipant: m.isParticipant,
-                  isExcludedFromBoard: m.isExcludedFromBoard,
-                  currentLevel: level.currentLevel,
-                };
-              },
-              getLevelStatus(memberId: string) {
-                return resolveChatLevelStatus(repository, aiBootConfig, memberId);
-              }
-            }
+              findMemberByOpenId: chatFactRepo.findMemberByOpenId,
+            },
+            factService: createBotFactService({ repo: chatFactRepo }),
           })
         }
       : undefined;
