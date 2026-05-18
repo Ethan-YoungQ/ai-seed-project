@@ -459,6 +459,21 @@ describe("message-commands operator command routing", () => {
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
   });
 
+  it("routes bare 管理 to the admin card instead of chat reply", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "管理",
+      cleanedText: "管理",
+    }));
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    expect(JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson))
+      .toContain("管理员面板");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
   it("routes @Bot 审核 to the review queue card instead of chat reply", async () => {
     const deps = buildDeps();
     const handler = createMessageCommandHandler(deps);
@@ -521,6 +536,22 @@ describe("message-commands operator command routing", () => {
       rawText: "@_user_1 调分",
       cleanedText: "调分",
       mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.memberListProvider?.listAllMembers).toHaveBeenCalledOnce();
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain("手动调分");
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
+  it("routes bare 调分 to the manual adjust card instead of chat reply", async () => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "调分",
+      cleanedText: "调分",
     }));
 
     expect(deps.memberListProvider?.listAllMembers).toHaveBeenCalledOnce();
@@ -619,7 +650,7 @@ describe("message-commands operations intent routing", () => {
   });
 
   it("recognizes each score opt-out phrase without entering chat or auto-capture", async () => {
-    for (const phrase of ["不用加分", "纯瞎聊"]) {
+    for (const phrase of ["不用加分", "不要计分", "纯瞎聊"]) {
       const reply = vi.fn().mockResolvedValue({
         replyText: "闲聊回复",
         used: "llm",
@@ -900,6 +931,39 @@ describe("message-commands AI Boot v3 routing", () => {
     await handler(makeMsg({
       rawText: "@_user_1 怎么管理成员？审核规则是什么？",
       cleanedText: "怎么管理成员？审核规则是什么？",
+      mentionedBotIds: ["ou_bot"],
+    }));
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(deps.feishuClient.sendCardMessage).not.toHaveBeenCalled();
+    expect(reply).toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  it("keeps @Bot learner questions about 天梯榜规则 in chat instead of dashboard cards", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-03T12:00:00Z"));
+    const reply = vi.fn().mockResolvedValue({
+      replyText: "天梯榜规则可以这样理解。",
+      used: "llm",
+      latencyMs: 1,
+    });
+    const deps = buildDeps({
+      dashboardPin: { dashboardUrl: "https://orz.md/dashboard/" },
+      chatBot: {
+        botOpenId: "ou_bot",
+        engine: { reply },
+        contextProvider: {
+          record: vi.fn(),
+          resolveMentionContext: vi.fn().mockResolvedValue([]),
+        },
+      },
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      rawText: "@_user_1 天梯榜规则是什么",
+      cleanedText: "天梯榜规则是什么",
       mentionedBotIds: ["ou_bot"],
     }));
     await vi.advanceTimersByTimeAsync(1);

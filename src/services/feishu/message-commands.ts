@@ -203,7 +203,7 @@ export function createMessageCommandHandler(deps: MessageCommandDeps) {
         await handleAdminPanelTrigger(message, deps);
         return;
       }
-      if (isChatBotMention && DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
+      if (!learnerQuestion && isChatBotMention && DASHBOARD_KEYWORDS.some((kw) => text.includes(kw))) {
         console.log(`[MsgHandler] → DASHBOARD_PIN (via @Bot)`);
         await handleDashboardPinTrigger(message, deps);
         return;
