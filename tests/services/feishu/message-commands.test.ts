@@ -561,6 +561,27 @@ describe("message-commands operator command routing", () => {
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["帮我看下审核队列", "复核队列"],
+    ["请你打开管理面板", "管理员面板"],
+    ["麻烦调分", "手动调分"],
+  ])("routes natural admin request @Bot %s to the matching card", async (command, cardText) => {
+    const deps = buildDeps();
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({
+      chatId: `chat-natural-admin-${command}`,
+      rawText: `@_user_1 ${command}`,
+      cleanedText: command,
+      mentionedBotIds: ["ou_bot"],
+    }));
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
+    const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    expect(cardJson).toContain(cardText);
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
   it("routes @Bot 排行榜 to the dashboard card", async () => {
     const deps = buildDeps({
       dashboardPin: { dashboardUrl: "https://orz.md/dashboard/" },
@@ -617,6 +638,53 @@ describe("message-commands operations intent routing", () => {
     }), { botOpenId: "ou_bot" })).toMatchObject({
       kind: "admin_command",
       command: "dashboard",
+    });
+  });
+
+  it("recognizes natural language admin requests before generic @Bot chat", () => {
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 帮我看下审核队列",
+      cleanedText: "帮我看下审核队列",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "admin_command",
+      command: "review_queue",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 请你打开管理面板",
+      cleanedText: "请你打开管理面板",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "admin_command",
+      command: "admin_panel",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 麻烦调分",
+      cleanedText: "麻烦调分",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "admin_command",
+      command: "manual_adjust",
+    });
+  });
+
+  it("keeps learner questions about admin words in chat", () => {
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 请你解释审核规则是什么",
+      cleanedText: "请你解释审核规则是什么",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "learner_qa",
+    });
+
+    expect(classifyOperationsIntent(makeMsg({
+      rawText: "@_user_1 帮我看下调分规则",
+      cleanedText: "帮我看下调分规则",
+      mentionedBotIds: ["ou_bot"],
+    }), { botOpenId: "ou_bot" })).toMatchObject({
+      kind: "learner_qa",
     });
   });
 

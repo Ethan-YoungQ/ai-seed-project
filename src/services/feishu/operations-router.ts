@@ -42,6 +42,12 @@ const LEARNER_QA_RE =
   /(怎么|如何|规则|提交|作业|任务|在哪|哪里|什么时候|多少分|为什么|能不能|可以吗|咋|第几|排名|名次|几分|维度分|总分)/;
 const MENTIONED_BOT_REQUEST_RE =
   /(帮我|帮忙|请你|麻烦|看下|看看|分析|讲一下|讲讲|解释|分享一下|推荐|给我|能否|可以帮)/;
+const LEARNER_ADMIN_CONTEXT_RE =
+  /(怎么|如何|为什么|规则|是什么|能不能|可以吗|咋)/;
+const ADMIN_ACTION_CONTEXT_RE =
+  /(打开|拉起|发一下|发个|看下|看看|进入|显示|调一下|调整|查看|查一下)/;
+const POLITE_COMMAND_PREFIX_RE =
+  /^(帮我|帮忙|请你|麻烦|给我|可以帮我|能否帮我)/;
 
 export function classifyOperationsIntent(
   message: NormalizedFeishuMessage,
@@ -51,6 +57,11 @@ export function classifyOperationsIntent(
   const mentionedBot = Boolean(
     context.botOpenId && message.mentionedBotIds.includes(context.botOpenId),
   );
+
+  const naturalAdminCommand = findAdminCommand(text, mentionedBot);
+  if (naturalAdminCommand && !isLearnerAdminQuestion(text)) {
+    return { kind: "admin_command", command: naturalAdminCommand.command };
+  }
 
   if (
     mentionedBot &&
@@ -86,6 +97,34 @@ function isExactAdminCommand(text: string): boolean {
   return ADMIN_COMMANDS.some((candidate) =>
     candidate.keywords.some((keyword) => text === cleanIntentText(keyword)),
   );
+}
+
+function findAdminCommand(
+  text: string,
+  mentionedBot: boolean,
+): { command: OperationsAdminCommand } | null {
+  for (const candidate of ADMIN_COMMANDS) {
+    if (candidate.requiresBotMention && !mentionedBot) continue;
+    if (!candidate.keywords.some((keyword) => text.includes(cleanIntentText(keyword)))) continue;
+    if (
+      text === cleanIntentText(candidate.keywords[0]) ||
+      candidate.keywords.some((keyword) => text === cleanIntentText(keyword)) ||
+      candidate.keywords.some((keyword) => isPoliteExactCommand(text, cleanIntentText(keyword))) ||
+      ADMIN_ACTION_CONTEXT_RE.test(text)
+    ) {
+      return { command: candidate.command };
+    }
+  }
+  return null;
+}
+
+function isLearnerAdminQuestion(text: string): boolean {
+  return LEARNER_ADMIN_CONTEXT_RE.test(text);
+}
+
+function isPoliteExactCommand(text: string, keyword: string): boolean {
+  const withoutPrefix = text.replace(POLITE_COMMAND_PREFIX_RE, "");
+  return withoutPrefix === keyword;
 }
 
 function isScoreCandidateMessage(
