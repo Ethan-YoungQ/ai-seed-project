@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AiBootImageUnderstandingRecord } from "../../../../src/domain/v3/ai-boot-types";
 import {
   createAiBootImageUnderstandingService,
+  hasImageEvidence,
   type AiBootImageUnderstandingRepo,
 } from "../../../../src/services/feishu/ai-boot/image-understanding";
 import type { EvidenceBundle } from "../../../../src/services/feishu/ai-boot/content-extractor";
@@ -93,6 +94,17 @@ function llmClient(response: Record<string, unknown>): AiBootLlmClient {
 }
 
 describe("createAiBootImageUnderstandingService", () => {
+  it("treats image files uploaded as Feishu file messages as image evidence", () => {
+    expect(hasImageEvidence(imageEvidence({
+      attachments: [{
+        type: "file",
+        fileKey: "file-png-1",
+        fileName: "Gemini海报.png",
+        fileExt: "png",
+      }],
+    }))).toBe(true);
+  });
+
   it("returns a succeeded cached understanding without downloading the Feishu image", async () => {
     const repo = repoWith([understanding()]);
     const feishuClient = {
@@ -170,5 +182,54 @@ describe("createAiBootImageUnderstandingService", () => {
       scoreHint: "可作为 ai_artifact 进入评分。",
     });
     expect(repo.rows.at(-1)).toMatchObject(result);
+  });
+
+  it("downloads image-like file attachments with Feishu file resource type", async () => {
+    const repo = repoWith();
+    const feishuClient = {
+      getMessageFile: vi.fn().mockResolvedValue({
+        fileKey: "file-png-1",
+        mimeType: "image/png",
+        bytes: Buffer.from("fake-image"),
+      }),
+    };
+    const client = llmClient({
+      caption: "图片中是一张 AI 生成海报。",
+      scoreHint: "可作为 ai_artifact 进入评分。",
+    });
+    const service = createAiBootImageUnderstandingService({
+      repo,
+      feishuClient,
+      llmClient: client,
+      now: () => "2026-05-16T09:00:00.000Z",
+    });
+
+    const result = await service.understandImage({
+      message: imageMessage({
+        messageType: "file",
+        attachmentTypes: ["file"],
+        fileKey: "file-png-1",
+        fileName: "Gemini海报.png",
+        fileExt: "png",
+      }),
+      evidence: imageEvidence({
+        attachments: [{
+          type: "file",
+          fileKey: "file-png-1",
+          fileName: "Gemini海报.png",
+          fileExt: "png",
+        }],
+      }),
+    });
+
+    expect(feishuClient.getMessageFile).toHaveBeenCalledWith({
+      messageId: "om-image-1",
+      fileKey: "file-png-1",
+      resourceType: "file",
+    });
+    expect(result).toMatchObject({
+      status: "succeeded",
+      caption: "图片中是一张 AI 生成海报。",
+    });
   });
 });

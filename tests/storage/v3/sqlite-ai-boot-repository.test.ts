@@ -235,10 +235,38 @@ describe("SqliteRepository ai boot v3", () => {
       }),
       contentHash: "hash-text-pending",
     }));
+    r.insertAiBootEvent(event({
+      id: "evt-image-file-pending",
+      sourceMessageId: "om-image-file-pending",
+      eventType: "file",
+      rawText: "",
+      sanitizedText: "",
+      attachmentJson: JSON.stringify([{
+        type: "file",
+        fileKey: "file-png-1",
+        fileName: "Gemini海报.png",
+        fileExt: "png",
+      }]),
+      evidenceJson: JSON.stringify({
+        sanitizedText: "",
+        urls: [],
+        attachments: [{
+          type: "file",
+          fileKey: "file-png-1",
+          fileName: "Gemini海报.png",
+          fileExt: "png",
+        }],
+        documentText: "",
+        extractionStatus: "unsupported",
+        extractionReason: "unsupported_file_ext:png",
+        contentHash: "hash-image-file-pending",
+      }),
+      contentHash: "hash-image-file-pending",
+    }));
 
     const rows = r.listAiBootImageOnlyEventsWithoutScore({ campId: "default", limit: 10 });
 
-    expect(rows.map((row) => row.id)).toEqual(["evt-image-pending"]);
+    expect(rows.map((row) => row.id)).toEqual(["evt-image-file-pending", "evt-image-pending"]);
     r.close();
   });
 

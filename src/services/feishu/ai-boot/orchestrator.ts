@@ -24,6 +24,7 @@ import { runDeterministicGuards, type GuardOutcome } from "./deterministic-guard
 import {
   createAiBootImageUnderstandingService,
   hasImageEvidence,
+  isImageAttachment,
   type AiBootImageUnderstandingService,
 } from "./image-understanding.js";
 import {
@@ -183,6 +184,26 @@ export function createAiBootOrchestrator(
           message,
           evidence: originalEvidence,
           replay: () => handleMessage(message),
+          onFailed: async (record) => {
+            if (deps.repo.findAiBootScoreEventByEventId(event.id)) {
+              return;
+            }
+            const scoreEvent = buildScoreEvent({
+              id: deps.uuid(),
+              campId: deps.campId,
+              eventId: event.id,
+              memberId: member.id,
+              decision: decisionFromImageUnderstandingFailure(record, originalEvidence),
+              config: deps.config,
+              now: deps.now(),
+              llmClient: deps.llmClient,
+              usedModelName: record.modelName || resolveUsedModelName(deps.llmClient, originalEvidence),
+            });
+            const insertedScore = deps.repo.insertAiBootScoreEvent(scoreEvent);
+            if (insertedScore && scoreEvent.status === "review_required") {
+              await pushReviewQueueCard({ deps, scoreEvent, member });
+            }
+          },
         });
         pendingWork.add(task);
         task.finally(() => pendingWork.delete(task));
@@ -422,7 +443,7 @@ async function recoverImageOnlyEventsWithoutScore(input: {
 function messageFromStoredEvent(event: AiBootEventRecord): NormalizedFeishuMessage {
   const evidence = parseEvidenceBundle(event.evidenceJson);
   const attachments = evidence?.attachments ?? parseAttachmentJson(event.attachmentJson);
-  const fileKey = attachments.find((attachment) => attachment.type === "image")?.fileKey;
+  const fileKey = attachments.find(isImageAttachment)?.fileKey;
   const messageType = event.eventType === "image" ? "image" : event.eventType;
 
   return {
@@ -457,7 +478,7 @@ function memberFromStoredEvent(event: AiBootEventRecord): MemberLite {
   };
 }
 
-function parseAttachmentJson(value: string): Array<{ type: string; fileKey?: string }> {
+function parseAttachmentJson(value: string): Array<{ type: string; fileKey?: string; fileName?: string; fileExt?: string }> {
   try {
     const parsed = JSON.parse(value) as unknown;
     if (!Array.isArray(parsed)) return [];
@@ -468,6 +489,8 @@ function parseAttachmentJson(value: string): Array<{ type: string; fileKey?: str
       .map((item) => ({
         type: String(item.type),
         fileKey: typeof item.fileKey === "string" ? item.fileKey : undefined,
+        fileName: typeof item.fileName === "string" ? item.fileName : undefined,
+        fileExt: typeof item.fileExt === "string" ? item.fileExt : undefined,
       }));
   } catch {
     return [];
@@ -716,6 +739,7 @@ function scheduleImageOnlyUnderstandingReplay(input: {
   message: NormalizedFeishuMessage;
   evidence: EvidenceBundle;
   replay: () => Promise<void>;
+  onFailed?: (record: Awaited<ReturnType<AiBootImageUnderstandingService["understandImage"]>>) => Promise<void>;
 }): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(() => {
@@ -728,7 +752,7 @@ function scheduleImageOnlyUnderstandingReplay(input: {
         if (record.status === "succeeded") {
           return input.replay();
         }
-        return undefined;
+        return input.onFailed?.(record);
       })
       .catch((err) => {
         console.warn("[AiBoot] image understanding replay failed", err);
@@ -783,6 +807,25 @@ function forceSilentImageOnlyDecision(
     reason: decision.reason || "image_only_no_group_praise",
     evidence: decision.evidence || summarizeEvidence(evidence),
     badges: [...decision.badges, "image_only_silent"],
+  });
+}
+
+function decisionFromImageUnderstandingFailure(
+  record: Awaited<ReturnType<AiBootImageUnderstandingService["understandImage"]>>,
+  evidence: EvidenceBundle,
+): ScoringDecision {
+  return parseScoringDecision({
+    status: "review_required",
+    category: "operator_adjustment",
+    scoreDelta: 0,
+    confidence: "low",
+    notifyPolicy: "silent",
+    reason: [
+      "image_understanding_failed",
+      record.errorReason ? `reason=${record.errorReason}` : "",
+    ].filter(Boolean).join("; "),
+    evidence: summarizeEvidence(evidence),
+    badges: ["image_understanding_failed"],
   });
 }
 

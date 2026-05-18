@@ -14,7 +14,7 @@ interface FeishuImageFileClient {
   getMessageFile(input: {
     messageId: string;
     fileKey: string;
-    resourceType: "image";
+    resourceType: "image" | "file";
   }): Promise<{
     fileKey?: string;
     mimeType?: string;
@@ -129,7 +129,7 @@ export function createAiBootImageUnderstandingService(deps: {
       const file = await deps.feishuClient.getMessageFile({
         messageId: input.message.messageId,
         fileKey,
-        resourceType: "image",
+        resourceType: imageResourceType(input.message),
       });
       const mimeType = file.mimeType || "image/png";
       const imageDataUrl = `data:${mimeType};base64,${file.bytes.toString("base64")}`;
@@ -246,14 +246,27 @@ ${JSON.stringify({
 }
 
 export function hasImageEvidence(evidence: EvidenceBundle): boolean {
-  return evidence.attachments.some((attachment) => attachment.type === "image");
+  return evidence.attachments.some(isImageAttachment);
+}
+
+const IMAGE_FILE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif", "bmp"]);
+
+export function isImageAttachment(
+  attachment: EvidenceBundle["attachments"][number],
+): boolean {
+  return attachment.type === "image" ||
+    Boolean(attachment.fileExt && IMAGE_FILE_EXTS.has(attachment.fileExt.toLowerCase()));
 }
 
 function imageFileKey(
   message: NormalizedFeishuMessage,
   evidence: EvidenceBundle,
 ): string | undefined {
-  return message.fileKey ?? evidence.attachments.find((attachment) => attachment.type === "image")?.fileKey;
+  return message.fileKey ?? evidence.attachments.find(isImageAttachment)?.fileKey;
+}
+
+function imageResourceType(message: NormalizedFeishuMessage): "image" | "file" {
+  return message.messageType === "file" ? "file" : "image";
 }
 
 function parseUnderstandingResponse(response: string): { caption: string; scoreHint: string } {

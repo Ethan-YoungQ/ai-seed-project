@@ -1577,7 +1577,17 @@ export class SqliteRepository {
            AND e.sanitized_text = ''
            AND (
              e.event_type = 'image' OR
-             e.attachment_json LIKE '%"type":"image"%'
+             e.attachment_json LIKE '%"type":"image"%' OR
+             (
+               e.event_type = 'file' AND (
+                 lower(e.attachment_json) LIKE '%"fileext":"png"%' OR
+                 lower(e.attachment_json) LIKE '%"fileext":"jpg"%' OR
+                 lower(e.attachment_json) LIKE '%"fileext":"jpeg"%' OR
+                 lower(e.attachment_json) LIKE '%"fileext":"webp"%' OR
+                 lower(e.attachment_json) LIKE '%"fileext":"gif"%' OR
+                 lower(e.attachment_json) LIKE '%"fileext":"bmp"%'
+               )
+             )
            )
          ORDER BY e.created_at ASC, e.id ASC
          LIMIT @limit`

@@ -365,6 +365,7 @@ describe("createAiBootOrchestrator", () => {
       imageUnderstandingService: {
         getCachedUnderstanding: vi.fn().mockReturnValue(cachedUnderstanding),
         enqueueUnderstanding: vi.fn(),
+        understandImage: vi.fn(),
       },
     } as Partial<AiBootOrchestratorDeps>);
     const orchestrator = createAiBootOrchestrator(deps);
@@ -673,6 +674,107 @@ describe("createAiBootOrchestrator", () => {
     vi.useRealTimers();
   });
 
+  it("moves image-only understanding failures into review_required instead of dropping the score event", async () => {
+    vi.useFakeTimers();
+    const failedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "img-key-1",
+      messageId: "om-1",
+      contentHash: "hash-image-1",
+      modelName: "qwen3.5-flash",
+      caption: "",
+      scoreHint: "",
+      latencyMs: 70000,
+      status: "failed",
+      errorReason: "This operation was aborted",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:01:10.000Z",
+    };
+    const imageUnderstandingService = {
+      getCachedUnderstanding: vi.fn(() => null),
+      enqueueUnderstanding: vi.fn(),
+      understandImage: vi.fn().mockResolvedValue(failedUnderstanding),
+    };
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+      imageUnderstandingService,
+      reviewQueueChatId: "chat-review",
+    } as Partial<AiBootOrchestratorDeps>);
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      messageType: "image",
+      rawText: "",
+      cleanedText: "",
+      attachmentCount: 1,
+      attachmentTypes: ["image"],
+      fileKey: "img-key-1",
+    }));
+
+    const pendingWork = orchestrator.drainPendingWork();
+    await vi.runOnlyPendingTimersAsync();
+    await pendingWork;
+
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "review_required",
+      category: "operator_adjustment",
+      scoreDelta: 0,
+      notifyPolicy: "silent",
+      reason: expect.stringContaining("image_understanding_failed"),
+    });
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+  });
+
+  it("routes image-like file attachments through image understanding before scoring", async () => {
+    const llmClient = makeLlmClient(approvedArtifact);
+    const cachedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "file-png-1",
+      messageId: "om-1",
+      contentHash: "hash-image-file-1",
+      modelName: "qwen3.5-flash",
+      caption: "图片中是一张 AI 生成海报。",
+      scoreHint: "可按 ai_artifact 审核。",
+      latencyMs: 40,
+      status: "succeeded",
+      errorReason: "",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:00:00.000Z",
+    };
+    const imageUnderstandingService = {
+      getCachedUnderstanding: vi.fn(() => cachedUnderstanding),
+      enqueueUnderstanding: vi.fn(),
+      understandImage: vi.fn(),
+    };
+    const deps = makeDeps({
+      llmClient,
+      imageUnderstandingService,
+    } as Partial<AiBootOrchestratorDeps>);
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      messageType: "file",
+      rawText: "",
+      cleanedText: "",
+      attachmentCount: 1,
+      attachmentTypes: ["file"],
+      fileKey: "file-png-1",
+      fileName: "Gemini海报.png",
+      fileExt: "png",
+    }));
+
+    expect(imageUnderstandingService.getCachedUnderstanding).toHaveBeenCalled();
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 5,
+      notifyPolicy: "silent",
+    });
+    expect(JSON.stringify((llmClient.chat as any).mock.calls[0][0])).toContain("图片中是一张 AI 生成海报");
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
   it("recovers image-only events without score after restart", async () => {
     vi.useFakeTimers();
     const llmClient = makeLlmClient(approvedArtifact);
@@ -790,6 +892,7 @@ describe("createAiBootOrchestrator", () => {
       imageUnderstandingService: {
         getCachedUnderstanding: vi.fn().mockReturnValue(cachedUnderstanding),
         enqueueUnderstanding: vi.fn(),
+        understandImage: vi.fn(),
       },
     } as Partial<AiBootOrchestratorDeps>);
     const orchestrator = createAiBootOrchestrator(deps);
