@@ -42,7 +42,16 @@ function buttonRow(buttons: Array<Record<string, unknown>>): Record<string, unkn
   };
 }
 
-function buildEventRow(event: ReviewQueueEventRow): Array<Record<string, unknown>> {
+function actionName(base: string, sequence: string | number, suffix?: string | number): string {
+  const safeSuffix = String(suffix)
+    .replace(/[^A-Za-z0-9_]/g, "_")
+    .slice(0, 64);
+  return suffix === undefined
+    ? `${base}_${sequence}`
+    : `${base}_${sequence}_${safeSuffix}`;
+}
+
+function buildEventRow(event: ReviewQueueEventRow, rowIndex: number): Array<Record<string, unknown>> {
   const excerpt =
     event.textExcerpt.length > 40
       ? `${event.textExcerpt.slice(0, 40)}…`
@@ -60,14 +69,14 @@ function buildEventRow(event: ReviewQueueEventRow): Array<Record<string, unknown
     buttonRow([
       {
         tag: "button",
-        name: "review_approve",
+        name: actionName("review_approve", rowIndex, event.eventId),
         text: { tag: "plain_text", content: "✅ 通过" },
         type: "primary",
         value: { action: "review_approve", eventId: event.eventId }
       },
       {
         tag: "button",
-        name: "review_reject",
+        name: actionName("review_reject", rowIndex, event.eventId),
         text: { tag: "plain_text", content: "❌ 拒绝" },
         type: "danger",
         value: { action: "review_reject", eventId: event.eventId }
@@ -87,7 +96,7 @@ function buildPaginationRow(
   if (currentPage > 1) {
     buttons.push({
       tag: "button",
-      name: "review_page",
+      name: actionName("review_page_prev", currentPage - 1),
       text: { tag: "plain_text", content: "◀ 上一页" },
       type: "default",
       value: { action: "review_page", page: currentPage - 1 }
@@ -96,7 +105,7 @@ function buildPaginationRow(
 
   buttons.push({
     tag: "button",
-    name: "review_page",
+    name: actionName("review_page_current", currentPage),
     text: {
       tag: "plain_text",
       content: `第 ${currentPage} / ${totalPages} 页`
@@ -108,7 +117,7 @@ function buildPaginationRow(
   if (currentPage < totalPages) {
     buttons.push({
       tag: "button",
-      name: "review_page",
+      name: actionName("review_page_next", currentPage + 1),
       text: { tag: "plain_text", content: "下一页 ▶" },
       type: "default",
       value: { action: "review_page", page: currentPage + 1 }
@@ -138,7 +147,7 @@ export function buildReviewQueueCard(state: ReviewQueueState): FeishuCardJson {
     });
   } else {
     for (let i = 0; i < state.events.length; i++) {
-      const rows = buildEventRow(state.events[i]);
+      const rows = buildEventRow(state.events[i], i);
       elements.push(...rows);
       if (i < state.events.length - 1) {
         elements.push({ tag: "hr" });

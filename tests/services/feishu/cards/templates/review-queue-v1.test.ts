@@ -108,6 +108,31 @@ describe("review-queue-v1 template", () => {
     expect(json).toContain("下一页");
   });
 
+  test("button names are unique in multi-row cards while action payloads stay stable", () => {
+    const events = [
+      { ...makeEvent(1), eventId: "evt/a" },
+      { ...makeEvent(2), eventId: "evt_a" },
+      { ...makeEvent(3), eventId: "evt:a" },
+    ];
+    const state = makeState(events, 2, 3, 25);
+    const card = buildReviewQueueCard(state);
+    const buttonRows = card.body.elements.filter((el) => el.tag === "column_set");
+    const buttons = buttonRows.flatMap((row) =>
+      ((row.columns as Array<Record<string, unknown>>) ?? []).flatMap((column) =>
+        ((column.elements as Array<Record<string, unknown>>) ?? []).filter(
+          (el) => el.tag === "button"
+        )
+      )
+    );
+    const names = buttons.map((button) => String(button.name));
+    const actions = buttons.map((button) => (button.value as Record<string, unknown>).action);
+
+    expect(new Set(names).size).toBe(names.length);
+    expect(actions.filter((action) => action === "review_approve")).toHaveLength(events.length);
+    expect(actions.filter((action) => action === "review_reject")).toHaveLength(events.length);
+    expect(actions).toContain("review_page");
+  });
+
   test("empty queue shows 暂无待审核事件 message without action buttons", () => {
     const state = makeState([], 1, 1, 0);
     const card = buildReviewQueueCard(state);

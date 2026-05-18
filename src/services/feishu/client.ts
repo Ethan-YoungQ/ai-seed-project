@@ -29,6 +29,69 @@ function inferDocumentFileExt(input: { fileName?: string; mimeType?: string }) {
   return mimeTypeExt;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object");
+}
+
+function readErrorResponse(error: unknown): { data?: unknown; headers?: unknown } | undefined {
+  return isRecord(error) && "response" in error
+    ? (error as { response?: { data?: unknown; headers?: unknown } }).response
+    : undefined;
+}
+
+function readErrorData(error: unknown): Record<string, unknown> {
+  const response = readErrorResponse(error);
+  const data = response?.data;
+  if (isRecord(data)) return data;
+  return isRecord(error) && !(error instanceof Error) ? error : {};
+}
+
+function readHeaderString(headers: unknown, key: string): string | undefined {
+  if (!isRecord(headers)) return undefined;
+  const exact = headers[key];
+  if (typeof exact === "string") return exact;
+  const match = Object.entries(headers).find(([header]) => header.toLowerCase() === key.toLowerCase());
+  return typeof match?.[1] === "string" ? match[1] : undefined;
+}
+
+function readErrorLogId(data: Record<string, unknown>, error: unknown): string | undefined {
+  if (typeof data.log_id === "string") return data.log_id;
+  const nested = data.error;
+  if (isRecord(nested) && typeof nested.log_id === "string") {
+    return (nested as { log_id: string }).log_id;
+  }
+  const headers = readErrorResponse(error)?.headers;
+  return readHeaderString(headers, "x-tt-logid")
+    ?? readHeaderString(headers, "x-tt-log-id");
+}
+
+function readErrorCode(data: Record<string, unknown>): string | undefined {
+  return typeof data.code === "number" || typeof data.code === "string"
+    ? String(data.code)
+    : undefined;
+}
+
+function readErrorMessage(data: Record<string, unknown>): string | undefined {
+  if (typeof data.msg === "string" && data.msg.trim()) return data.msg;
+  return undefined;
+}
+
+function createSafeFeishuError(operation: string, error: unknown): Error {
+  const data = readErrorData(error);
+  const code = readErrorCode(data);
+  const msg = readErrorMessage(data) ?? "feishu request failed";
+  const logId = readErrorLogId(data, error);
+  const parts = [
+    `${operation} failed`,
+    code ? `code=${code}` : null,
+    `msg=${msg}`,
+    logId ? `log_id=${logId}` : null,
+  ].filter((part): part is string => Boolean(part));
+  const safeError = new Error(parts.join("; "));
+  safeError.name = "FeishuApiError";
+  return safeError;
+}
+
 export interface FeishuMessageSendInput {
   receiveId: string;
   receiveIdType: FeishuReceiveIdType;
@@ -201,16 +264,21 @@ export class LarkFeishuApiClient implements FeishuApiClient {
     chatId: string;
     cardJson: Record<string, unknown>;
   }): Promise<{ messageId: string }> {
-    const response = await this.client.im.message.create({
-      params: {
-        receive_id_type: "chat_id"
-      },
-      data: {
-        receive_id: input.chatId,
-        msg_type: "interactive",
-        content: JSON.stringify(input.cardJson)
-      }
-    });
+    let response: any;
+    try {
+      response = await this.client.im.message.create({
+        params: {
+          receive_id_type: "chat_id"
+        },
+        data: {
+          receive_id: input.chatId,
+          msg_type: "interactive",
+          content: JSON.stringify(input.cardJson)
+        }
+      });
+    } catch (error) {
+      throw createSafeFeishuError("sendCardMessage", error);
+    }
 
     return {
       messageId: response?.data?.message_id
