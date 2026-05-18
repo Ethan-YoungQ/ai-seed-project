@@ -46,8 +46,8 @@ const RULES_PATTERNS = [
 const SCORE_BREAKDOWN_PATTERNS = [
   /(?:多少分|几分|排名第几|第几名)/,
   /(?:天梯榜|排行榜).*?(?:第几|排名|名次)/,
-  /(?:我的|我).*?(?:维度分|分数|排名|天梯榜|排行榜)/,
-  /(?:维度分|分数|排名).*?(?:多少|第几|明细|详情)/,
+  /(?:我的|我).*?(?:总分|维度分|分数|排名|天梯榜|排行榜)/,
+  /(?:总分|维度分|分数|排名).*?(?:多少|第几|明细|详情)/,
 ];
 
 const COURSE_OR_HOMEWORK_PATTERNS = [
@@ -67,6 +67,11 @@ function matchesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
 
+function isCourseOrHomeworkScoreQuestion(text: string): boolean {
+  return matchesAny(text, COURSE_OR_HOMEWORK_PATTERNS)
+    && /(?:多少分|几分|能得|得分|评分)/.test(text);
+}
+
 export function classifyBotQuestionIntent(rawText: string): BotQuestionIntent {
   const text = normalizeQuestion(rawText);
   if (text.length === 0) return { kind: "general_chat", reason: "fallback" };
@@ -81,6 +86,10 @@ export function classifyBotQuestionIntent(rawText: string): BotQuestionIntent {
 
   if (matchesAny(text, SCORE_MISSING_PATTERNS)) {
     return { kind: "score_missing_check", reason: "score_keywords" };
+  }
+
+  if (isCourseOrHomeworkScoreQuestion(text)) {
+    return { kind: "course_or_homework_qa", reason: "course_context_keywords" };
   }
 
   if (matchesAny(text, SCORE_BREAKDOWN_PATTERNS)) {

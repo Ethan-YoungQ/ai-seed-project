@@ -38,7 +38,6 @@ export interface ChatReplyInput {
 export type ChatReplyUsed =
   | "llm"
   | "fact_answer"
-  | "level_status"
   | "rate_limited"
   | "error_fallback"
   | "empty_prompt";

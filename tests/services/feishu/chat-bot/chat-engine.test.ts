@@ -334,6 +334,41 @@ describe("ChatEngine.reply", () => {
     expect(factService.getOperationalFacts).not.toHaveBeenCalled();
   });
 
+  it.each([
+    "帮我看这份作业能得几分",
+    "这份作业能得多少分",
+    "结合我交的作业看能得几分",
+  ])("keeps homework score question on the LLM path: %s", async (question) => {
+    const llm = vi.fn().mockResolvedValue("这类作业评分需要结合内容细看。");
+    const factService = makeFactService({
+      kind: "missing_member",
+      openId: "u1",
+      question,
+    });
+    const engine = createChatEngine({
+      llmClient: {
+        provider: "fake",
+        model: "fake-v1",
+        chat: llm,
+      },
+      memory: createConversationMemory(),
+      rateLimiter: { check: () => ({ allowed: true }), markUsed: () => { /* noop */ } },
+      repo: makeRepoStub({ u1: { displayName: "李洁娴", roleType: "student" } }),
+      factService,
+    });
+
+    const result = await engine.reply({
+      chatId: "c1",
+      openId: "u1",
+      messageId: "m1",
+      cleanedText: question,
+    });
+
+    expect(result.used).toBe("llm");
+    expect(llm).toHaveBeenCalledTimes(1);
+    expect(factService.getOperationalFacts).not.toHaveBeenCalled();
+  });
+
   it("returns missing_member fact answers without calling the LLM", async () => {
     const llm = vi.fn().mockResolvedValue("泛泛而谈的回答");
     const engine = createChatEngine({
