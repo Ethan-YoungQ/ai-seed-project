@@ -376,6 +376,32 @@ describe("SqliteRepository ai boot v3", () => {
     r.close();
   });
 
+  it("uses the original message text as review queue evidence when available", () => {
+    const r = repo();
+    r.insertAiBootEvent(event({
+      id: "evt-review-old",
+      sanitizedText: "我用 AI 做了一张客户沟通海报，并分享了复盘。",
+      rawText: "raw fallback",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review-old",
+      eventId: "evt-review-old",
+      status: "review_required",
+      confidence: "low",
+      reason: "LLM returned invalid scoring output; operator review required.",
+      evidence: "Invalid response from aliyun/qwen3.5-flash while scoring content hash abc.",
+    }));
+
+    const [row] = r.listAiBootReviewQueue({
+      campId: "default",
+      limit: 10,
+      offset: 0,
+    });
+
+    expect(row.evidence).toBe("我用 AI 做了一张客户沟通海报，并分享了复盘。");
+    r.close();
+  });
+
   it("finds a score event by event id and ignores duplicate score inserts for the same event", () => {
     const r = repo();
     expect(r.insertAiBootScoreEvent(scoreEvent({ id: "score-1", eventId: "evt-1" }))).toBe(true);

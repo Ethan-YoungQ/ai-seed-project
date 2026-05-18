@@ -1626,20 +1626,23 @@ export class SqliteRepository {
   }): AiBootScoreEventRecord[] {
     const rows = this.db
       .prepare(
-        `SELECT id, event_id, camp_id, member_id, category, score_delta, confidence,
-                status, notify_policy, reason, evidence, badges_json, model_provider,
-                model_name, prompt_version, reviewed_by_op_id, review_note, decided_at
-         FROM ai_boot_score_events
-         WHERE camp_id = @campId
-           AND status = 'review_required'
-           AND confidence = 'low'
-         ORDER BY CASE confidence
+        `SELECT s.id, s.event_id, s.camp_id, s.member_id, s.category, s.score_delta, s.confidence,
+                s.status, s.notify_policy, s.reason,
+                COALESCE(NULLIF(e.sanitized_text, ''), NULLIF(e.raw_text, ''), NULLIF(s.evidence, ''), s.reason) AS evidence,
+                s.badges_json, s.model_provider,
+                s.model_name, s.prompt_version, s.reviewed_by_op_id, s.review_note, s.decided_at
+         FROM ai_boot_score_events s
+         LEFT JOIN ai_boot_events e ON e.id = s.event_id
+         WHERE s.camp_id = @campId
+           AND s.status = 'review_required'
+           AND s.confidence = 'low'
+         ORDER BY CASE s.confidence
                     WHEN 'low' THEN 0
                     WHEN 'medium' THEN 1
                     ELSE 2
                   END ASC,
-                  decided_at ASC,
-                  id ASC
+                  s.decided_at ASC,
+                  s.id ASC
          LIMIT @limit OFFSET @offset`
       )
       .all(input) as Array<Record<string, unknown>>;

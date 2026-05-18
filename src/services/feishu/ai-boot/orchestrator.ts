@@ -12,6 +12,11 @@ import type { SqliteRepository } from "../../../storage/sqlite-repository.js";
 import type { FeishuApiClient } from "../client.js";
 import type { MemberLite } from "../cards/types.js";
 import { buildReviewQueueCard } from "../cards/templates/review-queue-v1.js";
+import {
+  formatReviewQueueExcerpt,
+  formatReviewQueueItemCode,
+  formatReviewQueueReason,
+} from "../cards/review-queue-display.js";
 import type { NormalizedFeishuMessage } from "../normalize-message.js";
 import type { AiBootConfig } from "./config.js";
 import { extractEvidence, type EvidenceBundle } from "./content-extractor.js";
@@ -360,10 +365,13 @@ async function pushReviewQueueCard(input: {
       engine: "v3" as const,
       memberId: row.memberId,
       memberName: rowMember?.displayName || rowMember?.name || member.displayName || "未知学员",
-      itemCode: row.category,
+      itemCode: formatReviewQueueItemCode(row.category),
       scoreDelta: row.scoreDelta,
-      textExcerpt: row.evidence || row.reason,
-      llmReason: row.reason || "暂无 LLM 理由",
+      textExcerpt: formatReviewQueueExcerpt({
+        evidence: row.evidence,
+        reason: row.reason,
+      }),
+      llmReason: formatReviewQueueReason(row.reason),
       createdAt: row.decidedAt,
     };
   });

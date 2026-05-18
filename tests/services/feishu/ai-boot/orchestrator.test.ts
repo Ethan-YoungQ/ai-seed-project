@@ -927,9 +927,37 @@ describe("createAiBootOrchestrator", () => {
     const cardJson = (deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson;
     const cardText = JSON.stringify(cardJson);
     expect(cardText).toContain("测试学员");
-    expect(cardText).toContain("ai_artifact");
+    expect(cardText).toContain("AI 作品/产物");
     expect(cardText).toContain('"engine":"v3"');
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("renders invalid LLM review cards in Chinese", async () => {
+    const llmClient = makeLlmClient({
+      status: "review_required",
+      category: "formal_task",
+      scoreDelta: 1,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "LLM returned invalid scoring output; operator review required.",
+      evidence: "Invalid response from aliyun/qwen3.5-flash while scoring content hash abc.",
+      badges: ["llm_invalid"],
+    });
+    const deps = makeDeps({
+      llmClient,
+      reviewQueueChatId: "oc-admin-test",
+    } as Partial<AiBootOrchestratorDeps>);
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    const cardJson = (deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson;
+    const cardText = JSON.stringify(cardJson);
+    expect(cardText).toContain("正式任务");
+    expect(cardText).toContain("模型返回格式异常，需要运营人工复核");
+    expect(cardText).toContain("原消息已记录");
+    expect(cardText).not.toContain("LLM returned invalid scoring output");
+    expect(cardText).not.toContain("Invalid response from aliyun");
   });
 
   it("does not repeat daily participation score after the member already has one for the Shanghai business day", async () => {

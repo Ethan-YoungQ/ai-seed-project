@@ -134,7 +134,7 @@ function buildPaginationRow(
 export function buildReviewQueueCard(state: ReviewQueueState): FeishuCardJson {
   const header = buildHeader({
     title: "🔍 复核队列",
-    subtitle: `共 ${state.totalEvents} 条待审核`,
+    subtitle: `真实审核，点击生效 · 共 ${state.totalEvents} 条待审核`,
     template: "orange"
   });
 

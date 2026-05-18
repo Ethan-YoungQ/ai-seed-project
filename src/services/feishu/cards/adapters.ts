@@ -8,6 +8,11 @@ import type {
   IngestRequest,
   IngestResult
 } from "./types.js";
+import {
+  formatReviewQueueExcerpt,
+  formatReviewQueueItemCode,
+  formatReviewQueueReason,
+} from "./review-queue-display.js";
 
 // ---------------------------------------------------------------------------
 // Adapters — bridge card-handler interfaces to v2 domain services.
@@ -108,10 +113,13 @@ export function cardRepoAdapter(repo: unknown): CardHandlerDeps["repo"] {
           engine: "v3" as const,
           memberId: row.memberId,
           memberName: member?.displayName || member?.name || "未知学员",
-          itemCode: row.category,
+          itemCode: formatReviewQueueItemCode(row.category),
           scoreDelta: row.scoreDelta,
-          textExcerpt: row.evidence || row.reason,
-          llmReason: row.reason || "暂无 LLM 理由",
+          textExcerpt: formatReviewQueueExcerpt({
+            evidence: row.evidence,
+            reason: row.reason,
+          }),
+          llmReason: formatReviewQueueReason(row.reason),
           createdAt: row.decidedAt,
         };
       });
