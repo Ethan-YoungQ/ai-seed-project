@@ -11,6 +11,17 @@ export const CATEGORY_SCORE_RANGES = {
   operator_adjustment: { min: -20, max: 20 }
 } as const;
 
+export const V3_CATEGORY_PERIOD_CAPS = {
+  daily_participation: 3,
+  ai_artifact: 8,
+  ai_practice_reflection: 6,
+  prompt_or_method: 5,
+  resource_recommendation: 4,
+  peer_help: 6,
+  formal_task: 10,
+  operator_adjustment: null
+} as const;
+
 export const CSG_SCORE_OPPORTUNITIES = {
   C: [
     "AI 图片",

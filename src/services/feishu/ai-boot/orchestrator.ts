@@ -5,6 +5,7 @@ import type {
   AiBootEventType,
   AiBootScoreEventRecord,
 } from "../../../domain/v3/ai-boot-types.js";
+import { applyV3CategoryPeriodCap } from "../../../domain/v3/scoring-caps.js";
 import { parseScoringDecision, type ScoringDecision } from "../../../domain/v3/scoring-decision.js";
 import { AI_BOOT_RULESET_VERSION } from "../../../domain/v3/scoring-rules.js";
 import type { SqliteRepository } from "../../../storage/sqlite-repository.js";
@@ -46,7 +47,9 @@ export interface AiBootOrchestratorDeps {
     | "findAiBootEventByContentHash"
     | "findApprovedAiBootScoreEventByContentHash"
     | "countApprovedAiBootScoreEvents"
+    | "sumApprovedAiBootScoreByCategory"
     | "sumApprovedAiBootScore"
+    | "findActivePeriod"
     | "insertAiBootNotificationEvent"
     | "countAiBootNotificationEventsForMember"
     | "countAiBootNotificationEventsForChat"
@@ -227,13 +230,19 @@ export function createAiBootOrchestrator(
       const decision = imageOnlyMessage
         ? forceSilentImageOnlyDecision(rawDecision, evidence)
         : rawDecision;
+      const capped = applyLivePeriodCap({
+        deps,
+        memberId: member.id,
+        decision,
+      });
 
       const scoreEvent = buildScoreEvent({
         id: deps.uuid(),
         campId: deps.campId,
         eventId: event.id,
         memberId: member.id,
-        decision,
+        decision: capped.decision,
+        reviewNote: capped.reviewNote,
         config: deps.config,
         now: deps.now(),
         llmClient: guardOutcome.kind === "continue" ? deps.llmClient : undefined,
@@ -259,7 +268,7 @@ export function createAiBootOrchestrator(
       }
 
       const notification = decideNotification({
-        decision,
+        decision: capped.decision,
         memberId: member.id,
         chatId: message.chatId,
         topicHash: evidence.contentHash,
@@ -273,7 +282,7 @@ export function createAiBootOrchestrator(
 
       const praiseText = buildPraiseText({
         memberName: member.displayName,
-        decision,
+        decision: capped.decision,
       });
       if (!passesDurableNotificationCaps({
         deps,
@@ -777,6 +786,7 @@ function buildScoreEvent(input: {
   eventId: string;
   memberId: string;
   decision: ScoringDecision;
+  reviewNote?: string | null;
   config: AiBootConfig;
   now: string;
   llmClient?: AiBootLlmClient;
@@ -807,8 +817,60 @@ function buildScoreEvent(input: {
     modelName: input.usedModelName ?? input.llmClient?.model ?? "guards",
     promptVersion: input.llmClient ? AI_BOOT_PROMPT_VERSION : "",
     reviewedByOpId: null,
-    reviewNote: null,
+    reviewNote: input.reviewNote ?? null,
     decidedAt: input.now,
+  };
+}
+
+function applyLivePeriodCap(input: {
+  deps: AiBootOrchestratorDeps;
+  memberId: string;
+  decision: ScoringDecision;
+}): { decision: ScoringDecision; reviewNote: string | null } {
+  if (input.decision.status !== "approved" || input.decision.scoreDelta <= 0) {
+    return { decision: input.decision, reviewNote: null };
+  }
+
+  const period = input.deps.repo.findActivePeriod(input.deps.campId);
+  if (!period) {
+    return { decision: input.decision, reviewNote: null };
+  }
+
+  const approvedCategoryScore = input.deps.repo.sumApprovedAiBootScoreByCategory({
+    campId: input.deps.campId,
+    memberId: input.memberId,
+    category: input.decision.category,
+    decidedAtFrom: period.startedAt,
+    decidedAtTo: period.endedAt ?? "9999-12-31T23:59:59.999Z",
+  });
+  const capped = applyV3CategoryPeriodCap({
+    category: input.decision.category,
+    requestedScoreDelta: input.decision.scoreDelta,
+    approvedCategoryScore,
+  });
+
+  if (!capped.capped) {
+    return { decision: input.decision, reviewNote: null };
+  }
+
+  const reviewNote = capped.status === "no_score"
+    ? `v3_period_cap_reached: category=${input.decision.category}; period=${period.id}; approved=${approvedCategoryScore}; requested=${input.decision.scoreDelta}`
+    : `v3_period_cap_applied: category=${input.decision.category}; period=${period.id}; approved=${approvedCategoryScore}; requested=${input.decision.scoreDelta}; applied=${capped.scoreDelta}`;
+
+  return {
+    decision: {
+      ...input.decision,
+      status: capped.status,
+      scoreDelta: capped.scoreDelta,
+      notifyPolicy: capped.status === "no_score" ? "silent" : input.decision.notifyPolicy,
+      reason: capped.status === "no_score"
+        ? `${input.decision.reason}；本周期该类别得分已达上限。`
+        : input.decision.reason,
+      badges: capped.status === "no_score"
+        ? [...new Set([...input.decision.badges, "period_cap_reached"])]
+        : [...new Set([...input.decision.badges, "period_cap_applied"])],
+    },
+    reviewNote,
   };
 }
 

@@ -1217,6 +1217,36 @@ describe("SqliteRepository v2 promotion_records", () => {
   });
 });
 
+describe("SqliteRepository v2 level announcement ordinals", () => {
+  test("announcement ordinal table rejects duplicate level/member announcements", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    repo.insertAnnouncementOrdinal({
+      level: 2,
+      ordinal: 1,
+      memberId: "user-alice",
+      memberName: "Alice",
+      windowId: "w1",
+      announcedAt: "2026-05-18T00:00:00.000Z",
+    });
+    repo.insertAnnouncementOrdinal({
+      level: 2,
+      ordinal: 2,
+      memberId: "user-alice",
+      memberName: "Alice",
+      windowId: "w1-replay",
+      announcedAt: "2026-05-18T01:00:00.000Z",
+    });
+
+    expect(repo.getAnnouncementOrdinals()).toEqual([
+      { level: 2, ordinal: 1, memberId: "user-alice" },
+    ]);
+
+    repo.close();
+  });
+});
+
 describe("SqliteRepository v2 members extensions", () => {
   // NOTE: plan references "member-student-01" which is not in seedDemo.
   // seedDemo creates "user-alice" (student) and "user-ops" (operator).

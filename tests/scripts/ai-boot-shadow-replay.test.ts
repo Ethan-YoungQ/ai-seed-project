@@ -369,6 +369,67 @@ describe("runShadowReplay", () => {
     });
   });
 
+  it("applies v3 category period caps during shadow replay", async () => {
+    const repository = makeRepo();
+    repository.insertPeriod({
+      id: "period-2",
+      campId: "default",
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-22T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-22T00:00:00.000Z",
+      updatedAt: "2026-04-22T00:00:00.000Z",
+    });
+    repository.insertAiBootEvent(event({
+      id: "evt-existing-artifact",
+      sourceMessageId: "om-existing-artifact",
+      eventType: "image",
+      rawText: "旧作品",
+      sanitizedText: "旧作品",
+      attachmentJson: JSON.stringify([{ type: "image", fileKey: "img-old" }]),
+      contentHash: "hash-existing-artifact",
+      createdAt: "2026-05-01T00:00:00.000Z",
+    }));
+    repository.insertAiBootScoreEvent(scoreEvent({
+      id: "score-existing-artifact",
+      eventId: "evt-existing-artifact",
+      category: "ai_artifact",
+      scoreDelta: 8,
+      decidedAt: "2026-05-01T00:00:00.000Z",
+    }));
+    repository.insertAiBootEvent(event({
+      id: "evt-over-cap-artifact",
+      sourceMessageId: "om-over-cap-artifact",
+      eventType: "image",
+      rawText: "新作品",
+      sanitizedText: "新作品",
+      attachmentJson: JSON.stringify([{ type: "image", fileKey: "img-new" }]),
+      contentHash: "hash-over-cap-artifact",
+      createdAt: "2026-05-02T00:00:00.000Z",
+    }));
+
+    const result = await runShadowReplay({
+      repository,
+      env: {} as NodeJS.ProcessEnv,
+      campId: "default",
+      since: "2026-05-02",
+      limit: 100,
+      now: () => "2026-05-18T00:00:00.000Z",
+      uuid: () => "score-shadow-over-cap",
+      stdout: () => undefined,
+      allowHeuristic: true,
+    });
+
+    expect(result).toMatchObject({ eventsReplayed: 1, noScore: 1 });
+    expect(repository.findAiBootScoreEventByEventId("shadow-replay:evt-over-cap-artifact")).toMatchObject({
+      scoreDelta: 0,
+      status: "shadow",
+      notifyPolicy: "silent",
+      reviewNote: expect.stringContaining("v3_period_cap_reached"),
+    });
+  });
+
   it("handles malformed stored evidence and missing members without crashing", async () => {
     const repository = makeRepo();
     repository.insertAiBootEvent(event({

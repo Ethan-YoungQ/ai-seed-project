@@ -119,6 +119,24 @@ function makeDeps(
         event.decidedAt < input.decidedAtTo,
       ).length,
     ),
+    sumApprovedAiBootScoreByCategory: vi.fn((input: {
+      campId: string;
+      memberId: string;
+      category: string;
+      decidedAtFrom: string;
+      decidedAtTo: string;
+    }) =>
+      scoreEvents
+        .filter((event) =>
+          event.campId === input.campId &&
+          event.memberId === input.memberId &&
+          event.category === input.category &&
+          event.status === "approved" &&
+          event.decidedAt >= input.decidedAtFrom &&
+          event.decidedAt < input.decidedAtTo,
+        )
+        .reduce((sum, event) => sum + Math.max(0, event.scoreDelta), 0),
+    ),
     sumApprovedAiBootScore: vi.fn((campId: string, memberId: string) =>
       scoreEvents
         .filter((event) => event.campId === campId && event.memberId === memberId && event.status === "approved")
@@ -181,6 +199,18 @@ function makeDeps(
         imageUnderstandings.push(record);
       }
     }),
+    findActivePeriod: vi.fn(() => ({
+      id: "period-2",
+      campId: "default",
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-22T00:00:00.000Z",
+      endedAt: null,
+      openedByOpId: null,
+      closedReason: null,
+      createdAt: "2026-04-22T00:00:00.000Z",
+      updatedAt: "2026-04-22T00:00:00.000Z",
+    })),
   };
   const deps: AiBootOrchestratorDeps = {
     repo: repo as AiBootOrchestratorDeps["repo"],
@@ -366,6 +396,83 @@ describe("createAiBootOrchestrator", () => {
       sentAt: "2026-05-16T09:00:00.000Z",
       textHash: expect.any(String),
     });
+  });
+
+  it("caps v3 category score at remaining period allowance before writing approved score", async () => {
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    deps.scoreEvents.push({
+      id: "score-existing",
+      eventId: "evt-existing",
+      campId: "default",
+      memberId: "member-1",
+      category: "ai_artifact",
+      scoreDelta: 6,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "silent",
+      reason: "历史 AI 作品分",
+      evidence: "历史记录",
+      badgesJson: "[]",
+      modelProvider: "test",
+      modelName: "test",
+      promptVersion: "test",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-15T09:00:00.000Z",
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    expect(deps.scoreEvents).toHaveLength(2);
+    expect(deps.scoreEvents[1]).toMatchObject({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 2,
+      notifyPolicy: "group_praise",
+      reviewNote: expect.stringContaining("v3_period_cap_applied"),
+    });
+  });
+
+  it("turns v3 score into no_score when the category period cap is exhausted", async () => {
+    const deps = makeDeps({
+      llmClient: makeLlmClient(approvedArtifact),
+    });
+    deps.scoreEvents.push({
+      id: "score-existing",
+      eventId: "evt-existing",
+      campId: "default",
+      memberId: "member-1",
+      category: "ai_artifact",
+      scoreDelta: 8,
+      confidence: "high",
+      status: "approved",
+      notifyPolicy: "silent",
+      reason: "历史 AI 作品分",
+      evidence: "历史记录",
+      badgesJson: "[]",
+      modelProvider: "test",
+      modelName: "test",
+      promptVersion: "test",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-15T09:00:00.000Z",
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    expect(deps.scoreEvents).toHaveLength(2);
+    expect(deps.scoreEvents[1]).toMatchObject({
+      status: "no_score",
+      category: "ai_artifact",
+      scoreDelta: 0,
+      notifyPolicy: "silent",
+      reviewNote: expect.stringContaining("v3_period_cap_reached"),
+    });
+    expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
   it("uses durable notification caps after restart before sending group praise", async () => {

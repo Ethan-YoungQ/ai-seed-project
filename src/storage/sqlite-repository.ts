@@ -1736,6 +1736,34 @@ export class SqliteRepository {
     return Number(row.count ?? 0);
   }
 
+  sumApprovedAiBootScoreByCategory(input: {
+    campId: string;
+    memberId: string;
+    category: AiBootScoreCategory;
+    decidedAtFrom: string;
+    decidedAtTo: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(CASE WHEN score_delta > 0 THEN score_delta ELSE 0 END), 0) AS total
+         FROM ai_boot_score_events
+         WHERE camp_id = ?
+           AND member_id = ?
+           AND category = ?
+           AND status = 'approved'
+           AND decided_at >= ?
+           AND decided_at < ?`
+      )
+      .get(
+        input.campId,
+        input.memberId,
+        input.category,
+        input.decidedAtFrom,
+        input.decidedAtTo
+      ) as { total: number };
+    return Number(row.total ?? 0);
+  }
+
   countAiBootScoreEvents(input: { campId?: string }): number {
     const row = this.db
       .prepare(

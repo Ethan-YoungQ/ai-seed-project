@@ -10,6 +10,7 @@ import type {
   AiBootEventRecord,
   AiBootScoreEventRecord,
 } from "../domain/v3/ai-boot-types.js";
+import { applyV3CategoryPeriodCap } from "../domain/v3/scoring-caps.js";
 import { parseScoringDecision, type ScoringDecision } from "../domain/v3/scoring-decision.js";
 import type { EvidenceBundle } from "../services/feishu/ai-boot/content-extractor.js";
 import {
@@ -94,6 +95,7 @@ export async function runShadowReplay(
       reviewRequired: 0,
     };
     const replayDailyParticipation = new Set<string>();
+    const replayCategoryScores = new Map<string, number>();
 
     for (const event of events) {
       const shadowEventId = buildShadowReplayEventId(event.id);
@@ -128,16 +130,22 @@ export async function runShadowReplay(
             allowHeuristic: options.allowHeuristic ?? false,
           })
         : decisionFromGuard(guardOutcome, evidence);
-      const normalized = parseScoringDecision(decision);
+      const normalized = applyReplayPeriodCap({
+        repository,
+        event,
+        decision: parseScoringDecision(decision),
+        replayCategoryScores,
+      });
       repository.insertAiBootScoreEvent(buildShadowScoreEvent({
         id: uuid(),
         shadowEventId,
         event,
-        decision: normalized,
+        decision: normalized.decision,
+        reviewNote: normalized.reviewNote,
         decidedAt: now(),
       }));
-      countStatus(result, normalized.status);
-      if (normalized.status === "approved" && normalized.category === "daily_participation") {
+      countStatus(result, normalized.decision.status);
+      if (normalized.decision.status === "approved" && normalized.decision.category === "daily_participation") {
         replayDailyParticipation.add(dailyParticipationReplayKey(event));
       }
     }
@@ -248,6 +256,7 @@ function buildShadowScoreEvent(input: {
   shadowEventId: string;
   event: AiBootEventRecord;
   decision: ScoringDecision;
+  reviewNote: string | null;
   decidedAt: string;
 }): AiBootScoreEventRecord {
   return {
@@ -271,9 +280,82 @@ function buildShadowScoreEvent(input: {
     modelName: SHADOW_MODEL_NAME,
     promptVersion: SHADOW_PROMPT_VERSION,
     reviewedByOpId: null,
-    reviewNote: `source_event_id=${input.event.id}`,
+    reviewNote: input.reviewNote
+      ? `source_event_id=${input.event.id}; ${input.reviewNote}`
+      : `source_event_id=${input.event.id}`,
     decidedAt: input.decidedAt,
   };
+}
+
+function applyReplayPeriodCap(input: {
+  repository: SqliteRepository;
+  event: AiBootEventRecord;
+  decision: ScoringDecision;
+  replayCategoryScores: Map<string, number>;
+}): { decision: ScoringDecision; reviewNote: string | null } {
+  if (input.decision.status !== "approved" || input.decision.scoreDelta <= 0) {
+    return { decision: input.decision, reviewNote: null };
+  }
+
+  const period = findPeriodForEvent(input.repository, input.event);
+  if (!period) {
+    return { decision: input.decision, reviewNote: null };
+  }
+
+  const key = `${period.id}\u0000${input.event.memberId}\u0000${input.decision.category}`;
+  let approvedCategoryScore = input.replayCategoryScores.get(key);
+  if (approvedCategoryScore === undefined) {
+    approvedCategoryScore = input.repository.sumApprovedAiBootScoreByCategory({
+      campId: input.event.campId,
+      memberId: input.event.memberId,
+      category: input.decision.category,
+      decidedAtFrom: period.startedAt,
+      decidedAtTo: input.event.createdAt,
+    });
+  }
+
+  const capped = applyV3CategoryPeriodCap({
+    category: input.decision.category,
+    requestedScoreDelta: input.decision.scoreDelta,
+    approvedCategoryScore,
+  });
+
+  if (capped.status === "approved") {
+    input.replayCategoryScores.set(key, approvedCategoryScore + capped.scoreDelta);
+  } else {
+    input.replayCategoryScores.set(key, approvedCategoryScore);
+  }
+
+  if (!capped.capped) {
+    return { decision: input.decision, reviewNote: null };
+  }
+
+  const reviewNote = capped.status === "no_score"
+    ? `v3_period_cap_reached: category=${input.decision.category}; period=${period.id}; approved=${approvedCategoryScore}; requested=${input.decision.scoreDelta}`
+    : `v3_period_cap_applied: category=${input.decision.category}; period=${period.id}; approved=${approvedCategoryScore}; requested=${input.decision.scoreDelta}; applied=${capped.scoreDelta}`;
+
+  return {
+    decision: {
+      ...input.decision,
+      status: capped.status,
+      scoreDelta: capped.scoreDelta,
+      notifyPolicy: capped.status === "no_score" ? "silent" : input.decision.notifyPolicy,
+      reason: capped.status === "no_score"
+        ? `${input.decision.reason}；本周期该类别得分已达上限。`
+        : input.decision.reason,
+      badges: capped.status === "no_score"
+        ? [...new Set([...input.decision.badges, "period_cap_reached"])]
+        : [...new Set([...input.decision.badges, "period_cap_applied"])],
+    },
+    reviewNote,
+  };
+}
+
+function findPeriodForEvent(repository: SqliteRepository, event: AiBootEventRecord) {
+  return repository.listPeriods(event.campId).find((period) =>
+    event.createdAt >= period.startedAt &&
+    (period.endedAt === null || event.createdAt < period.endedAt)
+  );
 }
 
 function evidenceFromStoredEvent(event: AiBootEventRecord): EvidenceBundle {
