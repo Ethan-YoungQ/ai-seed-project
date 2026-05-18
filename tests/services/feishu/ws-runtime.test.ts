@@ -92,7 +92,7 @@ describe("normalizeCardActionTriggerData", () => {
 });
 
 describe("LarkFeishuWsRuntime reaction events", () => {
-  test("routes normalized reaction event to onMessage with non-empty chatId and reaction messageType", async () => {
+  test("routes matching reaction event to onMessage with payload chatId and reaction messageType", async () => {
     const onMessage = vi.fn().mockResolvedValue(undefined);
     const runtime = new LarkFeishuWsRuntime(makeConfig(), onMessage);
     await runtime.start();
@@ -101,6 +101,7 @@ describe("LarkFeishuWsRuntime reaction events", () => {
       event: {
         message_id: "om-source",
         user_id: { open_id: "ou-actor" },
+        chat_id: "oc-group",
         reaction_type: { emoji_type: "THUMBSUP" },
         create_time: "1775210400000",
       },
@@ -119,10 +120,32 @@ describe("LarkFeishuWsRuntime reaction events", () => {
     }));
   });
 
-  test("does not call onMessage for reaction events when botChatId is missing", async () => {
+  test("does not call onMessage for reaction events from a different chat", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const onMessage = vi.fn().mockResolvedValue(undefined);
-    const runtime = new LarkFeishuWsRuntime(makeConfig({ botChatId: undefined }), onMessage);
+    const runtime = new LarkFeishuWsRuntime(makeConfig(), onMessage);
+    await runtime.start();
+
+    await larkMock.handlers["im.message.reaction.created_v1"]({
+      event: {
+        message_id: "om-source",
+        user_id: { open_id: "ou-actor" },
+        chat_id: "oc-other",
+        reaction_type: { emoji_type: "THUMBSUP" },
+        create_time: "1775210400000",
+      },
+    });
+
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("chat mismatch"));
+
+    warn.mockRestore();
+  });
+
+  test("does not call onMessage for reaction events without chat identity", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const onMessage = vi.fn().mockResolvedValue(undefined);
+    const runtime = new LarkFeishuWsRuntime(makeConfig(), onMessage);
     await runtime.start();
 
     await larkMock.handlers["im.message.reaction.created_v1"]({
@@ -135,7 +158,7 @@ describe("LarkFeishuWsRuntime reaction events", () => {
     });
 
     expect(onMessage).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("missing botChatId"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("missing chat identity"));
 
     warn.mockRestore();
   });

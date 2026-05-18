@@ -194,9 +194,13 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
 
         if (!reaction) return;
 
-        const chatId = this.config.botChatId?.trim();
-        if (!chatId) {
-          console.warn("[Reaction] skipped: missing botChatId for reaction synthetic message");
+        const configuredChatId = this.config.botChatId?.trim();
+        if (!reaction.chatId) {
+          console.warn("[Reaction] skipped: missing chat identity for reaction event");
+          return;
+        }
+        if (!configuredChatId || reaction.chatId !== configuredChatId) {
+          console.warn(`[Reaction] skipped: chat mismatch payload=${reaction.chatId}, configured=${configuredChatId ?? ""}`);
           return;
         }
 
@@ -207,7 +211,7 @@ export class LarkFeishuWsRuntime implements FeishuWsRuntime {
         await this.onMessage({
           messageId: `reaction:${reaction.messageId}:${reaction.actorOpenId}`,
           memberId: reaction.actorOpenId,
-          chatId,
+          chatId: reaction.chatId,
           chatType: "group",
           senderType: "user",
           messageType: "reaction",
