@@ -341,6 +341,14 @@ describe("GET /api/v2/board/ranking", () => {
         scoreDelta: -5,
       })
     );
+    repo.upsertMemberBadge({
+      memberId: "s2",
+      badgeId: "b1-mvp",
+      periodNumber: 2,
+      awardedAt: "2026-05-21T00:00:00.000Z",
+      source: "test",
+      reason: "P2 MVP",
+    });
     repo.close();
 
     const app = await createApp({ databaseUrl: dbPath });
@@ -373,6 +381,15 @@ describe("GET /api/v2/board/ranking", () => {
       legacyScore: 90,
       v3Score: 60,
       totalScore: 150,
+      badges: [
+        {
+          badgeId: "b1-mvp",
+          periodNumber: 2,
+          awardedAt: "2026-05-21T00:00:00.000Z",
+          source: "test",
+          reason: "P2 MVP",
+        },
+      ],
     });
     expect(rows[1]).toMatchObject({
       memberId: "s1",

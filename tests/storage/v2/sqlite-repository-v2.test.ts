@@ -193,6 +193,41 @@ describe("SqliteRepository v2 periods", () => {
     repo.close();
   });
 
+  test("upsertMemberBadge + listMemberBadges persists awarded badges", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+
+    expect(repo.upsertMemberBadge({
+      memberId: "user-alice",
+      badgeId: "b1-mvp",
+      periodNumber: 2,
+      awardedAt: "2026-05-21T00:00:00.000Z",
+      source: "codex-test",
+      reason: "P2 MVP",
+    })).toBe(true);
+    expect(repo.upsertMemberBadge({
+      memberId: "user-alice",
+      badgeId: "b1-mvp",
+      periodNumber: 2,
+      awardedAt: "2026-05-21T00:00:00.000Z",
+      source: "codex-test",
+      reason: "P2 MVP duplicate",
+    })).toBe(false);
+
+    const badges = repo.listMemberBadges("camp-demo");
+    expect(badges.get("user-alice")).toEqual([
+      {
+        memberId: "user-alice",
+        badgeId: "b1-mvp",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "codex-test",
+        reason: "P2 MVP",
+      },
+    ]);
+    repo.close();
+  });
+
   test("findActivePeriod returns undefined when all periods closed", () => {
     const repo = new SqliteRepository(":memory:");
     repo.seedDemo();

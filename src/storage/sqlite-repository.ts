@@ -36,6 +36,7 @@ import {
   resolveAiBootV3CategoryDimension,
   type AiBootScoreDimensions,
 } from "../domain/v3/category-dimensions.js";
+import { applyV3CategoryPeriodCap } from "../domain/v3/scoring-caps.js";
 
 // ---------------------------------------------------------------------------
 // Inlined from domain/ranking.ts (deleted as part of v1 legacy cleanup)
@@ -563,6 +564,18 @@ CREATE TABLE IF NOT EXISTS v2_level_announcement_ordinals (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_v2_level_announcement_ordinals_level_member
   ON v2_level_announcement_ordinals (level, member_id);
 
+CREATE TABLE IF NOT EXISTS v2_member_badges (
+  member_id TEXT NOT NULL,
+  badge_id TEXT NOT NULL,
+  period_number INTEGER NOT NULL,
+  awarded_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  PRIMARY KEY (member_id, badge_id, period_number)
+);
+CREATE INDEX IF NOT EXISTS idx_v2_member_badges_member
+  ON v2_member_badges (member_id, period_number DESC);
+
 CREATE TABLE IF NOT EXISTS v2_llm_scoring_tasks (
   id TEXT PRIMARY KEY,
   event_id TEXT NOT NULL,
@@ -726,6 +739,15 @@ export interface PeriodRecord {
   closedReason: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface MemberBadgeRecord {
+  memberId: string;
+  badgeId: string;
+  periodNumber: number;
+  awardedAt: string;
+  source: string;
+  reason: string;
 }
 
 export interface WindowRecord {
@@ -1681,6 +1703,7 @@ export class SqliteRepository {
     category?: AiBootScoreCategory;
     reason?: string;
   }): boolean {
+    const reviewPatch = this.resolveAiBootReviewDecisionPatch(input);
     const result = this.db
       .prepare(
         `UPDATE ai_boot_score_events
@@ -1689,21 +1712,125 @@ export class SqliteRepository {
              review_note = @reviewNote,
              score_delta = COALESCE(@scoreDelta, score_delta),
              category = COALESCE(@category, category),
-             reason = COALESCE(@reason, reason)
+             reason = COALESCE(@reason, reason),
+             notify_policy = COALESCE(@notifyPolicy, notify_policy)
          WHERE id = @id
            AND status = 'review_required'
            AND confidence = 'low'`
       )
       .run({
         id: input.id,
-        status: input.status,
+        status: reviewPatch.status,
         reviewedByOpId: input.reviewedByOpId,
-        reviewNote: input.reviewNote,
-        scoreDelta: input.scoreDelta ?? null,
-        category: input.category ?? null,
+        reviewNote: reviewPatch.reviewNote,
+        scoreDelta: reviewPatch.scoreDelta ?? null,
+        category: reviewPatch.category ?? null,
         reason: input.reason ?? null,
+        notifyPolicy: reviewPatch.notifyPolicy ?? null,
       });
     return result.changes > 0;
+  }
+
+  private resolveAiBootReviewDecisionPatch(input: {
+    id: string;
+    status: AiBootDecisionStatus;
+    reviewNote: string;
+    scoreDelta?: number;
+    category?: AiBootScoreCategory;
+  }): {
+    status: AiBootDecisionStatus;
+    reviewNote: string;
+    scoreDelta?: number;
+    category?: AiBootScoreCategory;
+    notifyPolicy?: string;
+  } {
+    if (input.status !== "approved") {
+      return {
+        status: input.status,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta,
+        category: input.category,
+      };
+    }
+
+    const current = this.findAiBootScoreEventById(input.id);
+    if (!current) {
+      return {
+        status: input.status,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta,
+        category: input.category,
+      };
+    }
+
+    const category = input.category ?? current.category;
+    const requestedScoreDelta = input.scoreDelta ?? current.scoreDelta;
+    if (category === "operator_adjustment" || requestedScoreDelta <= 0) {
+      return {
+        status: input.status,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta,
+        category: input.category,
+      };
+    }
+
+    const period = this.findPeriodForTimestamp(current.campId, current.decidedAt);
+    if (!period) {
+      return {
+        status: input.status,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta,
+        category: input.category,
+      };
+    }
+
+    const approvedCategoryScore = this.sumApprovedAiBootScoreByCategory({
+      campId: current.campId,
+      memberId: current.memberId,
+      category,
+      decidedAtFrom: period.startedAt,
+      decidedAtTo: period.endedAt ?? "9999-12-31T23:59:59.999Z",
+    });
+    const capped = applyV3CategoryPeriodCap({
+      category,
+      requestedScoreDelta,
+      approvedCategoryScore,
+    });
+    if (!capped.capped) {
+      return {
+        status: input.status,
+        reviewNote: input.reviewNote,
+        scoreDelta: input.scoreDelta,
+        category: input.category,
+      };
+    }
+
+    const capNote = [
+      input.reviewNote,
+      `v3_period_cap_applied_on_review: category=${category}; period=${period.id}; approved_before=${approvedCategoryScore}; requested=${requestedScoreDelta}; final_status=${capped.status}; final_score=${capped.scoreDelta}`,
+    ].filter(Boolean).join("; ");
+
+    return {
+      status: capped.status,
+      reviewNote: capNote,
+      scoreDelta: capped.scoreDelta,
+      category,
+      notifyPolicy: capped.status === "no_score" ? "silent" : undefined,
+    };
+  }
+
+  private findPeriodForTimestamp(campId: string, timestamp: string): PeriodRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM v2_periods
+         WHERE camp_id = ?
+           AND started_at <= ?
+           AND (ended_at IS NULL OR ended_at > ?)
+         ORDER BY started_at DESC
+         LIMIT 1`
+      )
+      .get(campId, timestamp, timestamp) as Record<string, unknown> | undefined;
+    return row ? this.mapPeriodRow(row) : undefined;
   }
 
   findAiBootScoreEventByEventId(eventId: string): AiBootScoreEventRecord | undefined {
@@ -4726,6 +4853,45 @@ export class SqliteRepository {
         cumulativeAq: Number(s.cumulative_aq),
       })),
     };
+  }
+
+  upsertMemberBadge(input: MemberBadgeRecord): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO v2_member_badges
+          (member_id, badge_id, period_number, awarded_at, source, reason)
+         VALUES (@memberId, @badgeId, @periodNumber, @awardedAt, @source, @reason)`
+      )
+      .run(input);
+    return result.changes > 0;
+  }
+
+  listMemberBadges(campId: string): Map<string, MemberBadgeRecord[]> {
+    const rows = this.db
+      .prepare(
+        `SELECT b.member_id, b.badge_id, b.period_number, b.awarded_at, b.source, b.reason
+         FROM v2_member_badges b
+         INNER JOIN members m ON m.id = b.member_id
+         WHERE m.camp_id = ?
+         ORDER BY b.period_number DESC, b.badge_id ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    const badgesByMember = new Map<string, MemberBadgeRecord[]>();
+    for (const row of rows) {
+      const memberId = String(row.member_id);
+      const badges = badgesByMember.get(memberId) ?? [];
+      badges.push({
+        memberId,
+        badgeId: String(row.badge_id),
+        periodNumber: Number(row.period_number),
+        awardedAt: String(row.awarded_at),
+        source: String(row.source),
+        reason: String(row.reason),
+      });
+      badgesByMember.set(memberId, badges);
+    }
+    return badgesByMember;
   }
 
   // ---------------------------------------------------------------------------

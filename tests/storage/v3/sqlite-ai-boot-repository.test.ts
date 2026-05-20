@@ -80,6 +80,21 @@ function imageUnderstanding(
   };
 }
 
+function insertPeriod(r: SqliteRepository): void {
+  r.insertPeriod({
+    id: "period-2",
+    campId: "default",
+    number: 2,
+    isIceBreaker: false,
+    startedAt: "2026-04-22T00:00:00.000Z",
+    endedAt: null,
+    openedByOpId: null,
+    closedReason: null,
+    createdAt: "2026-04-22T00:00:00.000Z",
+    updatedAt: "2026-04-22T00:00:00.000Z",
+  });
+}
+
 describe("SqliteRepository ai boot v3", () => {
   it("upserts and fetches image understanding records by content hash", () => {
     const r = repo();
@@ -401,6 +416,86 @@ describe("SqliteRepository ai boot v3", () => {
       reviewedByOpId: null,
       reviewNote: null,
     });
+    r.close();
+  });
+
+  it("caps v3 review approval against existing category period score", () => {
+    const r = repo();
+    insertPeriod(r);
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-existing",
+      eventId: "evt-existing",
+      category: "ai_artifact",
+      scoreDelta: 6,
+      status: "approved",
+      decidedAt: "2026-05-16T00:00:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review",
+      eventId: "evt-review",
+      category: "ai_artifact",
+      scoreDelta: 4,
+      status: "review_required",
+      confidence: "low",
+      decidedAt: "2026-05-16T00:10:00.000Z",
+    }));
+
+    expect(r.updateAiBootScoreDecision({
+      id: "score-review",
+      status: "approved",
+      reviewedByOpId: "op-1",
+      reviewNote: "approved_by_review_card",
+      scoreDelta: 4,
+      category: "ai_artifact",
+      reason: "operator approved image artifact",
+    })).toBe(true);
+
+    expect(r.getAiBootScoreEvent("score-review")).toMatchObject({
+      status: "approved",
+      scoreDelta: 2,
+      reviewNote: expect.stringContaining("v3_period_cap_applied_on_review"),
+    });
+    expect(r.sumApprovedAiBootScore("default", "m-1")).toBe(8);
+    r.close();
+  });
+
+  it("turns v3 review approval into no_score when category period cap is exhausted", () => {
+    const r = repo();
+    insertPeriod(r);
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-existing",
+      eventId: "evt-existing",
+      category: "ai_artifact",
+      scoreDelta: 8,
+      status: "approved",
+      decidedAt: "2026-05-16T00:00:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-review",
+      eventId: "evt-review",
+      category: "ai_artifact",
+      scoreDelta: 3,
+      status: "review_required",
+      confidence: "low",
+      decidedAt: "2026-05-16T00:10:00.000Z",
+    }));
+
+    expect(r.updateAiBootScoreDecision({
+      id: "score-review",
+      status: "approved",
+      reviewedByOpId: "op-1",
+      reviewNote: "approved_by_review_card",
+      scoreDelta: 3,
+      category: "ai_artifact",
+    })).toBe(true);
+
+    expect(r.getAiBootScoreEvent("score-review")).toMatchObject({
+      status: "no_score",
+      scoreDelta: 0,
+      notifyPolicy: "silent",
+      reviewNote: expect.stringContaining("v3_period_cap_applied_on_review"),
+    });
+    expect(r.sumApprovedAiBootScore("default", "m-1")).toBe(8);
     r.close();
   });
 

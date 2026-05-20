@@ -124,6 +124,7 @@ export function registerV2BoardRoutes(
     }
 
     try {
+      const badgesByMember = deps.repository.listMemberBadges(campId);
       let currentRank = 1;
       let lastScore: number | null = null;
       const rows = deps.repository
@@ -131,11 +132,15 @@ export function registerV2BoardRoutes(
         .map((row) => {
           const scoreFields = resolveAdditiveScoreFields(deps, campId, row.memberId);
           if (!scoreFields) {
-            return row;
+            return {
+              ...row,
+              badges: badgesByMember.get(row.memberId) ?? [],
+            };
           }
 
           return {
             ...row,
+            badges: badgesByMember.get(row.memberId) ?? [],
             cumulativeAq: scoreFields.totalScore,
             ...scoreFields,
           };
@@ -188,6 +193,9 @@ export function registerV2BoardRoutes(
       const scoreFields = member
         ? resolveAdditiveScoreFields(deps, member.campId, raw.memberId)
         : undefined;
+      const badges = member
+        ? deps.repository.listMemberBadges(member.campId).get(raw.memberId) ?? []
+        : [];
 
       const detail = {
         memberId: raw.memberId,
@@ -210,6 +218,7 @@ export function registerV2BoardRoutes(
           ...p,
           reason: "",
         })),
+        badges,
         ...(scoreFields ?? {}),
       };
 
