@@ -1128,6 +1128,51 @@ describe("createAiBootOrchestrator", () => {
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
   });
 
+  it("auto-pushes only the new review candidate instead of replaying the whole pending queue", async () => {
+    const llmClient = makeLlmClient({
+      status: "review_required",
+      category: "ai_artifact",
+      scoreDelta: 4,
+      confidence: "low",
+      notifyPolicy: "silent",
+      reason: "新图片需要运营确认。",
+      evidence: "新图片作品。",
+      badges: ["needs_review"],
+    });
+    const deps = makeDeps({
+      llmClient,
+      reviewQueueChatId: "oc-admin-test",
+    } as Partial<AiBootOrchestratorDeps>);
+    deps.scoreEvents.push({
+      id: "old-review",
+      eventId: "old-event",
+      campId: "default",
+      memberId: "member-1",
+      category: "operator_adjustment",
+      scoreDelta: 0,
+      confidence: "low",
+      status: "review_required",
+      notifyPolicy: "silent",
+      reason: "旧待审项",
+      evidence: "旧待审证据，不应被自动卡片重复带出。",
+      badgesJson: "[]",
+      modelProvider: "deterministic",
+      modelName: "guards",
+      promptVersion: "",
+      reviewedByOpId: null,
+      reviewNote: null,
+      decidedAt: "2026-05-16T08:00:00.000Z",
+    });
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message());
+
+    const cardJson = (deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson;
+    const cardText = JSON.stringify(cardJson);
+    expect(cardText).toContain("新图片作品");
+    expect(cardText).not.toContain("旧待审证据");
+  });
+
   it("renders invalid LLM review cards in Chinese", async () => {
     const llmClient = makeLlmClient({
       status: "review_required",

@@ -65,10 +65,6 @@ export function runDeterministicGuards(
     return { kind: "ignore", reason: "duplicate_approved_content" };
   }
 
-  if (context.duplicateContent) {
-    return { kind: "review_required", reason: "duplicate_content" };
-  }
-
   if (isEmptyEvidence(evidence)) {
     return { kind: "no_score", reason: "empty_evidence" };
   }
@@ -91,6 +87,10 @@ export function runDeterministicGuards(
 
   if (isPureLinkWithoutReason(evidence)) {
     return { kind: "no_score", reason: "pure_link_without_reason" };
+  }
+
+  if (context.duplicateContent) {
+    return { kind: "review_required", reason: "duplicate_content" };
   }
 
   return { kind: "continue" };

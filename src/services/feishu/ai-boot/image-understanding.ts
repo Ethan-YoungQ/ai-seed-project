@@ -270,7 +270,11 @@ function imageResourceType(message: NormalizedFeishuMessage): "image" | "file" {
 }
 
 function parseUnderstandingResponse(response: string): { caption: string; scoreHint: string } {
-  const parsed = JSON.parse(response.trim()) as Record<string, unknown>;
+  const json = extractJsonObject(response);
+  if (!json) {
+    throw new Error("image understanding response missing JSON object");
+  }
+  const parsed = JSON.parse(json) as Record<string, unknown>;
   const caption = typeof parsed.caption === "string" ? parsed.caption.trim() : "";
   const scoreHint = typeof parsed.scoreHint === "string" ? parsed.scoreHint.trim() : "";
   if (!caption) {
@@ -280,6 +284,27 @@ function parseUnderstandingResponse(response: string): { caption: string; scoreH
     caption,
     scoreHint,
   };
+}
+
+function extractJsonObject(response: string): string | null {
+  const trimmed = response.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  const candidate = fenced?.[1]?.trim() ?? trimmed;
+  if (candidate.startsWith("{") && candidate.endsWith("}")) {
+    return candidate;
+  }
+
+  const start = candidate.indexOf("{");
+  const end = candidate.lastIndexOf("}");
+  if (start >= 0 && end > start) {
+    return candidate.slice(start, end + 1);
+  }
+
+  return null;
 }
 
 function buildRecord(input: {

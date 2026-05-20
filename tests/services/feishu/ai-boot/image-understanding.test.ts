@@ -184,6 +184,48 @@ describe("createAiBootImageUnderstandingService", () => {
     expect(repo.rows.at(-1)).toMatchObject(result);
   });
 
+  it("accepts fenced JSON from the vision model instead of failing image understanding", async () => {
+    const repo = repoWith();
+    const feishuClient = {
+      getMessageFile: vi.fn().mockResolvedValue({
+        fileKey: "img-key-1",
+        mimeType: "image/png",
+        bytes: Buffer.from("fake-image"),
+      }),
+    };
+    const client: AiBootLlmClient = {
+      provider: "test-provider",
+      model: "text-model",
+      visionModel: "vision-model",
+      chat: vi.fn().mockResolvedValue([
+        "```json",
+        JSON.stringify({
+          caption: "图片展示了 AI 生成的指南解读幻灯片。",
+          scoreHint: "可作为 ai_artifact 评分证据。",
+        }),
+        "```",
+      ].join("\n")),
+    };
+    const service = createAiBootImageUnderstandingService({
+      repo,
+      feishuClient,
+      llmClient: client,
+      now: () => "2026-05-16T09:00:00.000Z",
+    });
+
+    const result = await service.understandImage({
+      message: imageMessage(),
+      evidence: imageEvidence(),
+    });
+
+    expect(result).toMatchObject({
+      status: "succeeded",
+      caption: "图片展示了 AI 生成的指南解读幻灯片。",
+      scoreHint: "可作为 ai_artifact 评分证据。",
+      errorReason: "",
+    });
+  });
+
   it("downloads image-like file attachments with Feishu file resource type", async () => {
     const repo = repoWith();
     const feishuClient = {

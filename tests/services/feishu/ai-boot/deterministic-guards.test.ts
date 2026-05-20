@@ -193,6 +193,19 @@ describe("runDeterministicGuards", () => {
     });
   });
 
+  it("does not send duplicated low-value reactions into operator review", () => {
+    expect(runDeterministicGuards(
+      evidence({ sanitizedText: "[表情回应: THUMBSUP]" }),
+      context({
+        dailyParticipationAlreadyScored: true,
+        duplicateContent: true,
+      }),
+    )).toEqual({
+      kind: "ignore",
+      reason: "low_value_chat_daily_cap_used",
+    });
+  });
+
   it("returns no-score when the category cap is reached", () => {
     expect(runDeterministicGuards(evidence(), context({ categoryCapRemaining: 0 }))).toEqual({
       kind: "no_score",

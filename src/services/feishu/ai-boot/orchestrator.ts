@@ -375,12 +375,7 @@ async function pushReviewQueueCard(input: {
   }
 
   const totalEvents = deps.repo.countAiBootReviewQueue({ campId: deps.campId });
-  const rows = deps.repo.listAiBootReviewQueue({
-    campId: deps.campId,
-    limit: 10,
-    offset: 0,
-  });
-  const events = (rows.length > 0 ? rows : [scoreEvent]).map((row) => {
+  const events = [scoreEvent].map((row) => {
     const rowMember = deps.repo.getMember(row.memberId);
     return {
       eventId: row.id,
