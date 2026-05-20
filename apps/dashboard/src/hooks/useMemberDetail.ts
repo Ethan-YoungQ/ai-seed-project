@@ -31,14 +31,14 @@ export function useMemberDetail(memberId: string): UseMemberDetailState {
     setLoading(true);
     setError(null);
 
-    // Fetch detail + ranking in parallel so we can compute badges
+    // Fetch detail + ranking in parallel so old APIs can still fall back to computed badges.
     Promise.all([fetchMemberDetail(memberId), fetchRanking()])
       .then(([detailRes, rankingRes]) => {
         if (!cancelled) {
-          // Compute badges for this member from ranking data
           const periodCount = rankingRes.periodCount ?? 2;
           const badgeMap = computeBadges(rankingRes.rows, periodCount);
-          const memberBadges = badgeMap.get(memberId) ?? [];
+          const rankingRow = rankingRes.rows.find((row) => row.memberId === memberId);
+          const memberBadges = detailRes.detail.badges ?? rankingRow?.badges ?? badgeMap.get(memberId) ?? [];
           setData({
             ...detailRes,
             detail: { ...detailRes.detail, badges: memberBadges },

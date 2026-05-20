@@ -143,8 +143,8 @@ describe("PromotionHero component", () => {
 
   test("renders both level names", () => {
     renderHero(2, 3);
-    expect(screen.getByText(/AI 行动派/)).toBeTruthy();
-    expect(screen.getByText(/AI 探索者/)).toBeTruthy();
+    expect(screen.getByText(/AI 研究员/)).toBeTruthy();
+    expect(screen.getByText(/AI 操盘手/)).toBeTruthy();
   });
 });
 

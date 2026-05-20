@@ -34,7 +34,7 @@ describe("MemberHero component", () => {
 
   test("renders level pill with correct level name", () => {
     renderHero(3);
-    expect(screen.getByText(/AI 探索者/)).toBeTruthy();
+    expect(screen.getByText(/AI 操盘手/)).toBeTruthy();
   });
 
   test("renders cumulative AQ score", () => {

@@ -27,6 +27,7 @@ import {
   evaluateContinuousPromotion,
   type ContinuousLevelValue,
 } from "./domain/v2/continuous-promotion.js";
+import { settleBadgesForWindow } from "./domain/v2/badge-settlement.js";
 import { resolveAiBootV3CategoryDimension } from "./domain/v3/category-dimensions.js";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +37,11 @@ import { resolveAiBootV3CategoryDimension } from "./domain/v3/category-dimension
 interface ContinuousPromotionRuntime {
   trigger(memberId: string): void;
   backfillEligible(): void;
+}
+
+export interface BadgeSettlementRuntime {
+  settleWindow(windowId: string): { insertedBadges: number };
+  backfillSettledWindows(): { settledWindows: number; insertedBadges: number };
 }
 
 function buildIngestorDeps(
@@ -397,7 +403,11 @@ function resolveWindowCode(periodNumber: number): string {
 // Window settler — real domain engine adapter
 // ---------------------------------------------------------------------------
 
-function buildRealWindowSettler(repo: SqliteRepository, campId: string) {
+function buildRealWindowSettler(
+  repo: SqliteRepository,
+  campId: string,
+  badgeSettlement?: BadgeSettlementRuntime,
+) {
   return {
     async settle(windowId: string) {
       const deps: SettlerDependencies = {
@@ -504,7 +514,67 @@ function buildRealWindowSettler(repo: SqliteRepository, campId: string) {
       };
 
       const result = await settleWindow(windowId, deps, {});
+      badgeSettlement?.settleWindow(windowId);
       return { windowId, settledAt: new Date().toISOString(), promotionCount: result.settledMemberCount };
+    },
+  };
+}
+
+export function buildBadgeSettlementRuntime(
+  repo: SqliteRepository,
+  campId: string,
+  options: { now?: () => string } = {},
+): BadgeSettlementRuntime {
+  const now = options.now ?? (() => new Date().toISOString());
+
+  function existingBadges() {
+    return [...repo.listMemberBadges(campId).values()].flat().map((badge) => ({
+      memberId: badge.memberId,
+      badgeId: badge.badgeId,
+      periodNumber: badge.periodNumber,
+    }));
+  }
+
+  function settleOne(windowId: string): { insertedBadges: number } {
+    const windows = repo.listBadgeSettlementWindows(campId);
+    const index = windows.findIndex((window) => window.windowId === windowId);
+    if (index < 0) {
+      return { insertedBadges: 0 };
+    }
+
+    const window = windows[index];
+    const previousWindow = index > 0 ? windows[index - 1] : undefined;
+    const awards = settleBadgesForWindow({
+      windowId: window.windowId,
+      periodNumber: window.periodNumber,
+      isFinal: window.isFinal,
+      snapshots: repo.listBadgeSettlementSnapshots(window.windowId),
+      previousSnapshots: previousWindow
+        ? repo.listBadgeSettlementSnapshots(previousWindow.windowId)
+        : [],
+      existingBadges: existingBadges(),
+      awardedAt: now(),
+      source: "server_badge_settlement",
+    });
+
+    return { insertedBadges: repo.upsertMemberBadges(awards) };
+  }
+
+  return {
+    settleWindow(windowId: string) {
+      return settleOne(windowId);
+    },
+
+    backfillSettledWindows() {
+      let insertedBadges = 0;
+      const windows = repo.listBadgeSettlementWindows(campId);
+      for (const window of windows) {
+        insertedBadges += settleOne(window.windowId).insertedBadges;
+      }
+      return {
+        settledWindows: windows.length,
+        insertedBadges,
+      };
     },
   };
 }
@@ -889,6 +959,7 @@ export interface V2ProductionDeps {
   llmWorker: LlmScoringWorker | null;
   adminPanelLifecycle: AdminPanelLifecycleDeps;
   continuousPromotion: ContinuousPromotionRuntime;
+  badgeSettlement: BadgeSettlementRuntime;
 }
 
 export function wireV2Production(
@@ -897,6 +968,7 @@ export function wireV2Production(
 ): V2ProductionDeps {
   const campId = repo.getDefaultCampId() ?? "default";
   const continuousPromotion = buildContinuousPromotionRuntime(repo, campId, options);
+  const badgeSettlement = buildBadgeSettlementRuntime(repo, campId);
 
   const ingestorDeps = buildIngestorDeps(repo, campId, continuousPromotion);
   const ingestor = new EventIngestor(ingestorDeps);
@@ -904,7 +976,7 @@ export function wireV2Production(
   const aggregatorDeps = buildAggregatorDeps(repo, continuousPromotion);
   const aggregator = new ScoringAggregator(aggregatorDeps);
 
-  const windowSettler = buildRealWindowSettler(repo, campId);
+  const windowSettler = buildRealWindowSettler(repo, campId, badgeSettlement);
   const periodLifecycle = buildPeriodLifecycle(
     repo,
     campId,
@@ -914,6 +986,7 @@ export function wireV2Production(
   );
   const llmWorker = buildLlmWorker(repo, aggregator, continuousPromotion);
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
+  badgeSettlement.backfillSettledWindows();
   if (process.env.V2_CONTINUOUS_PROMOTION_BACKFILL === "true") {
     continuousPromotion.backfillEligible();
   }
@@ -926,5 +999,6 @@ export function wireV2Production(
     llmWorker,
     adminPanelLifecycle: adminPanelLifecycleInstance,
     continuousPromotion,
+    badgeSettlement,
   };
 }

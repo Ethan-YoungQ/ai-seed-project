@@ -228,6 +228,98 @@ describe("SqliteRepository v2 periods", () => {
     repo.close();
   });
 
+  test("badge settlement helpers list settled windows, snapshots, and batch-upsert idempotently", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const p2 = {
+      id: `period-${campId}-2`,
+      campId,
+      number: 2,
+      isIceBreaker: false,
+      startedAt: "2026-04-11T00:00:00.000Z",
+      openedByOpId: null,
+      createdAt: "2026-04-11T00:00:00.000Z",
+      updatedAt: "2026-04-11T00:00:00.000Z"
+    };
+    repo.insertPeriod(p2);
+    repo.insertWindowShell({
+      code: "W1",
+      campId,
+      isFinal: false,
+      createdAt: "2026-04-11T00:00:00.000Z"
+    });
+    const w1 = repo.findWindowByCode(campId, "W1")!;
+    repo.attachLastPeriod(w1.id, p2.id);
+    repo.markWindowSettled(w1.id, "2026-04-18T00:00:00.000Z");
+    repo.insertWindowSnapshot({
+      id: randomUUID(),
+      windowId: w1.id,
+      memberId: "user-alice",
+      windowAq: 35,
+      cumulativeAq: 50,
+      kScore: 10,
+      hScore: 8,
+      cScore: 7,
+      sScore: 5,
+      gScore: 5,
+      growthBonus: 0,
+      consecMissedOnEntry: 0,
+      snapshotAt: "2026-04-18T00:00:00.000Z"
+    });
+
+    expect(repo.listBadgeSettlementWindows(campId)).toEqual([
+      {
+        windowId: w1.id,
+        code: "W1",
+        periodNumber: 2,
+        isFinal: false,
+        settledAt: "2026-04-18T00:00:00.000Z",
+      },
+    ]);
+    expect(repo.listBadgeSettlementSnapshots(w1.id)).toEqual([
+      {
+        memberId: "user-alice",
+        memberName: "Alice",
+        windowAq: 35,
+        cumulativeAq: 50,
+        dimensions: { K: 10, H: 8, C: 7, S: 5, G: 5 },
+      },
+    ]);
+
+    const inserted = repo.upsertMemberBadges([
+      {
+        memberId: "user-alice",
+        badgeId: "b1-mvp",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "codex-test",
+        reason: "P2 MVP",
+      },
+      {
+        memberId: "user-alice",
+        badgeId: "b1-mvp",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "codex-test",
+        reason: "P2 MVP duplicate",
+      },
+    ]);
+    expect(inserted).toBe(1);
+    expect(repo.upsertMemberBadges([
+      {
+        memberId: "user-alice",
+        badgeId: "b1-mvp",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "codex-test",
+        reason: "P2 MVP duplicate",
+      },
+    ])).toBe(0);
+
+    repo.close();
+  });
+
   test("findActivePeriod returns undefined when all periods closed", () => {
     const repo = new SqliteRepository(":memory:");
     repo.seedDemo();

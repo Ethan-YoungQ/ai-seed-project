@@ -22,7 +22,7 @@ describe("getLevelConfig utility (used by LevelPill and TierBanner)", () => {
     const config = getLevelConfig(5);
     expect(config.level).toBe(5);
     expect(config.name).toBe("AI 奇点玩家");
-    expect(config.emoji).toBe("💎");
+    expect(config.emoji).toBe("⚡");
     expect(config.color).toBe("#f59e0b");
   });
 
@@ -88,7 +88,7 @@ describe("LevelPill component", () => {
 
   test("renders level name and emoji for level 5", () => {
     const { container } = render(<LevelPill level={5} />);
-    expect(container.textContent).toContain("💎");
+    expect(container.textContent).toContain("⚡");
     expect(container.textContent).toContain("AI 奇点玩家");
   });
 });

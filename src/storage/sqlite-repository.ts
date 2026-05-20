@@ -750,6 +750,22 @@ export interface MemberBadgeRecord {
   reason: string;
 }
 
+export interface BadgeSettlementWindowRecord {
+  windowId: string;
+  code: string;
+  periodNumber: number;
+  isFinal: boolean;
+  settledAt: string;
+}
+
+export interface BadgeSettlementSnapshotRecord {
+  memberId: string;
+  memberName: string;
+  windowAq: number;
+  cumulativeAq: number;
+  dimensions: { K: number; H: number; C: number; S: number; G: number };
+}
+
 export interface WindowRecord {
   id: string;
   campId: string;
@@ -4866,6 +4882,22 @@ export class SqliteRepository {
     return result.changes > 0;
   }
 
+  upsertMemberBadges(input: MemberBadgeRecord[]): number {
+    const stmt = this.db.prepare(
+      `INSERT OR IGNORE INTO v2_member_badges
+        (member_id, badge_id, period_number, awarded_at, source, reason)
+       VALUES (@memberId, @badgeId, @periodNumber, @awardedAt, @source, @reason)`
+    );
+    const tx = this.db.transaction((rows: MemberBadgeRecord[]) => {
+      let inserted = 0;
+      for (const row of rows) {
+        inserted += stmt.run(row).changes;
+      }
+      return inserted;
+    });
+    return tx(input);
+  }
+
   listMemberBadges(campId: string): Map<string, MemberBadgeRecord[]> {
     const rows = this.db
       .prepare(
@@ -4892,6 +4924,68 @@ export class SqliteRepository {
       badgesByMember.set(memberId, badges);
     }
     return badgesByMember;
+  }
+
+  listBadgeSettlementWindows(campId: string): BadgeSettlementWindowRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT w.id AS window_id,
+                w.code,
+                w.is_final,
+                w.settled_at,
+                p.number AS period_number
+         FROM v2_windows w
+         INNER JOIN v2_periods p ON p.id = w.last_period_id
+         WHERE w.camp_id = ?
+           AND w.settlement_state = 'settled'
+           AND w.settled_at IS NOT NULL
+         ORDER BY p.number ASC, w.code ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      windowId: String(row.window_id),
+      code: String(row.code),
+      periodNumber: Number(row.period_number),
+      isFinal: Number(row.is_final) === 1,
+      settledAt: String(row.settled_at),
+    }));
+  }
+
+  listBadgeSettlementSnapshots(windowId: string): BadgeSettlementSnapshotRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT s.member_id,
+                CASE WHEN m.display_name != '' THEN m.display_name ELSE m.name END AS member_name,
+                s.window_aq,
+                s.cumulative_aq,
+                s.k_score,
+                s.h_score,
+                s.c_score,
+                s.s_score,
+                s.g_score
+         FROM v2_window_snapshots s
+         INNER JOIN members m ON m.id = s.member_id
+         WHERE s.window_id = ?
+           AND ${ELIGIBLE_STUDENT_WHERE_CLAUSE}
+           AND COALESCE(m.hidden_from_board, 0) = 0
+         ORDER BY s.member_id ASC`
+      )
+      .all(windowId) as Array<Record<string, unknown>>;
+
+    return rows.map((row) => ({
+      memberId: String(row.member_id),
+      memberName: String(row.member_name),
+      windowAq: Number(row.window_aq),
+      cumulativeAq: Number(row.cumulative_aq),
+      dimensions: {
+        K: Number(row.k_score),
+        H: Number(row.h_score),
+        C: Number(row.c_score),
+        S: Number(row.s_score),
+        G: Number(row.g_score),
+      },
+    }));
   }
 
   // ---------------------------------------------------------------------------

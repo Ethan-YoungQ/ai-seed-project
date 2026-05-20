@@ -5,12 +5,12 @@ import type { RankingResponse, RankingRow } from "../types/api";
 import { computeBadges } from "../lib/badge-engine";
 
 /** Attach computed badges to ranking rows (pure, no mutation) */
-function attachBadges(rows: RankingRow[], periodCount: number): RankingRow[] {
+export function attachBadges(rows: RankingRow[], periodCount: number): RankingRow[] {
   if (rows.length === 0 || periodCount < 2) return rows;
   const badgeMap = computeBadges(rows, periodCount);
   return rows.map((row) => ({
     ...row,
-    badges: badgeMap.get(row.memberId) ?? [],
+    badges: row.badges ?? badgeMap.get(row.memberId) ?? [],
   }));
 }
 
