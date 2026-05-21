@@ -33,9 +33,22 @@ describe("attachBadges", () => {
         dimensions: { K: 1, H: 0, C: 0, S: 0, G: 0 },
         badges: [{ badgeId: "b1-mvp", periodNumber: 2 }],
       }),
-    ], 2);
+    ]);
 
     expect(rows[0].badges).toEqual([]);
     expect(rows[1].badges).toEqual([{ badgeId: "b1-mvp", periodNumber: 2 }]);
+  });
+
+  test("does not synthesize badges from current period count when server badges are absent", () => {
+    const rows = attachBadges([
+      row({
+        memberId: "m1",
+        cumulativeAq: 100,
+        latestWindowAq: 100,
+        dimensions: { K: 100, H: 100, C: 100, S: 100, G: 100 },
+      }),
+    ]);
+
+    expect(rows[0].badges).toEqual([]);
   });
 });

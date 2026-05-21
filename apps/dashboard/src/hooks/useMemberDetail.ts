@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { fetchMemberDetail, fetchRanking } from "../lib/api";
 import { getMockMemberDetail } from "../lib/mock-data";
 import type { MemberDetailResponse } from "../types/api";
-import { computeBadges } from "../lib/badge-engine";
 
 export interface UseMemberDetailState {
   data: MemberDetailResponse | null;
@@ -31,14 +30,12 @@ export function useMemberDetail(memberId: string): UseMemberDetailState {
     setLoading(true);
     setError(null);
 
-    // Fetch detail + ranking in parallel so old APIs can still fall back to computed badges.
+    // Fetch detail + ranking in parallel so ranking rows can provide persisted badges when detail is sparse.
     Promise.all([fetchMemberDetail(memberId), fetchRanking()])
       .then(([detailRes, rankingRes]) => {
         if (!cancelled) {
-          const periodCount = rankingRes.periodCount ?? 2;
-          const badgeMap = computeBadges(rankingRes.rows, periodCount);
           const rankingRow = rankingRes.rows.find((row) => row.memberId === memberId);
-          const memberBadges = detailRes.detail.badges ?? rankingRow?.badges ?? badgeMap.get(memberId) ?? [];
+          const memberBadges = detailRes.detail.badges ?? rankingRow?.badges ?? [];
           setData({
             ...detailRes,
             detail: { ...detailRes.detail, badges: memberBadges },

@@ -2,15 +2,12 @@ import { useState, useEffect } from "react";
 import { fetchRanking } from "../lib/api";
 import { MOCK_RANKING } from "../lib/mock-data";
 import type { RankingResponse, RankingRow } from "../types/api";
-import { computeBadges } from "../lib/badge-engine";
 
-/** Attach computed badges to ranking rows (pure, no mutation) */
-export function attachBadges(rows: RankingRow[], periodCount: number): RankingRow[] {
-  if (rows.length === 0 || periodCount < 2) return rows;
-  const badgeMap = computeBadges(rows, periodCount);
+/** Normalize server-persisted badges on ranking rows (pure, no mutation). */
+export function attachBadges(rows: RankingRow[]): RankingRow[] {
   return rows.map((row) => ({
     ...row,
-    badges: row.badges ?? badgeMap.get(row.memberId) ?? [],
+    badges: row.badges ?? [],
   }));
 }
 
@@ -40,9 +37,7 @@ export function useRanking(campId?: string): UseRankingState {
     fetchRanking(campId)
       .then((res) => {
         if (!cancelled) {
-          // Compute badges frontend-side and attach to rows
-          const periodCount = res.periodCount ?? 2;
-          const rowsWithBadges = attachBadges(res.rows, periodCount);
+          const rowsWithBadges = attachBadges(res.rows);
           setData({ ...res, rows: rowsWithBadges });
           setLoading(false);
         }
@@ -51,7 +46,7 @@ export function useRanking(campId?: string): UseRankingState {
         if (!cancelled) {
           if (import.meta.env.DEV) {
             console.warn("[useRanking] API unavailable, using mock data");
-            const mockWithBadges = attachBadges(MOCK_RANKING, 4);
+            const mockWithBadges = attachBadges(MOCK_RANKING);
             setData({ ok: true, campId: "demo", rows: mockWithBadges, groupName: "AI 训练营" });
           } else {
             setError(_err instanceof Error ? _err.message : "Unknown error");
