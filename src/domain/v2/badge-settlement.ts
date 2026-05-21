@@ -35,12 +35,7 @@ export interface BadgeSettlementAward {
 }
 
 const MAX_MVP_COUNT = 2;
-const B3_ROTATION_ORDER: readonly BadgeDimension[] = ["K", "H", "C", "S", "G"];
-
-function getB3DimensionForPeriod(periodNumber: number): BadgeDimension | null {
-  if (periodNumber < 2 || periodNumber > 11) return null;
-  return B3_ROTATION_ORDER[(periodNumber - 2) % B3_ROTATION_ORDER.length];
-}
+const B3_DIMENSIONS: readonly BadgeDimension[] = ["K", "H", "C", "S", "G"];
 
 function byMemberId(left: BadgeSettlementSnapshot, right: BadgeSettlementSnapshot): number {
   return left.memberId.localeCompare(right.memberId);
@@ -126,10 +121,7 @@ function computeB2(input: BadgeSettlementInput): BadgeSettlementAward | null {
   );
 }
 
-function computeB3(input: BadgeSettlementInput): BadgeSettlementAward | null {
-  const dimension = getB3DimensionForPeriod(input.periodNumber);
-  if (!dimension) return null;
-
+function computeB3ForDimension(input: BadgeSettlementInput, dimension: BadgeDimension): BadgeSettlementAward | null {
   const badgeId = `b3-${dimension}`;
   if (hasSettledPeriodBadge(input, badgeId)) return null;
 
@@ -152,6 +144,13 @@ function computeB3(input: BadgeSettlementInput): BadgeSettlementAward | null {
     badgeId,
     `P${input.periodNumber} B3 ${dimension}: highest dimension score ${winner.dimensions[dimension]}`
   );
+}
+
+function computeB3(input: BadgeSettlementInput): BadgeSettlementAward[] {
+  if (input.periodNumber < 2 || input.periodNumber > 11) return [];
+  return B3_DIMENSIONS
+    .map((dimension) => computeB3ForDimension(input, dimension))
+    .filter((badge): badge is BadgeSettlementAward => badge !== null);
 }
 
 function topBy(
@@ -224,7 +223,7 @@ export function settleBadgesForWindow(input: BadgeSettlementInput): BadgeSettlem
   const awards = [
     computeB1(input),
     computeB2(input),
-    computeB3(input),
+    ...computeB3(input),
     ...computeFinalBadges(input),
   ].filter((badge): badge is BadgeSettlementAward => badge !== null);
 

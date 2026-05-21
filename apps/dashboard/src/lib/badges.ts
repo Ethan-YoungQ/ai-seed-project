@@ -19,19 +19,18 @@ export interface EarnedBadge {
 }
 
 /**
- * B3 维度轮换表：P2 起按 K->H->C->S->G 循环
+ * B3 维度达人：每个非破冰期按 K/H/C/S/G 五个维度分别评审。
  */
-export const B3_ROTATION_ORDER: readonly DimensionKey[] = [
+export const B3_DIMENSIONS: readonly DimensionKey[] = [
   "K", "H", "C", "S", "G",
 ] as const;
 
 /**
- * 根据期数获取 B3 轮换维度。P2 起生效，P1/P12 不颁发。
+ * 根据期数获取当期 B3 评审维度。P2-P11 生效，P1/P12 不颁发。
  */
-export function getB3DimensionForPeriod(period: number): DimensionKey | null {
-  if (period < 2 || period > 11) return null;
-  const idx = (period - 2) % B3_ROTATION_ORDER.length;
-  return B3_ROTATION_ORDER[idx];
+export function getB3DimensionsForPeriod(period: number): readonly DimensionKey[] {
+  if (period < 2 || period > 11) return [];
+  return B3_DIMENSIONS;
 }
 
 /**

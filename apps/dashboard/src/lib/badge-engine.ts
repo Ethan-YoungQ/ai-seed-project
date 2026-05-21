@@ -6,7 +6,7 @@
 import type { RankingRow } from "../types/api";
 import type { DimensionKey } from "./colors";
 import type { EarnedBadge } from "./badges";
-import { getB3DimensionForPeriod } from "./badges";
+import { getB3DimensionsForPeriod } from "./badges";
 
 /** MVP 同一人全程最多获 2 次 */
 const MAX_MVP_COUNT = 2;
@@ -141,9 +141,8 @@ export function computeBadges(
       }
     }
 
-    // B3: 维度达人
-    const dim = getB3DimensionForPeriod(period);
-    if (dim) {
+    // B3: 五维达人
+    for (const dim of getB3DimensionsForPeriod(period)) {
       const b3Winner = computeB3(snapshots, dim, b3History);
       if (b3Winner) {
         addBadge(b3Winner, { badgeId: `b3-${dim}`, periodNumber: period });

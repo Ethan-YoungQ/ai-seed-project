@@ -108,7 +108,7 @@ describe("buildBadgeSettlementRuntime", () => {
 
     expect(runtime.backfillSettledWindows()).toEqual({
       settledWindows: 1,
-      insertedBadges: 2,
+      insertedBadges: 6,
     });
     expect(runtime.backfillSettledWindows()).toEqual({
       settledWindows: 1,
@@ -116,7 +116,13 @@ describe("buildBadgeSettlementRuntime", () => {
     });
 
     const badges = repo.listMemberBadges(campId);
-    expect(badges.get("user-alice")?.map((badge) => badge.badgeId)).toEqual(["b1-mvp"]);
+    expect(badges.get("user-alice")?.map((badge) => badge.badgeId)).toEqual([
+      "b1-mvp",
+      "b3-C",
+      "b3-G",
+      "b3-H",
+      "b3-S",
+    ]);
     expect(badges.get("user-bob")?.map((badge) => badge.badgeId)).toEqual(["b3-K"]);
 
     repo.close();

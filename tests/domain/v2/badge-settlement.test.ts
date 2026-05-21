@@ -42,7 +42,7 @@ function input(overrides: Partial<BadgeSettlementInput> = {}): BadgeSettlementIn
 }
 
 describe("settleBadgesForWindow", () => {
-  test("awards B1 to the highest current-window AQ learner and B3 to the rotated dimension winner", () => {
+  test("awards B1 to the highest current-window AQ learner and all B3 dimension winners", () => {
     const awards = settleBadgesForWindow(input());
 
     expect(awards).toEqual([
@@ -61,6 +61,38 @@ describe("settleBadgesForWindow", () => {
         awardedAt: "2026-05-21T00:00:00.000Z",
         source: "test",
         reason: "P2 B3 K: highest dimension score 13",
+      },
+      {
+        memberId: "m1",
+        badgeId: "b3-H",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "test",
+        reason: "P2 B3 H: highest dimension score 8",
+      },
+      {
+        memberId: "m3",
+        badgeId: "b3-C",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "test",
+        reason: "P2 B3 C: highest dimension score 12",
+      },
+      {
+        memberId: "m3",
+        badgeId: "b3-S",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "test",
+        reason: "P2 B3 S: highest dimension score 11",
+      },
+      {
+        memberId: "m3",
+        badgeId: "b3-G",
+        periodNumber: 2,
+        awardedAt: "2026-05-21T00:00:00.000Z",
+        source: "test",
+        reason: "P2 B3 G: highest dimension score 10",
       },
     ]);
   });
