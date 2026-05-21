@@ -45,7 +45,7 @@ export interface BadgeSettlementRuntime {
 }
 
 export interface CompletedWindowSettlementBackfillRuntime {
-  backfillCompletedOpenWindows(): Promise<{ completedWindows: number; settledWindows: number }>;
+  backfillCompletedUnsettledWindows(): Promise<{ completedWindows: number; settledWindows: number }>;
 }
 
 function buildIngestorDeps(
@@ -432,6 +432,7 @@ function buildRealWindowSettler(
 
         updateWindowSettlementState: async (id, next) => {
           if (next === "settling") repo.markWindowSettling(id);
+          else if (next === "open") repo.markWindowOpen(id);
           else if (next === "settled") repo.markWindowSettled(id, new Date().toISOString());
         },
 
@@ -589,8 +590,8 @@ export function buildCompletedWindowSettlementBackfillRuntime(
   windowSettler: { settle(id: string): Promise<{ windowId: string; settledAt: string }> },
 ): CompletedWindowSettlementBackfillRuntime {
   return {
-    async backfillCompletedOpenWindows() {
-      const windows = repo.listCompletedOpenWindows(campId);
+    async backfillCompletedUnsettledWindows() {
+      const windows = repo.listCompletedUnsettledWindows(campId);
       let settledWindows = 0;
       for (const window of windows) {
         await windowSettler.settle(window.id);
@@ -1010,7 +1011,7 @@ export function wireV2Production(
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
   badgeSettlement.backfillSettledWindows();
   void buildCompletedWindowSettlementBackfillRuntime(repo, campId, windowSettler)
-    .backfillCompletedOpenWindows()
+    .backfillCompletedUnsettledWindows()
     .then((result) => {
       if (result.settledWindows > 0) {
         console.info(

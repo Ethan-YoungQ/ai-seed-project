@@ -534,7 +534,7 @@ describe("SqliteRepository v2 card_interactions", () => {
     repo.close();
   });
 
-  test("listCompletedOpenWindows returns only open windows with both period slots filled", () => {
+  test("listCompletedUnsettledWindows returns only unsettled windows with both period slots filled", () => {
     const repo = new SqliteRepository(":memory:");
     repo.seedDemo();
     const campId = repo.getDefaultCampId()!;
@@ -550,9 +550,11 @@ describe("SqliteRepository v2 card_interactions", () => {
     repo.attachLastPeriod(w1.id, p2.id);
     repo.attachFirstPeriod(w2.id, p3.id);
 
-    expect(repo.listCompletedOpenWindows(campId).map((window) => window.id)).toEqual([w1.id]);
+    expect(repo.listCompletedUnsettledWindows(campId).map((window) => window.id)).toEqual([w1.id]);
+    repo.markWindowSettling(w1.id);
+    expect(repo.listCompletedUnsettledWindows(campId).map((window) => window.id)).toEqual([w1.id]);
     repo.markWindowSettled(w1.id, "2026-05-21T00:00:00.000Z");
-    expect(repo.listCompletedOpenWindows(campId)).toEqual([]);
+    expect(repo.listCompletedUnsettledWindows(campId)).toEqual([]);
 
     repo.close();
   });
@@ -1228,24 +1230,64 @@ describe("SqliteRepository v2 window_snapshots", () => {
       snapshotAt: "2026-04-25T00:00:00.000Z"
     });
 
-    // UNIQUE(window_id, member_id)
-    expect(() =>
-      repo.insertWindowSnapshot({
-        id: randomUUID(),
-        windowId: w2.id,
-        memberId,
-        windowAq: 99,
-        cumulativeAq: 99,
-        kScore: 0,
-        hScore: 0,
-        cScore: 0,
-        sScore: 0,
-        gScore: 0,
-        growthBonus: 0,
-        consecMissedOnEntry: 0,
-        snapshotAt: "2026-04-26T00:00:00.000Z"
-      })
-    ).toThrow(/UNIQUE/);
+    repo.insertWindowSnapshot({
+      id: randomUUID(),
+      windowId: w2.id,
+      memberId,
+      windowAq: 99,
+      cumulativeAq: 99,
+      kScore: 0,
+      hScore: 0,
+      cScore: 0,
+      sScore: 0,
+      gScore: 0,
+      growthBonus: 0,
+      consecMissedOnEntry: 0,
+      snapshotAt: "2026-04-26T00:00:00.000Z"
+    });
+    expect(repo.findSnapshotForWindow(w2.id, memberId)?.windowAq).toBe(40);
+
+    repo.close();
+  });
+
+  test("window settlement writes are idempotent for snapshot and promotion retries", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const now = "2026-05-21T00:00:00.000Z";
+    const snapshot = {
+      id: "snap-first",
+      windowId: "window-retry",
+      memberId: "member-retry",
+      windowAq: 10,
+      cumulativeAq: 10,
+      kScore: 1,
+      hScore: 2,
+      cScore: 3,
+      sScore: 4,
+      gScore: 0,
+      growthBonus: 0,
+      consecMissedOnEntry: 0,
+      snapshotAt: now,
+    };
+    const promotion = {
+      id: "prom-first",
+      windowId: "window-retry",
+      memberId: "member-retry",
+      evaluatedAt: now,
+      fromLevel: 1,
+      toLevel: 1,
+      promoted: 0,
+      pathTaken: "none",
+      reason: "retry",
+    };
+
+    repo.insertWindowSnapshot(snapshot);
+    repo.insertWindowSnapshot({ ...snapshot, id: "snap-second" });
+    repo.insertPromotionRecord(promotion);
+    repo.insertPromotionRecord({ ...promotion, id: "prom-second" });
+
+    expect(repo.findSnapshotForWindow("window-retry", "member-retry")?.id).toBe("snap-first");
+    expect(repo.findPromotionForWindow("window-retry", "member-retry")?.id).toBe("prom-first");
 
     repo.close();
   });
@@ -1363,20 +1405,18 @@ describe("SqliteRepository v2 promotion_records", () => {
     expect(all[0].windowId).toBe(w1.id);
     expect(all[1].windowId).toBe(w2.id);
 
-    // UNIQUE(window_id, member_id)
-    expect(() =>
-      repo.insertPromotionRecord({
-        id: randomUUID(),
-        windowId: w1.id,
-        memberId,
-        evaluatedAt: "2026-04-21T00:00:00.000Z",
-        fromLevel: 1,
-        toLevel: 1,
-        promoted: false,
-        pathTaken: "none",
-        reason: "{}"
-      })
-    ).toThrow(/UNIQUE/);
+    repo.insertPromotionRecord({
+      id: randomUUID(),
+      windowId: w1.id,
+      memberId,
+      evaluatedAt: "2026-04-21T00:00:00.000Z",
+      fromLevel: 1,
+      toLevel: 1,
+      promoted: false,
+      pathTaken: "none",
+      reason: "{}"
+    });
+    expect(repo.findPromotionForWindow(w1.id, memberId)?.toLevel).toBe(2);
 
     repo.close();
   });

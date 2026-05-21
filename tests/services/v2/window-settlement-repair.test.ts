@@ -44,12 +44,12 @@ describe("completed window settlement backfill", () => {
       },
     });
 
-    await expect(runtime.backfillCompletedOpenWindows()).resolves.toEqual({
+    await expect(runtime.backfillCompletedUnsettledWindows()).resolves.toEqual({
       completedWindows: 1,
       settledWindows: 1,
     });
     expect(settled).toEqual([window.id]);
-    await expect(runtime.backfillCompletedOpenWindows()).resolves.toEqual({
+    await expect(runtime.backfillCompletedUnsettledWindows()).resolves.toEqual({
       completedWindows: 0,
       settledWindows: 0,
     });

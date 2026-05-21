@@ -1157,12 +1157,12 @@ export class SqliteRepository {
     return row ? this.mapWindowRow(row) : undefined;
   }
 
-  listCompletedOpenWindows(campId: string): WindowRecord[] {
+  listCompletedUnsettledWindows(campId: string): WindowRecord[] {
     const rows = this.db
       .prepare(
         `SELECT * FROM v2_windows
          WHERE camp_id = ?
-           AND settlement_state = 'open'
+           AND settlement_state IN ('open', 'settling')
            AND first_period_id IS NOT NULL
            AND last_period_id IS NOT NULL
          ORDER BY code ASC`
@@ -1199,6 +1199,12 @@ export class SqliteRepository {
       .prepare(
         `UPDATE v2_windows SET settlement_state = 'settling' WHERE id = ? AND settlement_state = 'open'`
       )
+      .run(windowId);
+  }
+
+  markWindowOpen(windowId: string): void {
+    this.db
+      .prepare(`UPDATE v2_windows SET settlement_state = 'open', settled_at = NULL WHERE id = ?`)
       .run(windowId);
   }
 
@@ -2627,7 +2633,7 @@ export class SqliteRepository {
   insertWindowSnapshot(input: WindowSnapshotRecord): void {
     this.db
       .prepare(
-        `INSERT INTO v2_window_snapshots
+        `INSERT OR IGNORE INTO v2_window_snapshots
           (id, window_id, member_id, window_aq, cumulative_aq, k_score, h_score,
            c_score, s_score, g_score, growth_bonus, consec_missed_on_entry, snapshot_at)
          VALUES (@id, @windowId, @memberId, @windowAq, @cumulativeAq, @kScore, @hScore,
@@ -2733,7 +2739,7 @@ export class SqliteRepository {
   insertPromotionRecord(input: PromotionRecord): void {
     this.db
       .prepare(
-        `INSERT INTO v2_promotion_records
+        `INSERT OR IGNORE INTO v2_promotion_records
           (id, window_id, member_id, evaluated_at, from_level, to_level,
            promoted, path_taken, reason)
          VALUES (@id, @windowId, @memberId, @evaluatedAt, @fromLevel, @toLevel,
