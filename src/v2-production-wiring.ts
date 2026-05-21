@@ -44,6 +44,10 @@ export interface BadgeSettlementRuntime {
   backfillSettledWindows(): { settledWindows: number; insertedBadges: number };
 }
 
+export interface CompletedWindowSettlementBackfillRuntime {
+  backfillCompletedOpenWindows(): Promise<{ completedWindows: number; settledWindows: number }>;
+}
+
 function buildIngestorDeps(
   repo: SqliteRepository,
   campId: string,
@@ -579,6 +583,24 @@ export function buildBadgeSettlementRuntime(
   };
 }
 
+export function buildCompletedWindowSettlementBackfillRuntime(
+  repo: SqliteRepository,
+  campId: string,
+  windowSettler: { settle(id: string): Promise<{ windowId: string; settledAt: string }> },
+): CompletedWindowSettlementBackfillRuntime {
+  return {
+    async backfillCompletedOpenWindows() {
+      const windows = repo.listCompletedOpenWindows(campId);
+      let settledWindows = 0;
+      for (const window of windows) {
+        await windowSettler.settle(window.id);
+        settledWindows += 1;
+      }
+      return { completedWindows: windows.length, settledWindows };
+    },
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Continuous promotion — level up as soon as cumulative AQ reaches threshold
 // ---------------------------------------------------------------------------
@@ -987,6 +1009,18 @@ export function wireV2Production(
   const llmWorker = buildLlmWorker(repo, aggregator, continuousPromotion);
   const adminPanelLifecycleInstance = buildAdminPanelLifecycle(repo, campId, periodLifecycle);
   badgeSettlement.backfillSettledWindows();
+  void buildCompletedWindowSettlementBackfillRuntime(repo, campId, windowSettler)
+    .backfillCompletedOpenWindows()
+    .then((result) => {
+      if (result.settledWindows > 0) {
+        console.info(
+          `[WindowSettlement] Backfilled ${result.settledWindows}/${result.completedWindows} completed open windows`
+        );
+      }
+    })
+    .catch((err) => {
+      console.error("[WindowSettlement] Backfill failed:", err);
+    });
   if (process.env.V2_CONTINUOUS_PROMOTION_BACKFILL === "true") {
     continuousPromotion.backfillEligible();
   }

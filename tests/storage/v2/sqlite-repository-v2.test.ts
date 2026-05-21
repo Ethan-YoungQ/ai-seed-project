@@ -5,6 +5,21 @@ import { describe, expect, test } from "vitest";
 
 import { SqliteRepository } from "../../../src/storage/sqlite-repository.js";
 
+function seedTestPeriod(repo: SqliteRepository, campId: string, number: number) {
+  const period = {
+    id: `period-${campId}-${number}-${randomUUID()}`,
+    campId,
+    number,
+    isIceBreaker: number === 1,
+    startedAt: `2026-04-${10 + number}T00:00:00.000Z`,
+    openedByOpId: null,
+    createdAt: `2026-04-${10 + number}T00:00:00.000Z`,
+    updatedAt: `2026-04-${10 + number}T00:00:00.000Z`,
+  };
+  repo.insertPeriod(period);
+  return period;
+}
+
 describe("SqliteRepository v2 schema", () => {
   test("creates all 9 v2 tables on construction", () => {
     const repo = new SqliteRepository(":memory:");
@@ -515,6 +530,29 @@ describe("SqliteRepository v2 card_interactions", () => {
     expect(onlyQuiz).toHaveLength(1);
     expect(onlyQuiz[0].actionName).toBe("answer_k2");
     expect(onlyQuiz[0].actionPayload).toContain("score");
+
+    repo.close();
+  });
+
+  test("listCompletedOpenWindows returns only open windows with both period slots filled", () => {
+    const repo = new SqliteRepository(":memory:");
+    repo.seedDemo();
+    const campId = repo.getDefaultCampId()!;
+    const p1 = seedTestPeriod(repo, campId, 1);
+    const p2 = seedTestPeriod(repo, campId, 2);
+    const p3 = seedTestPeriod(repo, campId, 3);
+
+    repo.insertWindowShell({ code: "W1", campId, isFinal: false, createdAt: "2026-04-11T00:00:00.000Z" });
+    repo.insertWindowShell({ code: "W2", campId, isFinal: false, createdAt: "2026-04-12T00:00:00.000Z" });
+    const w1 = repo.findWindowByCode(campId, "W1")!;
+    const w2 = repo.findWindowByCode(campId, "W2")!;
+    repo.attachFirstPeriod(w1.id, p1.id);
+    repo.attachLastPeriod(w1.id, p2.id);
+    repo.attachFirstPeriod(w2.id, p3.id);
+
+    expect(repo.listCompletedOpenWindows(campId).map((window) => window.id)).toEqual([w1.id]);
+    repo.markWindowSettled(w1.id, "2026-05-21T00:00:00.000Z");
+    expect(repo.listCompletedOpenWindows(campId)).toEqual([]);
 
     repo.close();
   });

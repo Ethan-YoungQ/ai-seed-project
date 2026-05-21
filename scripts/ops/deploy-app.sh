@@ -29,6 +29,14 @@ else
 fi
 
 "$NPM_BIN" run build
+
+if [ -f "$APP_DIR/apps/dashboard/package-lock.json" ]; then
+  "$NPM_BIN" --prefix apps/dashboard ci
+else
+  "$NPM_BIN" --prefix apps/dashboard install
+fi
+
+"$NPM_BIN" --prefix apps/dashboard run build
 "$NPM_BIN" run seed:ensure
 
 if [ "$(id -u)" -eq 0 ]; then

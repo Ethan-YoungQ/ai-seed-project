@@ -1157,6 +1157,20 @@ export class SqliteRepository {
     return row ? this.mapWindowRow(row) : undefined;
   }
 
+  listCompletedOpenWindows(campId: string): WindowRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM v2_windows
+         WHERE camp_id = ?
+           AND settlement_state = 'open'
+           AND first_period_id IS NOT NULL
+           AND last_period_id IS NOT NULL
+         ORDER BY code ASC`
+      )
+      .all(campId) as Array<Record<string, unknown>>;
+    return rows.map((row) => this.mapWindowRow(row));
+  }
+
   attachFirstPeriod(windowId: string, periodId: string): void {
     this.db
       .prepare(
