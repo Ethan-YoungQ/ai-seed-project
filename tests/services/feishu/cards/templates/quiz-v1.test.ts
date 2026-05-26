@@ -33,6 +33,26 @@ function sampleState(): QuizCardState {
   };
 }
 
+function largePeriodQuizState(): QuizCardState {
+  const questions = Array.from({ length: 15 }, (_, index) => ({
+    id: `rec-period-3-${index + 1}`,
+    text: `第 ${index + 1} 题：制作 AI 海报、视频或数据看板时，以下哪项最符合课程强调的业务实践原则？`,
+    options: [
+      { id: "a", text: "A. 说明业务背景、目标受众、传播场景和输出格式", isCorrect: true },
+      { id: "b", text: "B. 只输入高级感，让 AI 自由发挥", isCorrect: false },
+      { id: "c", text: "C. 直接发布第一版，不需要人工审核", isCorrect: false },
+      { id: "d", text: "D. 忽略数据来源、合规边界和关键细节", isCorrect: false }
+    ]
+  }));
+
+  return {
+    setCode: "period-3",
+    periodNumber: 3,
+    title: "第 3 期测验",
+    questions
+  };
+}
+
 describe("buildQuizCard (quiz-v1 template)", () => {
   test("header contains quiz title", () => {
     const card = buildQuizCard(sampleState());
@@ -57,6 +77,14 @@ describe("buildQuizCard (quiz-v1 template)", () => {
     expect(bodyJson).toContain("quiz_submit");
     expect(bodyJson).toContain(state.setCode);
     expect(bodyJson).toContain("提交答案");
+  });
+
+  test("can render an answer-only quiz part without submit button", () => {
+    const card = buildQuizCard({ ...sampleState(), showSubmit: false });
+    const bodyJson = JSON.stringify(card.body);
+    expect(bodyJson).toContain("quiz_select");
+    expect(bodyJson).not.toContain("quiz_submit");
+    expect(bodyJson).not.toContain("提交答案");
   });
 
   test("option buttons carry quiz_select, questionId and optionId", () => {
@@ -88,6 +116,12 @@ describe("buildQuizCard (quiz-v1 template)", () => {
 
   test("card payload stays within the 25 KB size budget", () => {
     const card = buildQuizCard(sampleState());
+    const size = Buffer.byteLength(JSON.stringify(card), "utf8");
+    expect(size).toBeLessThanOrEqual(CARD_SIZE_BUDGET_BYTES);
+  });
+
+  test("large period quiz card stays within the 25 KB size budget", () => {
+    const card = buildQuizCard(largePeriodQuizState());
     const size = Buffer.byteLength(JSON.stringify(card), "utf8");
     expect(size).toBeLessThanOrEqual(CARD_SIZE_BUDGET_BYTES);
   });

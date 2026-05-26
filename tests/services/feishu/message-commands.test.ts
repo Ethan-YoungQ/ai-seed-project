@@ -474,6 +474,53 @@ describe("message-commands operator command routing", () => {
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
   });
 
+  it("splits a large period quiz into answer cards and a final submit card", async () => {
+    const quizRecords = Array.from({ length: 15 }, (_, index) => ({
+      recordId: `rec-period-3-${index + 1}`,
+      fields: {
+        "期数": 3,
+        "题目": `第 ${index + 1} 题：制作 AI 海报、视频或数据看板时，以下哪项最符合课程强调的业务实践原则？`,
+        "正确答案": "A",
+        "选项A": "说明业务背景、目标受众、传播场景和输出格式",
+        "选项B": "只输入高级感，让 AI 自由发挥",
+        "选项C": "直接发布第一版，不需要人工审核",
+        "选项D": "忽略数据来源、合规边界和关键细节",
+      },
+    }));
+    const deps = buildDeps({
+      lifecycle: {
+        getActivePeriod: vi.fn().mockResolvedValue({ number: 3, id: "p3" }),
+        getActiveWindow: vi.fn().mockResolvedValue({ code: "W2", settlementState: "open" }),
+        countMembers: vi.fn().mockResolvedValue({ total: 18, activeStudents: 15 }),
+      } as any,
+      quizBank: {
+        appToken: "app-token",
+        tableId: "tbl-quiz",
+        feishuClient: {
+          searchBaseRecords: vi.fn().mockResolvedValue(quizRecords),
+        },
+      } as any,
+    });
+    const handler = createMessageCommandHandler(deps);
+
+    await handler(makeMsg({ rawText: "测验", cleanedText: "测验" }));
+
+    expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledTimes(2);
+    const firstCard = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
+    const secondCard = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[1][0].cardJson);
+    expect(firstCard).toContain("第 3 期测验（1/2）");
+    expect(firstCard).toContain("quiz_select");
+    expect(firstCard).not.toContain("quiz_submit");
+    expect(secondCard).toContain("第 3 期测验（2/2）");
+    expect(secondCard).toContain("quiz_select");
+    expect(secondCard).toContain("quiz_submit");
+    for (const call of (deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls) {
+      const card = call[0].cardJson as { body: { elements: unknown[] } };
+      expect(card.body.elements.length).toBeLessThanOrEqual(50);
+    }
+    expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
+  });
+
   it("routes @Bot 审核 to the review queue card instead of chat reply", async () => {
     const deps = buildDeps();
     const handler = createMessageCommandHandler(deps);

@@ -674,6 +674,84 @@ describe("createAiBootOrchestrator", () => {
     vi.useRealTimers();
   });
 
+  it("defers a text plus image cache miss until image understanding is available", async () => {
+    vi.useFakeTimers();
+    let prompt = "";
+    const llmClient: AiBootLlmClient = {
+      provider: "aliyun",
+      model: "qwen3.5-flash",
+      chat: vi.fn(async (messages) => {
+        prompt = String(messages[1]?.content ?? "");
+        return JSON.stringify({
+          status: "approved",
+          category: "ai_artifact",
+          scoreDelta: 3,
+          confidence: "high",
+          notifyPolicy: "silent",
+          reason: "学员提交了 AI 辅助完成的数据看板。",
+          evidence: "文字说明和图片理解共同证明这是工作流结果。",
+          badges: ["artifact", "image_understanding"],
+        });
+      }),
+    };
+    const cachedUnderstanding: AiBootImageUnderstandingRecord = {
+      fileKey: "img-key-1",
+      messageId: "om-1",
+      contentHash: "hash-text-image-1",
+      modelName: "qwen3.5-flash",
+      caption: "图片展示了一个 AI 驱动的数据分析看板。",
+      scoreHint: "该图片属于工作流结果证据，可按 ai_artifact 评分。",
+      latencyMs: 2260,
+      status: "succeeded",
+      errorReason: "",
+      createdAt: "2026-05-16T09:00:00.000Z",
+      updatedAt: "2026-05-16T09:00:02.260Z",
+    };
+    let cached: AiBootImageUnderstandingRecord | null = null;
+    const imageUnderstandingService = {
+      getCachedUnderstanding: vi.fn(() => cached),
+      enqueueUnderstanding: vi.fn(),
+      understandImage: vi.fn().mockImplementation(async () => {
+        cached = cachedUnderstanding;
+        return cachedUnderstanding;
+      }),
+    };
+    const deps = makeDeps({
+      llmClient,
+      imageUnderstandingService,
+    } as Partial<AiBootOrchestratorDeps>);
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      messageType: "image",
+      rawText: "通过销售数据与PIM数据，整合看板复盘行动有效性。",
+      cleanedText: "通过销售数据与PIM数据，整合看板复盘行动有效性。",
+      attachmentCount: 1,
+      attachmentTypes: ["image"],
+      fileKey: "img-key-1",
+    }));
+
+    expect(deps.events).toHaveLength(1);
+    expect(deps.scoreEvents).toHaveLength(0);
+    expect(llmClient.chat).not.toHaveBeenCalled();
+
+    const pendingWork = orchestrator.drainPendingWork();
+    await vi.runOnlyPendingTimersAsync();
+    await pendingWork;
+
+    expect(imageUnderstandingService.understandImage).toHaveBeenCalledTimes(1);
+    expect(llmClient.chat).toHaveBeenCalledTimes(1);
+    expect(prompt).toContain("图片展示了一个 AI 驱动的数据分析看板");
+    expect(prompt).toContain("工作流结果证据");
+    expect(deps.scoreEvents).toHaveLength(1);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      status: "approved",
+      category: "ai_artifact",
+      scoreDelta: 3,
+    });
+    vi.useRealTimers();
+  });
+
   it("moves image-only understanding failures into a positive artifact review candidate", async () => {
     vi.useFakeTimers();
     const failedUnderstanding: AiBootImageUnderstandingRecord = {

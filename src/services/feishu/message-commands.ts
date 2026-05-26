@@ -18,7 +18,7 @@ import {
   buildAdminPanelCard,
   type AdminPanelState,
 } from "./cards/templates/admin-panel-v1.js";
-import { buildQuizCard } from "./cards/templates/quiz-v1.js";
+import { buildQuizCard, type QuizCardState } from "./cards/templates/quiz-v1.js";
 import { fetchQuizByPeriod, type QuizBankDeps } from "./quiz-bank.js";
 import { buildPeerReviewVoteCard } from "./cards/templates/peer-review-vote-v1.js";
 import {
@@ -59,6 +59,7 @@ import { classifyOperationsIntent } from "./operations-router.js";
 const ADMIN_PANEL_KEYWORDS = ["管理", "管理面板", "控制面板"];
 const REVIEW_QUEUE_KEYWORDS = ["审核", "审核队列", "待审核", "复核", "复核队列"];
 const QUIZ_KEYWORDS = ["测验", "随堂测验", "考试"];
+const QUIZ_CARD_QUESTIONS_PER_CARD = 8;
 const PEER_REVIEW_KEYWORDS = ["互评", "互评投票", "投票"];
 const DASHBOARD_KEYWORDS = ["看板", "排行", "排行榜", "成长看板", "天梯榜"];
 const MANUAL_ADJUST_KEYWORDS = ["调分", "手动调分"];
@@ -992,12 +993,33 @@ async function handleQuizTrigger(
     return;
   }
 
-  const cardJson = buildQuizCard(quizState);
-  await deps.feishuClient.sendCardMessage({
-    chatId: message.chatId,
-    cardJson: cardJson as unknown as Record<string, unknown>,
+  const quizCards = splitQuizCards(quizState);
+  for (const quizCard of quizCards) {
+    const cardJson = buildQuizCard(quizCard);
+    await deps.feishuClient.sendCardMessage({
+      chatId: message.chatId,
+      cardJson: cardJson as unknown as Record<string, unknown>,
+    });
+  }
+  console.log(`[Quiz] Card sent: period=${periodNumber}, questions=${quizState.questions.length}, cards=${quizCards.length}`);
+}
+
+function splitQuizCards(state: QuizCardState): QuizCardState[] {
+  if (state.questions.length <= QUIZ_CARD_QUESTIONS_PER_CARD) {
+    return [state];
+  }
+
+  const totalCards = Math.ceil(state.questions.length / QUIZ_CARD_QUESTIONS_PER_CARD);
+  return Array.from({ length: totalCards }, (_, index) => {
+    const start = index * QUIZ_CARD_QUESTIONS_PER_CARD;
+    const end = start + QUIZ_CARD_QUESTIONS_PER_CARD;
+    return {
+      ...state,
+      title: `${state.title}（${index + 1}/${totalCards}）`,
+      questions: state.questions.slice(start, end),
+      showSubmit: index === totalCards - 1,
+    };
   });
-  console.log(`[Quiz] Card sent: period=${periodNumber}, questions=${quizState.questions.length}`);
 }
 
 // ============================================================================

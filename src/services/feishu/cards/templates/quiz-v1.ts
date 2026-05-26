@@ -22,25 +22,24 @@ export interface QuizCardState {
   periodNumber: number;
   title: string;
   questions: QuizQuestion[];
+  showSubmit?: boolean;
 }
 
 /**
- * Schema 2.0 helper: wrap a single button in column_set.
+ * Schema 2.0 helper: wrap buttons in column_set.
  * Feishu Schema 2.0 does NOT support the "action" element type.
  */
-function singleButtonRow(btn: Record<string, unknown>): Record<string, unknown> {
+function buttonRow(buttons: Array<Record<string, unknown>>): Record<string, unknown> {
   return {
     tag: "column_set",
     flex_mode: "none",
     background_style: "default",
-    columns: [
-      {
+    columns: buttons.map((button) => ({
         tag: "column",
         width: "weighted",
         weight: 1,
-        elements: [btn],
-      },
-    ],
+        elements: [button],
+      })),
   };
 }
 
@@ -49,7 +48,7 @@ function singleButtonRow(btn: Record<string, unknown>): Record<string, unknown> 
  * value is an object (not JSON string) — value.action is used for routing.
  */
 export function buildQuizCard(state: QuizCardState): FeishuCardJson {
-  const { setCode, periodNumber, title, questions } = state;
+  const { setCode, periodNumber, title, questions, showSubmit = true } = state;
 
   const header = buildHeader({
     title,
@@ -59,16 +58,17 @@ export function buildQuizCard(state: QuizCardState): FeishuCardJson {
 
   const elements: Array<Record<string, unknown>> = [];
 
-  for (const question of questions) {
+  questions.forEach((question, questionIndex) => {
     elements.push({
       tag: "markdown",
       content: `**${question.text}**`,
     });
 
-    // Option buttons — each needs a unique name (Schema 2.0 requirement)
-    for (const option of question.options) {
-      elements.push(
-        singleButtonRow({
+    // Option buttons — each needs a unique name (Schema 2.0 requirement).
+    // Render two buttons per row to keep large quiz cards below Feishu's size limit.
+    for (let i = 0; i < question.options.length; i += 2) {
+      const rowOptions = question.options.slice(i, i + 2);
+      elements.push(buttonRow(rowOptions.map((option) => ({
           tag: "button",
           name: `quiz_select_${question.id}_${option.id}`,
           text: { tag: "plain_text", content: option.text },
@@ -79,27 +79,28 @@ export function buildQuizCard(state: QuizCardState): FeishuCardJson {
             questionId: question.id,
             optionId: option.id,
           },
-        }),
-      );
+      }))));
     }
 
-    // Divider between questions
-    elements.push({ tag: "hr" });
-  }
+    if (questionIndex < questions.length - 1) {
+      elements.push({ tag: "hr" });
+    }
+  });
 
-  // Submit button
-  elements.push(
-    singleButtonRow({
-      tag: "button",
-      name: "quiz_submit",
-      text: { tag: "plain_text", content: "📝 提交答案" },
-      type: "primary",
-      value: {
-        action: "quiz_submit",
-        setCode,
-      },
-    }),
-  );
+  if (showSubmit) {
+    elements.push(
+      buttonRow([{
+        tag: "button",
+        name: "quiz_submit",
+        text: { tag: "plain_text", content: "📝 提交答案" },
+        type: "primary",
+        value: {
+          action: "quiz_submit",
+          setCode,
+        },
+      }]),
+    );
+  }
 
   const card: FeishuCardJson = {
     schema: "2.0",

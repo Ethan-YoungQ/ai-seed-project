@@ -146,7 +146,7 @@ export function createAiBootOrchestrator(
         service: imageUnderstandingService,
         message,
         evidence,
-        enqueue: !imageOnlyMessage,
+        enqueue: false,
       });
       if (imageUnderstanding.cached) {
         evidence = appendImageUnderstandingEvidence(evidence, imageUnderstanding.cached);
@@ -179,8 +179,8 @@ export function createAiBootOrchestrator(
         }
       }
 
-      if (imageOnlyMessage && !imageUnderstanding.cached) {
-        const task = scheduleImageOnlyUnderstandingReplay({
+      if (imageUnderstanding.pending) {
+        const task = scheduleImageUnderstandingReplay({
           service: imageUnderstandingService,
           message,
           evidence: originalEvidence,
@@ -721,7 +721,7 @@ function prepareImageUnderstanding(input: {
   return { cached: null, pending: true };
 }
 
-function scheduleImageOnlyUnderstandingReplay(input: {
+function scheduleImageUnderstandingReplay(input: {
   service: AiBootImageUnderstandingService;
   message: NormalizedFeishuMessage;
   evidence: EvidenceBundle;
