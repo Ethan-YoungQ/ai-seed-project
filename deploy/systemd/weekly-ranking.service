@@ -1,12 +1,13 @@
 [Unit]
 Description=AI Seed - Weekly Ranking Report
-After=network-online.target
-Wants=network-online.target
+After=network-online.target ai-seed-project.service
+Wants=network-online.target ai-seed-project.service
 
 [Service]
 Type=oneshot
 WorkingDirectory=/opt/ai-seed-project
 Environment=NODE_ENV=production
+Environment=WEEKLY_RANKING_BOARD_URL=http://127.0.0.1:3001/api/v2/board/ranking
 EnvironmentFile=-/opt/ai-seed-project/.env
 ExecStart=/usr/bin/node /opt/ai-seed-project/dist/scripts/weekly-ranking-report.js
 User=root

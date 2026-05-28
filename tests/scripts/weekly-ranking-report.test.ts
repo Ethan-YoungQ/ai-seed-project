@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildReportCard } from "../../src/scripts/weekly-ranking-report.js";
+import {
+  buildReportCard,
+  fetchRankingEntriesFromBoardApi,
+  resolveBoardRankingUrl,
+} from "../../src/scripts/weekly-ranking-report.js";
 
 function makeEntry(
   overrides: Partial<{
@@ -75,5 +79,59 @@ describe("buildReportCard", () => {
     const top3 = [makeEntry({ rank: 1, memberName: "杨斌", cumulativeAq: 22 })];
     const result = buildReportCard(top3, []);
     expect(result).toContain("22AQ");
+  });
+});
+
+describe("weekly ranking source", () => {
+  it("uses board API rows as the ranking source of truth", async () => {
+    const fetchImpl = async () => new Response(JSON.stringify({
+      ok: true,
+      rows: [
+        {
+          rank: 1,
+          memberName: "杨斌",
+          currentLevel: 3,
+          cumulativeAq: 69,
+          totalScore: 69,
+          dimensions: { K: 13, H: 16, C: 23, S: 9, G: 8 },
+        },
+        {
+          rank: 2,
+          memberName: "陈文超",
+          currentLevel: 3,
+          cumulativeAq: 66,
+          totalScore: 66,
+          dimensions: { K: 10, H: 16, C: 21, S: 6, G: 13 },
+        },
+      ],
+    }), { status: 200 });
+
+    const entries = await fetchRankingEntriesFromBoardApi(
+      "http://127.0.0.1:3001/api/v2/board/ranking",
+      fetchImpl,
+    );
+
+    expect(entries).toEqual([
+      {
+        rank: 1,
+        memberName: "杨斌",
+        currentLevel: 3,
+        cumulativeAq: 69,
+        dimensions: { K: 13, H: 16, C: 23, S: 9, G: 8 },
+      },
+      {
+        rank: 2,
+        memberName: "陈文超",
+        currentLevel: 3,
+        cumulativeAq: 66,
+        dimensions: { K: 10, H: 16, C: 21, S: 6, G: 13 },
+      },
+    ]);
+  });
+
+  it("resolves the board API URL from the production port", () => {
+    expect(resolveBoardRankingUrl({ PORT: "3001" })).toBe(
+      "http://127.0.0.1:3001/api/v2/board/ranking",
+    );
   });
 });

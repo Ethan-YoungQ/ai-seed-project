@@ -15,9 +15,7 @@ import {
   withResolvedFeishuConfig,
 } from "../services/feishu/config.js";
 import { LarkFeishuApiClient } from "../services/feishu/client.js";
-import { SqliteRepository } from "../storage/sqlite-repository.js";
 
-const DEFAULT_DB_PATH = "./data/app.db";
 const TOP_N = 3;
 const BOTTOM_N = 3;
 
@@ -29,11 +27,62 @@ export interface RankingEntry {
   cumulativeAq: number;
 }
 
+type BoardRankingRow = {
+  rank?: number;
+  memberName?: string;
+  currentLevel?: number;
+  dimensions?: Partial<Record<"K" | "H" | "C" | "S" | "G", number>>;
+  cumulativeAq?: number;
+  totalScore?: number;
+};
+
+type BoardRankingResponse = {
+  ok?: boolean;
+  rows?: BoardRankingRow[];
+};
+
 function rankEmoji(rank: number): string {
   if (rank === 1) return "🥇";
   if (rank === 2) return "🥈";
   if (rank === 3) return "🥉";
   return `${rank}.`;
+}
+
+export function resolveBoardRankingUrl(env: Record<string, string | undefined> = process.env): string {
+  if (env.WEEKLY_RANKING_BOARD_URL?.trim()) {
+    return env.WEEKLY_RANKING_BOARD_URL.trim();
+  }
+  const port = env.PORT?.trim() || "3000";
+  return `http://127.0.0.1:${port}/api/v2/board/ranking`;
+}
+
+export async function fetchRankingEntriesFromBoardApi(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<RankingEntry[]> {
+  const response = await fetchImpl(url);
+  if (!response.ok) {
+    throw new Error(`board ranking api failed: ${response.status}`);
+  }
+
+  const payload = await response.json() as BoardRankingResponse;
+  if (payload.ok !== true || !Array.isArray(payload.rows)) {
+    throw new Error("board ranking api returned invalid payload");
+  }
+
+  return payload.rows.map((row, index) => ({
+    rank: row.rank ?? index + 1,
+    memberName: row.memberName || "未知",
+    currentLevel: row.currentLevel ?? 1,
+    dimensions: {
+      K: row.dimensions?.K ?? 0,
+      H: row.dimensions?.H ?? 0,
+      C: row.dimensions?.C ?? 0,
+      S: row.dimensions?.S ?? 0,
+      G: row.dimensions?.G ?? 0,
+    },
+    cumulativeAq: row.totalScore ?? row.cumulativeAq ?? 0,
+  }));
 }
 
 export function buildReportCard(
@@ -87,35 +136,12 @@ async function main() {
     throw new Error("FEISHU_BOT_CHAT_ID not configured");
   }
 
-  // Initialize repository to fetch ranking
-  const dbUrl = process.env.DATABASE_URL || DEFAULT_DB_PATH;
-  const repository = new SqliteRepository(dbUrl);
-
-  // Query database for current ranking
-  const campId = repository.getDefaultCampId();
-  if (!campId) {
-    throw new Error("No default camp configured — cannot generate ranking report");
-  }
-  const ranking = repository.fetchRankingByCamp(campId);
-
-  if (!ranking || ranking.length === 0) {
+  const boardUrl = resolveBoardRankingUrl(process.env);
+  const entries = await fetchRankingEntriesFromBoardApi(boardUrl);
+  if (entries.length === 0) {
     console.log("[WeeklyRanking] No ranking data, skipping");
     return;
   }
-
-  const entries: RankingEntry[] = ranking.map((r, i) => ({
-    rank: i + 1,
-    memberName: r.memberName || "未知",
-    currentLevel: r.currentLevel ?? 1,
-    dimensions: {
-      K: r.dimensions?.K ?? 0,
-      H: r.dimensions?.H ?? 0,
-      C: r.dimensions?.C ?? 0,
-      S: r.dimensions?.S ?? 0,
-      G: r.dimensions?.G ?? 0,
-    },
-    cumulativeAq: r.cumulativeAq ?? 0,
-  }));
 
   const top3 = entries.slice(0, TOP_N);
   const bottom3 = [...entries
