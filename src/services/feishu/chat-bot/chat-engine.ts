@@ -7,6 +7,11 @@ import type { ChatContextBlock } from "./recent-context.js";
 import type { BotFactService, OperationalFacts } from "./fact-service.js";
 import { buildFactAnswer } from "./fact-answer.js";
 import { classifyBotQuestionIntent, type BotQuestionIntent } from "./intent-router.js";
+import {
+  buildDisclosureRefusal,
+  containsInternalDisclosure,
+  isInternalDisclosureRequest,
+} from "./safety-guard.js";
 
 export interface ChatEngineRepo {
   findMemberByOpenId(openId: string): {
@@ -38,6 +43,7 @@ export interface ChatReplyInput {
 export type ChatReplyUsed =
   | "llm"
   | "fact_answer"
+  | "safety_guard"
   | "rate_limited"
   | "error_fallback"
   | "empty_prompt";
@@ -152,6 +158,14 @@ export function createChatEngine(deps: ChatEngineDeps): ChatEngine {
       const role = (member?.roleType ?? "student") as AssistantRole;
       const memberName = member?.displayName ?? "同学";
 
+      if (isInternalDisclosureRequest(input.cleanedText)) {
+        return {
+          replyText: buildDisclosureRefusal(),
+          used: "safety_guard",
+          latencyMs: Date.now() - t0,
+        };
+      }
+
       const factAnswer = await resolveFactAnswer(deps.factService, input.openId, input.cleanedText);
       if (factAnswer) {
         return {
@@ -195,6 +209,14 @@ export function createChatEngine(deps: ChatEngineDeps): ChatEngine {
           replyText: `@${memberName} 我现在有点忙，稍后再问我哦 🤖`,
           used: "error_fallback",
           latencyMs: Date.now() - t0
+        };
+      }
+
+      if (containsInternalDisclosure(content)) {
+        return {
+          replyText: buildDisclosureRefusal(),
+          used: "safety_guard",
+          latencyMs: Date.now() - t0,
         };
       }
 
