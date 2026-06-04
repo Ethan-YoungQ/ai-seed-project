@@ -10,6 +10,7 @@ import { parseScoringDecision, type ScoringDecision } from "../../../domain/v3/s
 import { AI_BOOT_RULESET_VERSION } from "../../../domain/v3/scoring-rules.js";
 import type { SqliteRepository } from "../../../storage/sqlite-repository.js";
 import type { FeishuApiClient } from "../client.js";
+import { calculateCatchUpBonus } from "../../../domain/v2/catch-up.js";
 import type { MemberLite } from "../cards/types.js";
 import { buildReviewQueueCard } from "../cards/templates/review-queue-v1.js";
 import {
@@ -57,6 +58,8 @@ export interface AiBootOrchestratorDeps {
     | "countApprovedAiBootScoreEvents"
     | "sumApprovedAiBootScoreByCategory"
     | "sumApprovedAiBootScore"
+    | "getMemberLevel"
+    | "sumCatchUpBonusForPeriod"
     | "findActivePeriod"
     | "getMember"
     | "listAiBootReviewQueue"
@@ -288,6 +291,11 @@ export function createAiBootOrchestrator(
       }
 
       if (scoreEvent.status === "approved" && scoreEvent.scoreDelta !== 0) {
+        maybeInsertCatchUpBonus({
+          deps,
+          sourceEvent: event,
+          sourceScoreEvent: scoreEvent,
+        });
         await deps.afterApprovedScore?.(scoreEvent);
       }
 
@@ -362,6 +370,75 @@ export function createAiBootOrchestrator(
       }
     },
   };
+}
+
+function maybeInsertCatchUpBonus(input: {
+  deps: AiBootOrchestratorDeps;
+  sourceEvent: AiBootEventRecord;
+  sourceScoreEvent: AiBootScoreEventRecord;
+}): AiBootScoreEventRecord | null {
+  const { deps, sourceEvent, sourceScoreEvent } = input;
+  if (deps.config.engineMode !== "v3_live") {
+    return null;
+  }
+  if (sourceScoreEvent.status !== "approved" || sourceScoreEvent.scoreDelta <= 0) {
+    return null;
+  }
+
+  const period = deps.repo.findActivePeriod(deps.campId);
+  if (!period) {
+    return null;
+  }
+  const level = deps.repo.getMemberLevel(sourceScoreEvent.memberId);
+  const existingPeriodCatchUpBonus = deps.repo.sumCatchUpBonusForPeriod({
+    campId: deps.campId,
+    memberId: sourceScoreEvent.memberId,
+    decidedAtFrom: period.startedAt,
+    decidedAtTo: period.endedAt ?? "9999-12-31T23:59:59.999Z",
+  });
+  const catchUp = calculateCatchUpBonus({
+    activePeriodNumber: period.number,
+    currentLevel: level.currentLevel,
+    category: sourceScoreEvent.category,
+    scoreDelta: sourceScoreEvent.scoreDelta,
+    existingPeriodCatchUpBonus,
+  });
+  if (!catchUp.eligible || catchUp.bonusScore <= 0) {
+    return null;
+  }
+
+  const bonusEvent: AiBootScoreEventRecord = {
+    id: deps.uuid(),
+    eventId: `${sourceEvent.id}:catch-up`,
+    campId: sourceScoreEvent.campId,
+    memberId: sourceScoreEvent.memberId,
+    category: "operator_adjustment",
+    scoreDelta: catchUp.bonusScore,
+    confidence: "high",
+    status: "approved",
+    notifyPolicy: "silent",
+    reason: "强追赶机制：第 3 期仍为 Lv1 的学员完成高价值学习行为，按追赶倍率补充 AQ。",
+    evidence: sourceScoreEvent.evidence,
+    badgesJson: JSON.stringify(["catch_up_bonus", `source_category:${sourceScoreEvent.category}`]),
+    modelProvider: "deterministic",
+    modelName: "catch-up-multiplier",
+    promptVersion: "",
+    reviewedByOpId: null,
+    reviewNote: [
+      "catch_up_bonus:",
+      `sourceScoreEvent=${sourceScoreEvent.id};`,
+      `sourceEvent=${sourceEvent.id};`,
+      `category=${sourceScoreEvent.category};`,
+      `base=${sourceScoreEvent.scoreDelta};`,
+      `multiplier=${catchUp.multiplier};`,
+      `bonus=${catchUp.bonusScore};`,
+      `period=${period.id};`,
+      `existingPeriodCatchUpBonus=${existingPeriodCatchUpBonus}`,
+    ].join(" "),
+    decidedAt: sourceScoreEvent.decidedAt,
+  };
+
+  return deps.repo.insertAiBootScoreEvent(bonusEvent) ? bonusEvent : null;
 }
 
 async function pushReviewQueueCard(input: {

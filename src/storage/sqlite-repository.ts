@@ -564,6 +564,19 @@ CREATE TABLE IF NOT EXISTS v2_level_announcement_ordinals (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_v2_level_announcement_ordinals_level_member
   ON v2_level_announcement_ordinals (level, member_id);
 
+CREATE TABLE IF NOT EXISTS v2_promotion_nudge_records (
+  id TEXT PRIMARY KEY,
+  camp_id TEXT NOT NULL,
+  member_id TEXT NOT NULL,
+  target_level INTEGER NOT NULL,
+  score_at_reminder INTEGER NOT NULL,
+  gap_at_reminder INTEGER NOT NULL,
+  reminded_at TEXT NOT NULL,
+  UNIQUE(camp_id, member_id, target_level)
+);
+CREATE INDEX IF NOT EXISTS idx_v2_promotion_nudge_records_camp_reminded
+  ON v2_promotion_nudge_records (camp_id, reminded_at DESC);
+
 CREATE TABLE IF NOT EXISTS v2_member_badges (
   member_id TEXT NOT NULL,
   badge_id TEXT NOT NULL,
@@ -2820,6 +2833,48 @@ export class SqliteRepository {
          VALUES (@level, @ordinal, @memberId, @memberName, @windowId, @announcedAt)`
       )
       .run(input);
+  }
+
+  insertPromotionNudgeRecord(input: {
+    id: string;
+    campId: string;
+    memberId: string;
+    targetLevel: number;
+    scoreAtReminder: number;
+    gapAtReminder: number;
+    remindedAt: string;
+  }): boolean {
+    const result = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO v2_promotion_nudge_records
+          (id, camp_id, member_id, target_level, score_at_reminder, gap_at_reminder, reminded_at)
+         VALUES
+          (@id, @campId, @memberId, @targetLevel, @scoreAtReminder, @gapAtReminder, @remindedAt)`
+      )
+      .run(input);
+    return result.changes > 0;
+  }
+
+  sumCatchUpBonusForPeriod(input: {
+    campId: string;
+    memberId: string;
+    decidedAtFrom: string;
+    decidedAtTo: string;
+  }): number {
+    const row = this.db
+      .prepare(
+        `SELECT COALESCE(SUM(score_delta), 0) AS score
+         FROM ai_boot_score_events
+         WHERE camp_id = @campId
+           AND member_id = @memberId
+           AND category = 'operator_adjustment'
+           AND status = 'approved'
+           AND review_note LIKE 'catch_up_bonus:%'
+           AND decided_at >= @decidedAtFrom
+           AND decided_at < @decidedAtTo`
+      )
+      .get(input) as { score: number } | undefined;
+    return Number(row?.score ?? 0);
   }
 
   // ==========================================================================

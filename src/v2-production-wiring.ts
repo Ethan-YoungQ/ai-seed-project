@@ -23,6 +23,8 @@ import type { FeishuCardJson } from "./services/feishu/cards/types.js";
 import { settleWindow, type SettlerDependencies } from "./domain/v2/window-settler.js";
 import { detectAnnounceablePromotions } from "./domain/v2/promotion-announcer.js";
 import { buildFirstThreeAnnouncementCard } from "./services/feishu/cards/templates/first-three-announcement-v1.js";
+import { findNearPromotionNudge } from "./domain/v2/catch-up.js";
+import { buildPromotionNudgeCard } from "./services/feishu/cards/templates/promotion-nudge-v1.js";
 import {
   evaluateContinuousPromotion,
   type ContinuousLevelValue,
@@ -687,7 +689,48 @@ function buildContinuousPromotionRuntime(
     }
   }
 
-  async function evaluateMember(memberId: string): Promise<void> {
+  async function nudgeNearPromotionIfEligible(input: {
+    memberId: string;
+    memberName: string;
+    totalScore: number;
+    dimensions: { K: number; H: number; C: number; S: number; G: number };
+  }): Promise<void> {
+    if (!options?.sendCard || !options.groupChatId) {
+      return;
+    }
+    const level = repo.getMemberLevel(input.memberId);
+    const nudge = findNearPromotionNudge({
+      currentLevel: level.currentLevel,
+      totalScore: input.totalScore,
+      dimensions: input.dimensions,
+      maxGap: 5,
+    });
+    if (!nudge) {
+      return;
+    }
+
+    const inserted = repo.insertPromotionNudgeRecord({
+      id: crypto.randomUUID(),
+      campId,
+      memberId: input.memberId,
+      targetLevel: nudge.targetLevel,
+      scoreAtReminder: input.totalScore,
+      gapAtReminder: nudge.gap,
+      remindedAt: new Date().toISOString(),
+    });
+    if (!inserted) {
+      return;
+    }
+
+    await options.sendCard(options.groupChatId, buildPromotionNudgeCard({
+      memberName: input.memberName,
+      targetLevel: nudge.targetLevel,
+      gap: nudge.gap,
+      totalScore: input.totalScore,
+    }));
+  }
+
+  async function evaluateMember(memberId: string, runtimeOptions: { allowNudge: boolean } = { allowNudge: true }): Promise<void> {
     const member = repo.getMember(memberId);
     if (
       !member ||
@@ -707,6 +750,14 @@ function buildContinuousPromotionRuntime(
       dimensions: totals.dimensions,
     });
     if (!decision.promoted) {
+      if (runtimeOptions.allowNudge) {
+        await nudgeNearPromotionIfEligible({
+          memberId,
+          memberName: member.displayName || member.name || memberId,
+          totalScore: totals.totalScore,
+          dimensions: totals.dimensions,
+        });
+      }
       return;
     }
 
@@ -771,7 +822,15 @@ function buildContinuousPromotionRuntime(
         )
         .map((row) => row.memberId);
       for (const memberId of rankedMemberIds) {
-        this.trigger(memberId);
+        if (inFlight.has(memberId)) continue;
+        inFlight.add(memberId);
+        void evaluateMember(memberId, { allowNudge: false })
+          .catch((error) => {
+            console.error("[ContinuousPromotion] backfill evaluation failed:", error);
+          })
+          .finally(() => {
+            inFlight.delete(memberId);
+          });
       }
     },
   };
@@ -1022,7 +1081,7 @@ export function wireV2Production(
     .catch((err) => {
       console.error("[WindowSettlement] Backfill failed:", err);
     });
-  if (process.env.V2_CONTINUOUS_PROMOTION_BACKFILL === "true") {
+  if (shouldBackfillContinuousPromotion(process.env.V2_CONTINUOUS_PROMOTION_BACKFILL)) {
     continuousPromotion.backfillEligible();
   }
 
@@ -1036,4 +1095,8 @@ export function wireV2Production(
     continuousPromotion,
     badgeSettlement,
   };
+}
+
+export function shouldBackfillContinuousPromotion(value: string | undefined): boolean {
+  return (value ?? "true").trim().toLowerCase() !== "false";
 }

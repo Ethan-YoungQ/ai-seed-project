@@ -883,4 +883,79 @@ describe("SqliteRepository ai boot v3", () => {
     });
     r.close();
   });
+
+  it("deduplicates near-promotion nudges by member and target level", () => {
+    const r = repo();
+
+    expect(r.insertPromotionNudgeRecord({
+      id: "nudge-1",
+      campId: "default",
+      memberId: "m-1",
+      targetLevel: 2,
+      scoreAtReminder: 29,
+      gapAtReminder: 3,
+      remindedAt: "2026-06-04T08:00:00.000Z",
+    })).toBe(true);
+    expect(r.insertPromotionNudgeRecord({
+      id: "nudge-duplicate",
+      campId: "default",
+      memberId: "m-1",
+      targetLevel: 2,
+      scoreAtReminder: 30,
+      gapAtReminder: 2,
+      remindedAt: "2026-06-04T09:00:00.000Z",
+    })).toBe(false);
+    expect(r.insertPromotionNudgeRecord({
+      id: "nudge-next-level",
+      campId: "default",
+      memberId: "m-1",
+      targetLevel: 3,
+      scoreAtReminder: 61,
+      gapAtReminder: 3,
+      remindedAt: "2026-06-05T09:00:00.000Z",
+    })).toBe(true);
+
+    r.close();
+  });
+
+  it("sums only approved catch-up bonus score events in the active period", () => {
+    const r = repo();
+    insertPeriod(r);
+    r.insertAiBootEvent(event({ id: "evt-catch-up-1" }));
+    r.insertAiBootEvent(event({ id: "evt-catch-up-2", sourceMessageId: "om-2" }));
+    r.insertAiBootEvent(event({ id: "evt-other", sourceMessageId: "om-3" }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-catch-up-1",
+      eventId: "evt-catch-up-1:catch-up",
+      category: "operator_adjustment",
+      scoreDelta: 2,
+      reviewNote: "catch_up_bonus: sourceScoreEvent=score-1; period=period-2",
+      decidedAt: "2026-05-16T00:01:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-catch-up-2",
+      eventId: "evt-catch-up-2:catch-up",
+      category: "operator_adjustment",
+      scoreDelta: 3,
+      reviewNote: "catch_up_bonus: sourceScoreEvent=score-2; period=period-2",
+      decidedAt: "2026-05-17T00:01:00.000Z",
+    }));
+    r.insertAiBootScoreEvent(scoreEvent({
+      id: "score-other",
+      eventId: "evt-other",
+      category: "operator_adjustment",
+      scoreDelta: 7,
+      reviewNote: "manual_adjustment",
+      decidedAt: "2026-05-17T00:01:00.000Z",
+    }));
+
+    expect(r.sumCatchUpBonusForPeriod({
+      campId: "default",
+      memberId: "m-1",
+      decidedAtFrom: "2026-05-16T00:00:00.000Z",
+      decidedAtTo: "2026-05-18T00:00:00.000Z",
+    })).toBe(5);
+
+    r.close();
+  });
 });

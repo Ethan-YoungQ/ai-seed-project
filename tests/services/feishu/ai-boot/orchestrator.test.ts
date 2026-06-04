@@ -157,6 +157,13 @@ function makeDeps(
         status: "active",
       };
     }),
+    getMemberLevel: vi.fn(() => ({
+      memberId: "member-1",
+      currentLevel: 1,
+      levelAttainedAt: null,
+      lastWindowId: null,
+      updatedAt: null,
+    })),
     listAiBootReviewQueue: vi.fn((input: {
       campId: string;
       limit: number;
@@ -246,6 +253,24 @@ function makeDeps(
       createdAt: "2026-04-22T00:00:00.000Z",
       updatedAt: "2026-04-22T00:00:00.000Z",
     })),
+    sumCatchUpBonusForPeriod: vi.fn((input: {
+      campId: string;
+      memberId: string;
+      decidedAtFrom: string;
+      decidedAtTo: string;
+    }) =>
+      scoreEvents
+        .filter((event) =>
+          event.campId === input.campId &&
+          event.memberId === input.memberId &&
+          event.status === "approved" &&
+          event.category === "operator_adjustment" &&
+          (event.reviewNote ?? "").startsWith("catch_up_bonus:") &&
+          event.decidedAt >= input.decidedAtFrom &&
+          event.decidedAt < input.decidedAtTo,
+        )
+        .reduce((sum, event) => sum + event.scoreDelta, 0),
+    ),
   };
   const deps: AiBootOrchestratorDeps = {
     repo: repo as AiBootOrchestratorDeps["repo"],
@@ -336,6 +361,62 @@ describe("createAiBootOrchestrator", () => {
     });
     expect(deps.repo.sumApprovedAiBootScore("default", "member-1")).toBe(0);
     expect(deps.feishuClient.sendTextMessage).not.toHaveBeenCalled();
+  });
+
+  it("adds an audited catch-up bonus for Lv1 high-value work in period 3 before triggering promotion", async () => {
+    const afterApprovedScore = vi.fn(async () => {
+      expect(deps.scoreEvents.map((event) => event.eventId)).toContain("evt-1:catch-up");
+    });
+    const deps = makeDeps({
+      now: () => "2026-06-04T09:00:00.000Z",
+      uuid: vi.fn()
+        .mockReturnValueOnce("evt-1")
+        .mockReturnValueOnce("score-1")
+        .mockReturnValueOnce("score-catch-up-1"),
+      llmClient: makeLlmClient({
+        ...approvedArtifact,
+        scoreDelta: 4,
+      }),
+      afterApprovedScore,
+    });
+    (deps.repo.findActivePeriod as ReturnType<typeof vi.fn>).mockReturnValue({
+      id: "period-3",
+      campId: "default",
+      number: 3,
+      isIceBreaker: false,
+      startedAt: "2026-06-01T00:00:00.000Z",
+      endedAt: null,
+      openedByOpId: null,
+      closedReason: null,
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-01T00:00:00.000Z",
+    });
+    deps.config.allowGroupPraise = false;
+    const orchestrator = createAiBootOrchestrator(deps);
+
+    await orchestrator.handleMessage(message({
+      rawText: "我用 AI 做了一个客户海报，并复盘了操作流程。",
+      cleanedText: "我用 AI 做了一个客户海报，并复盘了操作流程。",
+    }));
+
+    expect(deps.scoreEvents).toHaveLength(2);
+    expect(deps.scoreEvents[0]).toMatchObject({
+      id: "score-1",
+      category: "ai_artifact",
+      scoreDelta: 4,
+      status: "approved",
+    });
+    expect(deps.scoreEvents[1]).toMatchObject({
+      id: "score-catch-up-1",
+      eventId: "evt-1:catch-up",
+      category: "operator_adjustment",
+      scoreDelta: 2,
+      status: "approved",
+      notifyPolicy: "silent",
+    });
+    expect(deps.scoreEvents[1].reviewNote).toContain("catch_up_bonus:");
+    expect(deps.scoreEvents[1].reviewNote).toContain("multiplier=1.5");
+    expect(afterApprovedScore).toHaveBeenCalledTimes(1);
   });
 
   it("records the text scoring model name when an image is scored from cached understanding", async () => {
