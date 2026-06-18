@@ -1166,7 +1166,12 @@ async function handleManualAdjustTrigger(
   }
 
   try {
-    const allMembers = provider.listAllMembers();
+    const allMembers = provider.listAllMembers()
+      .filter((m) =>
+        m.roleType === "student" &&
+        m.isParticipant &&
+        !m.isExcludedFromBoard
+      );
     const state: ManualAdjustState = {
       members: allMembers.map((m) => ({
         id: m.id,

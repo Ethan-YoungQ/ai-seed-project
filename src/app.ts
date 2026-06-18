@@ -405,10 +405,23 @@ export async function createApp(options?: {
               },
               autoRegister: async (openId: string) => {
                 try {
+                  const existing = repository.findMemberByFeishuOpenId(openId);
+                  if (existing) {
+                    return {
+                      id: existing.id,
+                      displayName: existing.displayName || existing.name || "同学",
+                    };
+                  }
+
                   // Fetch name and avatar from Feishu API
-                  const profile = feishuApiClient.getMemberProfile
-                    ? await feishuApiClient.getMemberProfile({ userId: openId, userIdType: "open_id" })
-                    : null;
+                  let profile: Awaited<ReturnType<NonNullable<typeof feishuApiClient.getMemberProfile>>> | null = null;
+                  try {
+                    profile = feishuApiClient.getMemberProfile
+                      ? await feishuApiClient.getMemberProfile({ userId: openId, userIdType: "open_id" })
+                      : null;
+                  } catch (profileErr) {
+                    console.warn("[AutoRegister] Member profile unavailable, using fallback name:", profileErr);
+                  }
                   const name = profile?.displayName || `学员${openId.slice(-6)}`;
                   const avatarUrl = profile?.avatarUrl || `https://api.dicebear.com/7.x/initials/svg?seed=${encodeURIComponent(name)}`;
                   const memberId = `user-${openId.slice(-8)}`;
@@ -420,6 +433,18 @@ export async function createApp(options?: {
                     `INSERT OR IGNORE INTO members (id, camp_id, name, display_name, avatar_url, department, role_type, source_feishu_open_id, is_participant, is_excluded_from_board, status, hidden_from_board)
                      VALUES (?, ?, ?, ?, ?, '', 'student', ?, 1, 0, 'active', 0)`
                   ).run(memberId, campId, name, name, avatarUrl, openId);
+
+                  if (!repository.getAiBootLegacyScoreSnapshot(campId, memberId)) {
+                    repository.upsertAiBootLegacyScoreSnapshot({
+                      id: `legacy-snapshot-${campId}-${memberId}`,
+                      campId,
+                      memberId,
+                      totalScore: 0,
+                      dimensionJson: "{}",
+                      sourceNote: "auto_register_zero_baseline",
+                      snapshotAt: new Date().toISOString(),
+                    });
+                  }
 
                   console.log(`[AutoRegister] Created student: ${name} (${memberId})`);
                   return { id: memberId, displayName: name };

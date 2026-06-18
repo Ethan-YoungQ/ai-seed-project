@@ -589,6 +589,8 @@ describe("message-commands operator command routing", () => {
     expect(deps.feishuClient.sendCardMessage).toHaveBeenCalledOnce();
     const cardJson = JSON.stringify((deps.feishuClient.sendCardMessage as ReturnType<typeof vi.fn>).mock.calls[0][0].cardJson);
     expect(cardJson).toContain("手动调分");
+    expect(cardJson).toContain("学员甲");
+    expect(cardJson).not.toContain("运营员");
     expect(deps.chatBot?.engine.reply).not.toHaveBeenCalled();
   });
 

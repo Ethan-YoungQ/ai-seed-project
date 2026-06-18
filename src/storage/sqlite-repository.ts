@@ -205,8 +205,13 @@ CREATE TABLE IF NOT EXISTS members (
   role_type TEXT NOT NULL,
   is_participant INTEGER NOT NULL DEFAULT 1,
   is_excluded_from_board INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'active'
+  status TEXT NOT NULL DEFAULT 'active',
+  source_feishu_open_id TEXT NOT NULL DEFAULT '',
+  hidden_from_board INTEGER NOT NULL DEFAULT 0
 );
+CREATE UNIQUE INDEX IF NOT EXISTS idx_members_source_feishu_open_id_unique
+  ON members (source_feishu_open_id)
+  WHERE source_feishu_open_id <> '';
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   camp_id TEXT NOT NULL,

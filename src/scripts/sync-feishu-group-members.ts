@@ -96,20 +96,40 @@ async function main(): Promise<void> {
       source_feishu_open_id = excluded.source_feishu_open_id,
       avatar_url = excluded.avatar_url
   `);
+  const ensureZeroLegacySnapshot = db.prepare(`
+    INSERT INTO ai_boot_legacy_score_snapshots
+      (id, camp_id, member_id, total_score, dimension_json, source_note, snapshot_at)
+    SELECT ?, ?, ?, 0, '{}', ?, ?
+    WHERE NOT EXISTS (
+      SELECT 1 FROM ai_boot_legacy_score_snapshots
+      WHERE camp_id = ? AND member_id = ?
+    )
+  `);
 
   const insertMany = db.transaction((items: typeof students) => {
     let inserted = 0;
     let updated = 0;
     for (const s of items) {
       const memberId = `user-${s.openId.slice(-8)}`;
-      const existing = db.prepare(`SELECT id FROM members WHERE id = ?`).get(memberId);
-      upsert.run(memberId, campId, s.name, s.avatarUrl, s.openId);
+      const existingByOpenId = db.prepare(`SELECT id FROM members WHERE source_feishu_open_id = ? LIMIT 1`).get(s.openId) as { id: string } | undefined;
+      const targetMemberId = existingByOpenId?.id ?? memberId;
+      const existing = db.prepare(`SELECT id FROM members WHERE id = ?`).get(targetMemberId);
+      upsert.run(targetMemberId, campId, s.name, s.avatarUrl, s.openId);
+      ensureZeroLegacySnapshot.run(
+        `legacy-snapshot-${campId}-${targetMemberId}`,
+        campId,
+        targetMemberId,
+        "sync_feishu_group_members_zero_baseline",
+        new Date().toISOString(),
+        campId,
+        targetMemberId
+      );
       if (existing) {
         updated++;
-        console.log(`  ~ ${s.name} (${memberId}) 已存在，更新 open_id`);
+        console.log(`  ~ ${s.name} (${targetMemberId}) 已存在，更新 open_id`);
       } else {
         inserted++;
-        console.log(`  + ${s.name} (${memberId}) → 新增学员`);
+        console.log(`  + ${s.name} (${targetMemberId}) → 新增学员`);
       }
     }
     return { inserted, updated };
