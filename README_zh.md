@@ -2,19 +2,23 @@
 
 [English](README.md) | **中文**
 
-# AI Seed Project
+# AI Seed Project - 飞书机器人培训评估系统
 
-### **让每一次发言都有回响，让每一份努力都被看见。**
-
-*当 AI 遇上企业培训，一场关于「参与感」的革命悄然发生。*
+AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书机器人培训评估系统：把群聊发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板追踪培训参与度。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org/)
-[![Fastify](https://img.shields.io/badge/Fastify-4.x-000?logo=fastify)](https://fastify.dev/)
-[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev/)
+[![Fastify](https://img.shields.io/badge/Fastify-5.x-000?logo=fastify)](https://fastify.dev/)
+[![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite)](https://sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**开始使用：** [Quick Start](#quick-start) | [飞书配置](docs/feishu-setup.md) | [管理员手册](docs/admin-guide.md) | [评分规则](docs/student-rules-guide.md)
+
 </div>
+
+**搜索意图：** 适合正在找飞书机器人、培训评估/企业培训系统、学习积分/排行榜/助教机器人 的团队。
+
+> **边界：** 本项目是自托管工程模板，不是飞书官方产品；需要自建飞书应用、飞书群/Base 配置和 OpenAI-compatible LLM 服务。接入真实学员数据前，请自行完成权限、隐私、数据留存和合规审查。
 
 ---
 
