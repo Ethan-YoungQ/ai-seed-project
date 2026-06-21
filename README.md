@@ -2,19 +2,23 @@
 
 **English** | [中文](README_zh.md)
 
-# AI Seed Project
+# AI Seed Project - Feishu Bot for AI Training Evaluation
 
-### **Every voice deserves a response. Every effort deserves to be seen.**
-
-*When AI meets corporate training, a revolution in engagement quietly begins.*
+A TypeScript system for AI bootcamps, corporate training, and learning communities: Feishu group messages, images, files, quiz cards, and reactions become evidence for LLM-assisted scoring, admin review, and a gamified leaderboard dashboard.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org/)
-[![Fastify](https://img.shields.io/badge/Fastify-4.x-000?logo=fastify)](https://fastify.dev/)
-[![React](https://img.shields.io/badge/React-18-61dafb?logo=react)](https://react.dev/)
+[![Fastify](https://img.shields.io/badge/Fastify-5.x-000?logo=fastify)](https://fastify.dev/)
+[![React](https://img.shields.io/badge/React-19-61dafb?logo=react)](https://react.dev/)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite)](https://sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
+**Start here:** [Quick Start](#quick-start) | [Feishu setup](docs/feishu-setup.md) | [Admin guide](docs/admin-guide.md) | [Student scoring rules](docs/student-rules-guide.md)
+
 </div>
+
+**Search intent:** Feishu bot, AI training evaluation, training scoring system, LLM rubric scoring, multimodal scoring, gamified learning dashboard.
+
+> **Boundary:** This is a self-hosted engineering template. It requires a Feishu self-built app, Feishu group/Base configuration, and an OpenAI-compatible LLM provider; review consent, privacy, and data retention before using real learner data.
 
 ---
 
