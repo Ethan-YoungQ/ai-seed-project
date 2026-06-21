@@ -2,9 +2,11 @@
 
 **English** | [中文](README_zh.md)
 
-# AI Seed Project - Feishu Bot for AI Training Evaluation
+# AI Seed Project - 飞书机器人培训评估系统 / AI Training Evaluation
 
-A TypeScript system for AI bootcamps, corporate training, and learning communities: Feishu group messages, images, files, quiz cards, and reactions become evidence for LLM-assisted scoring, admin review, and a gamified leaderboard dashboard.
+AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书机器人培训评估系统：把群聊发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板追踪培训参与度。
+
+English: a self-hosted TypeScript system for AI bootcamps, corporate training, and learning communities, with Feishu bot capture, LLM-assisted scoring, admin review cards, and a gamified learning dashboard.
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Fastify](https://img.shields.io/badge/Fastify-5.x-000?logo=fastify)](https://fastify.dev/)
@@ -16,9 +18,9 @@ A TypeScript system for AI bootcamps, corporate training, and learning communiti
 
 </div>
 
-**Search intent:** Feishu bot, AI training evaluation, training scoring system, LLM rubric scoring, multimodal scoring, gamified learning dashboard.
+**Search intent:** for teams searching for 飞书机器人, 培训评估/企业培训系统, and 学习积分/排行榜/助教机器人.
 
-> **Boundary:** This is a self-hosted engineering template. It requires a Feishu self-built app, Feishu group/Base configuration, and an OpenAI-compatible LLM provider; review consent, privacy, and data retention before using real learner data.
+> **Boundary:** This is a self-hosted engineering template, not an official Feishu product. It requires a Feishu self-built app, Feishu group/Base configuration, and an OpenAI-compatible LLM provider; review consent, privacy, and data retention before using real learner data.
 
 ---
 
