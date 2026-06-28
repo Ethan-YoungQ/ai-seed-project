@@ -4,7 +4,7 @@
 
 # AI Seed Project - 飞书机器人培训评估系统 / AI Training Evaluation
 
-AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书机器人培训评估系统：把群聊发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板追踪培训参与度。
+AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书机器人培训评估系统：把群聊发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板追踪培训参与度。它适合需要助教机器人、培训评估、企业培训系统和学习积分机制的团队自托管使用。
 
 English: a self-hosted TypeScript system for AI bootcamps, corporate training, and learning communities, with Feishu bot capture, LLM-assisted scoring, admin review cards, and a gamified learning dashboard.
 
@@ -18,7 +18,9 @@ English: a self-hosted TypeScript system for AI bootcamps, corporate training, a
 
 </div>
 
-**Search intent:** for teams searching for 飞书机器人, 培训评估/企业培训系统, and 学习积分/排行榜/助教机器人.
+**Search intent:** for teams searching for 飞书机器人, 培训评估, 企业培训, 培训评估系统, 学习积分, 排行榜, and 助教机器人.
+
+**Typical scenarios:** AI bootcamps that need automatic participation tracking, corporate training teams that need process-based evaluation, learning communities that use points and leaderboards, and admins who review or adjust scores through Feishu cards.
 
 > **Boundary:** This is a self-hosted engineering template, not an official Feishu product. It requires a Feishu self-built app, Feishu group/Base configuration, and an OpenAI-compatible LLM provider; review consent, privacy, and data retention before using real learner data.
 
