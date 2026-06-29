@@ -1,12 +1,10 @@
 <div align="center">
 
-**English** | [中文](README_zh.md)
+[English](README.md) | **中文**
 
-# AI Seed Project - 飞书机器人培训评估系统 / AI Training Evaluation
+# AI Seed Project - 飞书机器人培训评估系统
 
-AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书机器人培训评估系统：把群聊发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板追踪培训参与度。它适合需要助教机器人、培训评估、企业培训系统和学习积分机制的团队自托管使用。
-
-English: a self-hosted TypeScript system for AI bootcamps, corporate training, and learning communities, with Feishu bot capture, LLM-assisted scoring, admin review cards, and a gamified learning dashboard.
+AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书助教机器人与培训评估系统。它把飞书群聊里的发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板，帮助团队持续追踪培训参与度。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Fastify](https://img.shields.io/badge/Fastify-5.x-000?logo=fastify)](https://fastify.dev/)
@@ -14,209 +12,209 @@ English: a self-hosted TypeScript system for AI bootcamps, corporate training, a
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite)](https://sqlite.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**Start here:** [Quick Start](#quick-start) | [Feishu setup](docs/feishu-setup.md) | [Admin guide](docs/admin-guide.md) | [Student scoring rules](docs/student-rules-guide.md)
+**开始使用：** [Quick Start](#quick-start) | [飞书配置](docs/feishu-setup.md) | [管理员手册](docs/admin-guide.md) | [评分规则](docs/student-rules-guide.md)
 
 </div>
 
-**Search intent:** for teams searching for 飞书机器人, 培训评估, 企业培训, 培训评估系统, 学习积分, 排行榜, and 助教机器人.
+**适合的搜索场景：** 企业培训团队想把飞书群聊变成可评估的学习过程；AI 训练营运营者想用助教机器人自动整理作业、发言和积分；管理员想自托管一套培训评估系统，而不是只做签到打卡。
 
-**Typical scenarios:** AI bootcamps that need automatic participation tracking, corporate training teams that need process-based evaluation, learning communities that use points and leaderboards, and admins who review or adjust scores through Feishu cards.
+**典型场景：** AI 训练营自动记录学员发言和作业；企业培训把群聊互动转成过程评估；学习社群用积分、等级和排行榜提高参与度；管理员通过飞书卡片审核、调分和查看看板。
 
-> **Boundary:** This is a self-hosted engineering template, not an official Feishu product. It requires a Feishu self-built app, Feishu group/Base configuration, and an OpenAI-compatible LLM provider; review consent, privacy, and data retention before using real learner data.
+> **边界：** 本项目是自托管工程模板，不是飞书官方产品；需要自建飞书应用、飞书群/Base 配置和 OpenAI-compatible LLM 服务。接入真实学员数据前，请自行完成权限、隐私、数据留存和合规审查。
 
 ---
 
-## The Training Industry's Pain Points
+## 培训行业的痛点
 
-Companies invest massive budgets in training every year, yet evaluating training effectiveness remains an unsolved challenge.
+企业每年在培训上投入巨额预算，但培训效果评估始终是一道未解的难题。
 
-| Pain Point | Current Situation | Consequence |
+| 痛点 | 现状 | 后果 |
 |:---:|:---:|:---:|
-| Delayed Assessment | Statistics gathered only after training ends | Missed intervention window |
-| Single-Dimensional | Only attendance and exams considered | Overlooking process performance |
-| High Manual Cost | TAs record everything manually | Exhaustion and omissions |
-| Learner Disengagement | Participants unaware of their performance | Lack of motivation to participate |
-| Data Silos | Scattered across platforms | Cannot be consolidated or reused |
+| 评估滞后 | 结营后才统计 | 错过干预窗口 |
+| 维度单一 | 只看签到和考试 | 忽视过程表现 |
+| 人工成本高 | 助教全程记录 | 疲惫且遗漏 |
+| 学员无感 | 不知道自己表现如何 | 缺乏参与动力 |
+| 数据孤岛 | 散落在各平台 | 无法沉淀复用 |
 
-> *What we need is not another check-in tool, but an intelligent system that truly understands learning behavior.*
+> *我们需要的不是另一个打卡工具，而是一个真正理解「学习行为」的智能系统。*
 
 ---
 
-## Solution: Group Chat as Classroom, Messages as Scores
+## 解决方案：群聊即课堂，发言即评分
 
-A **zero-friction, fully automated, AI-driven** training evaluation system.
+一套 **「零摩擦、全自动、AI 驱动」** 的培训评估系统。
 
-No app installation required, no new tools to learn---**just communicate naturally in the Feishu group chat, and the system automatically captures everything, AI scores in real time, and the dashboard displays results instantly.**
+学员无需安装任何应用、无需学习任何操作——**在飞书群里自然交流，系统自动捕获一切，AI 实时评分，大屏即时呈现。**
 
 <div align="center">
 
-![System Architecture Overview](docs/images/architecture.svg)
+![系统架构全景](docs/images/architecture.svg)
 
 </div>
 
 ---
 
-## Core Features
+## 核心功能
 
-### 1. Full-Spectrum Awareness: AI Silently Records Everything
+### 1. 全域感知：AI 无声记录一切
 
-The system works like an indefatigable "super teaching assistant," silently active in the group 24/7. Every message, every image, every file, every interaction---all automatically captured, zero omissions.
+系统像一位不知疲倦的「超级助教」，7x24 小时在群里默默工作。每一条消息、每一张图片、每一个文件、每一次互动——**全部自动捕获，零遗漏。**
 
 ```
-Student posts a PPT screenshot
+学员发了一张 PPT 截图
     ↓
-System auto-identifies: this is a "learning outcome showcase"
+系统自动识别：这是一份「学习成果展示」
     ↓
-Classified under "Outcome Showcase" dimension, +8 points
+归入「成果展示」维度，+8 分
     ↓
-Leaderboard updates in real time ← entire process < 3 seconds
+排行榜实时更新 ← 整个过程 < 3 秒
 ```
 
-### 2. Five-Dimension Scoring Model: 15 Granular Metrics
+### 2. 五维评分模型：15 项精细指标
 
 <div align="center">
 
-![Five-Dimension Scoring Model](docs/images/scoring-dimensions.svg)
+![五维评分模型](docs/images/scoring-dimensions.svg)
 
 </div>
 
-| Dimension | Code | Scoring Items | Description |
+| 维度 | 代号 | 评分项 | 说明 |
 |:---:|:---:|:---|:---|
-| **Knowledge** | K | K1 Daily Check-in, K2 In-class Quiz, K3 Knowledge Summary, K4 AI Correction | How much was learned and understood |
-| **Hands-on** | H | H1 Assignment Submission, H2 Practice Screenshots, H3 Video Check-in | Whether they practiced and submitted work |
-| **Creativity** | C | C1 Creative Sharing, C2 Like Interaction, C3 Deep Creation | Whether they showed creativity and new ideas |
-| **Social** | S | S1 Group Message Interaction, S2 Peer Review Contribution | Whether they were active and helped others |
-| **Growth** | G | G1 Video Learning, G2 Extracurricular Resource Sharing, G3 Sustained Activity | Whether they reflected, improved, and shared resources |
+| **知识力** | K | K1 每日签到、K2 随堂测验、K3 知识总结、K4 AI 纠错 | 学了多少、理解了多少 |
+| **实操力** | H | H1 作业提交、H2 实操截图、H3 视频打卡 | 有没有动手做、交作业 |
+| **创新力** | C | C1 创意分享、C2 点赞互动、C3 深度创作 | 有没有创意和新想法 |
+| **社交力** | S | S1 群消息互动、S2 互评贡献 | 活不活跃、有没有帮助别人 |
+| **成长力** | G | G1 视频学习、G2 课外资源分享、G3 持续活跃 | 有没有反思进步、分享资源 |
 
-### 3. AI Boot v3: Semantic Scoring + Low-Noise Operations
+### 3. AI Boot v3：语义评分 + 低干扰运营
 
-**Semantic Scoring**: Upgraded from keyword whitelists to LLM-based semantic understanding. When a message arrives, AI combines text, image understanding results, and file summaries to determine the contribution type, covering daily participation, AI-generated content, practice reviews, methodology sharing, resource recommendations, peer assistance, and formal tasks.
+**语义评分**：从关键词白名单升级为 LLM 语义理解。一条消息进入后，AI 会结合文本、图片理解结果和文件摘要判断贡献类型，覆盖日常参与、AI 产物、实践复盘、方法分享、资源推荐、同伴帮助和正式任务等场景。
 
-- `qwen3.5-flash` powers text scoring, image understanding, and TA Q&A, all via a unified OpenAI-compatible API
-- Images are asynchronously understood and cached first; subsequent scoring reads only the image descriptions to avoid blocking group chat replies with heavy image recognition
-- Image-only messages support background re-scoring and restart recovery; real group message replay waits for async tasks to complete before closing the database
-- AI Boot v3 supports `v3_shadow` bypass mode: real database writes, auditable, replayable, but does not directly affect existing leaderboard scores
+- `qwen3.5-flash` 驱动文本评分、图片理解和助教问答，统一走 OpenAI-compatible 接口
+- 图片先做异步理解并写入缓存，后续评分只读取图片描述，避免群聊回复被大图识别阻塞
+- 图片-only 消息支持后台补评和重启恢复；真实群消息回放会等待异步任务完成后再关闭数据库
+- AI Boot v3 支持 `v3_shadow` 旁路运行：真实落库、可审核、可回放，但不直接改动现有榜单分数
 
-**Proactive Praise Bot**: The bot no longer passively waits for @ mentions. When it detects a student's outstanding contribution (total score ≥ 3), it proactively posts short, specific encouragement in the group. Production frequency can be controlled via toggle---defaulting to fewer but more precise, to avoid disrupting the group chat:
+**主动夸赞 Bot**：Bot 不再被动等待 @ 提问。当检测到学员的精彩分享（总分 ≥ 3 分），可在群里主动发表短而具体的鼓励。生产环境可通过开关控制频率，默认先少而准，避免打扰群聊：
 
 ```
-@Yang Bin This AI workflow nails the business pain points---the implementation feel is off the charts 🔥
-@Wang Jing Effie The poster aesthetics and prompt approach are both on point---this creation is absolutely legendary 👏
+@杨斌 这份 AI 流程把业务痛点拿捏住了，落地感直接拉满 🔥
+@王静Effie 海报审美和 prompt 思路都在线，这波创作有点封神 👏
 ```
 
-> Praise messaging adopts a "Xiaohongshu/Douyin comment section" style---short, specific, and internet-savvy, avoiding repetitive canned phrases like "great question" or "welcome other students."
+> 夸赞话术采用「小红书/抖音评论区」风格，要求短、具体、有网感，避免反复使用“这个问题问得很好”“欢迎其他同学”等固定套话。
 
-**Context-Aware Group Chat TA**: When @-mentioned, the Singularity TA answers questions using recent group chat messages and files. Current scope: the 10 most recent chat messages + 2 most recent files, suitable for low-frequency training camp group chats; operational intents like score withdrawal, no-scoring, admin/review/adjustment are routed through dedicated handlers to avoid falling into casual conversation replies.
+**群聊上下文助教**：奇点小助教被 @ 后会结合最近群聊和文件回答问题。当前边界为最近 10 条群聊上下文 + 最近 2 份文件，适合低频训练营群聊；评分撤回、不要加分、管理/审核/调分等运营意图会优先走专门路由，避免误入闲聊回复。
 
-**Weekly Leaderboard Settlement**: Automatically posts the leaderboard report in the group every Thursday at 12:00---top 3 (🥇🥈🥉 with congratulatory messages) and bottom 3 (📌 with encouraging messages), powered by a systemd timer.
+**每周排行榜结算**：每周四 12:00 自动在群内发布排行榜报告——前三名（🥇🥈🥉 含表彰话术）和后三名（📌 含鼓励话术），由 systemd timer 驱动。
 
-### 4. Cyberpunk Real-Time Dashboard
+### 4. 赛博朋克实时大屏
 
-Hand-crafted CSS cyberpunk theme, designed to embed directly in Feishu group Tab pages.
+纯手写 CSS 赛博朋克主题，适配飞书群 Tab 页签直接嵌入。
 
-**Visual Style:** Neon glow / Dark backgrounds / Data particle streams / Sci-fi HUD interface
+**视觉风格：** 霓虹辉光 / 深色背景 / 数据粒子流 / 科幻 HUD 界面
 
 <div align="center">
 
-**Real-Time Leaderboard --- Grouped by tier, rank changes at a glance**
+**实时排行榜 —— 按段位分组，名次变动一目了然**
 
-![Leaderboard](docs/images/dashboard-leaderboard.png)
+![排行榜](docs/images/dashboard-leaderboard.png)
 
-**Member Detail Page --- Badge wall + Radar chart + Five-dimension analysis + Growth timeline**
+**个人详情页 —— 勋章墙 + 雷达图 + 五维分析 + 成长时间线**
 
-![Member Detail](docs/images/dashboard-member-detail.png)
+![个人详情](docs/images/dashboard-member-detail.png)
 
 </div>
 
-### 5. Five-Level Growth System
+### 5. 五级成长体系
 
-| Level | Title | AQ Threshold | Meaning |
+| Level | 称号 | AQ 门槛 | 含义 |
 |:-----:|:----:|:------:|:-----|
-| 1 | 🌱 **AI Prospect** | 0+ | Just joined the camp, everything is possible |
-| 2 | 🔬 **AI Researcher** | 32+ or meet Lv2 multi-path | Starting to think deeply, showing professional growth |
-| 3 | 🎯 **AI Operator** | 64+ | Applying knowledge with significant results |
-| 4 | 🧠 **AI Advisor** | 128+ | Influencing others, becoming a team thought leader |
-| 5 | ⚡ **AI Singularity Player** | 224+ | Excellence across all dimensions, pushing cognitive boundaries |
+| 1 | 🌱 **AI 潜力股** | 0+ | 刚刚入营，一切皆有可能 |
+| 2 | 🔬 **AI 研究员** | 32+ 或满足 Lv2 多路径 | 开始深入思考，展现专业素养 |
+| 3 | 🎯 **AI 操盘手** | 64+ | 学以致用，成果显著 |
+| 4 | 🧠 **AI 智慧顾问** | 128+ | 影响他人，成为团队智囊 |
+| 5 | ⚡ **AI 奇点玩家** | 224+ | 全维度卓越，突破认知边界 |
 
-Level-ups no longer depend on settlement cycles---promotions happen continuously once requirements are met. Lv2 additionally supports multi-path evaluation: 24+ points with C/S/G signals, 32+ points on the strong practice path, or 20+ points on the multi-dimensional activity path can all trigger promotion, preventing "hollow promotions" built solely from check-ins and video points.
+升级不再依赖结算周期，达到条件即可连续晋升。Lv2 额外支持多路径判断：有 C/S/G 信号的 24+ 分、强实践路径 32+ 分、多维活跃路径 20+ 分都可触发晋升，避免只靠签到和视频分堆出来的“空心晋升”。
 
-### 6. Zero-Code Management: Group Chat Keywords as Commands
+### 6. 零代码管理：群聊关键词即指令
 
-Trainers don't need any technical knowledge. All management operations are performed via group chat keywords:
+培训师不需要懂技术。所有管理操作通过群聊关键词完成：
 
 ```
-admin / admin panel / control panel   → Admin control panel (open camp, open window, graduation settlement)
-quiz / in-class quiz / exam            → Draw questions from Feishu Base question bank, send interactive quiz cards
-peer review / peer vote / vote         → Peer review voting card, auto-calculate social scores
-board / ranking / leaderboard           → Ranking ladder card, one-click jump to Web Dashboard
-adjust / manual adjustment             → Manual score adjustment card (bypass auto-scoring limits)
-member / member management             → Member role management card (hide ranking / change role)
+管理 / 管理面板 / 控制面板   → 管理员控制面板（开期、开窗口、毕业结算）
+测验 / 随堂测验 / 考试      → 从飞书多维表格题库抽题，发送互动答题卡片
+互评 / 互评投票 / 投票      → 学员互评投票卡片，自动计算社交力得分
+看板 / 排行 / 排行榜        → 战绩天梯榜卡片，一键跳转 Web Dashboard
+调分 / 手动调分             → 运营手动调分卡片（可绕过自动评分上限）
+成员 / 成员管理             → 成员角色管理卡片（隐藏排行/更改角色）
 ```
 
-The question bank is managed via Feishu Base spreadsheets---add, delete, edit, and query directly in the spreadsheet, and the system syncs automatically.
+题库通过飞书多维表格管理，直接在表格里增删改查，系统自动同步。
 
-### 7. Anti-Abuse Mechanisms
+### 7. 防刷机制
 
-- **Per-camp caps** --- Each scoring item has an independent score cap per camp to prevent score farming
-- **Idempotent deduplication** --- The same message will not be scored multiple times
-- **AI quality verification** --- Scoring must include contribution type, evidence, confidence level, and reasoning
-- **Admin review queue** --- AI scoring results push review cards for one-click approve/reject
-- **Shadow safety valve** --- v3 scores can be written to the database for observation without directly affecting the leaderboard
-- **Operational correction intents** --- Messages like "don't add points / withdraw points / just casual chat" won't enter open conversation
-- **Manual score adjustment** --- Admins can bypass auto-caps for manual corrections
+- **每期上限** —— 每个评分项每期有独立分数上限，防止刷分
+- **幂等去重** —— 同一消息不会重复计分
+- **AI 质量判定** —— 评分必须给出贡献类型、证据、置信度和原因
+- **管理员审核队列** —— AI 评分结果推送审核卡片，一键批准/驳回
+- **Shadow 安全阀** —— v3 评分可先真实落库观察，不直接影响榜单
+- **运营纠错意图** —— “不用加分 / 撤回加分 / 纯瞎聊”等消息不会进入开放闲聊
+- **运营手动调分** —— 管理员可绕过自动上限进行手动修正
 
 ---
 
-## Project Highlights
+## 项目亮点
 
-| | Highlight | Description |
+| | 亮点 | 说明 |
 |:--:|:----:|:-----|
-| 🎯 | **Zero Friction** | No tools to learn---group chat is the assessment |
-| 🤖 | **AI-Driven** | Multi-modal LLM understanding, beyond the keyword era |
-| ⚡ | **Real-Time Feedback** | Scored and on the leaderboard within 3 seconds, instant positive reinforcement |
-| 🎮 | **Gamified** | Five-level growth system + badges + leaderboard |
-| 📊 | **Multi-Dimensional** | 5 dimensions, 15 metrics---comprehensive profiling |
-| 🔧 | **Zero-Code** | Group chat commands + spreadsheet management---trainers are admins |
-| 🛡️ | **Anti-Cheat** | Rate limiting + deduplication + AI quality checks---ensuring fairness |
-| 📦 | **Lightweight Deploy** | Single-server SQLite + systemd, live in 10 minutes |
+| 🎯 | **零摩擦** | 学员无需学习任何工具，群聊即评估 |
+| 🤖 | **AI 驱动** | 大模型多模态理解，超越关键词时代 |
+| ⚡ | **实时反馈** | 3 秒内评分上榜，即时正向激励 |
+| 🎮 | **游戏化** | 五级成长体系 + 勋章 + 排行榜 |
+| 📊 | **多维度** | 5 大维度 15 项指标，全面画像 |
+| 🔧 | **零代码** | 群聊指令 + 表格管理，培训师即管理员 |
+| 🛡️ | **防作弊** | 限频 + 去重 + AI 质检，保障公平 |
+| 📦 | **轻部署** | 单机 SQLite + systemd，10 分钟上线 |
 
 ---
 
-## Use Cases
+## 使用场景
 
-| Scenario | Description |
+| 场景 | 说明 |
 |------|------|
-| **Corporate AI Training Camp** | Zero TA overhead, fully automated, real-time data visualization |
-| **New Employee Onboarding** | Auto-track participation depth, generate personal growth reports |
-| **Product Manager Bootcamp** | Five-dimension model maps to product competency profiles, radar chart at a glance |
-| **Book Club / Learning Community** | Gamified level system for sustained engagement, maintaining long-term activity |
-| **Hackathon** | Real-time dashboard + team dimension scoring, maximizing competition atmosphere |
+| **企业 AI 培训营** | 零助教投入，全程自动化，实时数据可视化 |
+| **新员工入职培训** | 自动追踪参与深度，生成个人成长报告 |
+| **产品经理训练营** | 五维模型对应产品能力画像，雷达图一目了然 |
+| **读书会 / 学习社群** | 游戏化等级体系持续激励，保持长期活跃 |
+| **黑客马拉松** | 实时大屏 + 团队维度评分，比赛氛围拉满 |
 
 ---
 
-## Technical Extension Roadmap
+## 技术扩展方向
 
-The system uses a modular architecture, with the following directions offering low-cost extensibility:
+系统采用模块化架构，以下方向具备低成本扩展能力：
 
-| Data Layer | IM Adapter Layer | AI Capability Enhancement |
+| 数据层 | IM 适配层 | AI 能力增强 |
 |--------|----------|------------|
-| Multi-group linkage | WeCom adapter | AI personalized learning suggestions |
-| Cross-camp data comparison | DingTalk adapter | Adaptive difficulty question bank |
-| Data export reports | Webhook integration | Smart group matching |
-| Student profile accumulation | Mobile H5 adaptation | Training ROI quantitative analysis |
+| 多群联动 | 企业微信适配 | AI 个性化学习建议 |
+| 跨营期数据对比 | 钉钉适配 | 自适应难度题库 |
+| 数据导出报表 | Webhook 集成 | 智能分组匹配 |
+| 学员画像沉淀 | 移动端 H5 适配 | 培训 ROI 量化分析 |
 
 ---
 
 ## Tech Stack
 
 ```
-Frontend:   React 18 + TypeScript + Vite (hand-crafted CSS, cyberpunk theme)
+Frontend:   React 18 + TypeScript + Vite (手写 CSS，赛博朋克主题)
 Backend:    Fastify + TypeScript (Node.js)
-Database:   SQLite (better-sqlite3, WAL mode)
-IM:         Feishu Open Platform SDK (WebSocket long connection)
-AI:         Qwen3.5 Flash / OpenAI-compatible LLM (text scoring, vision understanding, TA Q&A)
-Schedule:   systemd timer (leaderboard settlement every Thursday at 12:00)
-Deploy:     systemd + Nginx + Let's Encrypt, runs on a single server
+Database:   SQLite (better-sqlite3, WAL 模式)
+IM:         飞书开放平台 SDK (WebSocket 长连接)
+AI:         Qwen3.5 Flash / OpenAI-compatible LLM (文本评分、视觉理解、助教问答)
+Schedule:   systemd timer (每周四 12:00 排行榜结算)
+Deploy:     systemd + Nginx + Let's Encrypt，单机即可运行
 ```
 
 ---
@@ -237,30 +235,30 @@ npm install
 cp .env.example .env
 ```
 
-Edit the `.env` file and fill in:
+编辑 `.env` 文件，填入：
 
-| Variable | Description |
+| 变量 | 说明 |
 |------|------|
-| `FEISHU_APP_ID` | Feishu custom app App ID |
-| `FEISHU_APP_SECRET` | Feishu custom app App Secret |
-| `FEISHU_BOT_CHAT_ID` | Chat ID of the group where the bot resides |
-| `LLM_PROVIDER` | LLM provider (recommended: `aliyun`, compatible with OpenAI-style Chat API) |
+| `FEISHU_APP_ID` | 飞书自建应用 App ID |
+| `FEISHU_APP_SECRET` | 飞书自建应用 App Secret |
+| `FEISHU_BOT_CHAT_ID` | 机器人所在群聊的 chat_id |
+| `LLM_PROVIDER` | LLM 提供方（推荐 `aliyun`，兼容 OpenAI-style Chat API） |
 | `LLM_API_KEY` | LLM API Key |
-| `LLM_TEXT_MODEL` | Text scoring / TA Q&A model (production recommended: `qwen3.5-flash`) |
-| `LLM_VISION_MODEL` | Image understanding model (production recommended: `qwen3.5-flash`) |
-| `AI_BOOT_ENGINE_MODE` | AI Boot engine mode: `legacy` / `v3_shadow` / `v3_live` |
+| `LLM_TEXT_MODEL` | 文本评分/助教问答模型（线上推荐 `qwen3.5-flash`） |
+| `LLM_VISION_MODEL` | 图片理解模型（线上推荐 `qwen3.5-flash`） |
+| `AI_BOOT_ENGINE_MODE` | AI Boot 引擎模式：`legacy` / `v3_shadow` / `v3_live` |
 
-See `.env.example` for complete environment variable documentation.
+完整环境变量说明见 `.env.example`。
 
 ### 3. Create Feishu Bot
 
-1. Go to [Feishu Open Platform](https://open.feishu.cn/) to create a custom app
-2. Enable the **Bot** capability
-3. Add permissions: `im:message:receive`, `im:chat`, `im:message:send`
-4. Set up event subscription: `im.message.receive_v1`
-5. Select **Long Connection mode** (recommended)
+1. 前往 [飞书开放平台](https://open.feishu.cn/) 创建自建应用
+2. 开启**机器人**能力
+3. 添加权限：`im:message:receive`、`im:chat`、`im:message:send`
+4. 设置事件订阅：`im.message.receive_v1`
+5. 选择**长连接模式**（推荐）
 
-See [docs/feishu-setup.md](docs/feishu-setup.md) for detailed steps.
+详细步骤见 [docs/feishu-setup.md](docs/feishu-setup.md)。
 
 ### 4. Run
 
@@ -285,7 +283,7 @@ npm run ai-boot:replay-feishu-messages -- \
 
 ### 5. Open Dashboard
 
-Open `http://localhost:3000/dashboard` in your browser
+浏览器打开 `http://localhost:3000/dashboard`
 
 ---
 
@@ -294,31 +292,31 @@ Open `http://localhost:3000/dashboard` in your browser
 ```
 ai-seed-project/
 ├── src/
-│   ├── domain/v2/          # Scoring domain model (ingestor, settler, levels, promotion-announcer)
-│   ├── routes/v2/          # API routes (board, ranking, member detail)
-│   ├── services/feishu/    # Feishu integration (bot, cards, message handling, AI Boot v3, promotion announcement)
+│   ├── domain/v2/          # 评分领域模型 (ingestor, settler, levels, promotion-announcer)
+│   ├── routes/v2/          # API 路由 (board, ranking, member detail)
+│   ├── services/feishu/    # 飞书集成 (bot, cards, message handling, AI Boot v3, promotion announcement)
 │   ├── storage/            # SQLite repository
-│   └── config/             # Configuration and defaults
+│   └── config/             # 配置与默认值
 ├── apps/dashboard/         # React Dashboard (Vite)
-│   ├── src/components/     # UI components (cyberpunk theme)
-│   ├── src/hooks/          # Data hooks (useRanking, useMemberDetail)
-│   ├── src/lib/            # Utility functions (badge-engine, colors, api)
-│   └── src/routes/         # Page routes
-├── tests/                  # Vitest test suite
-├── scripts/                # Operations and deployment scripts
-│   ├── ops/deploy-app.sh   # Application deployment
-│   ├── ops/deploy-timer.sh # Timer deployment
-│   └── ops/backup-db.sh    # Database backup
-├── deploy/systemd/         # systemd units
-│   ├── ai-seed-project.service  # Main service
-│   ├── weekly-ranking.service   # Ranking script service
-│   └── weekly-ranking.timer     # Timer for every Thursday at 12:00
+│   ├── src/components/     # UI 组件 (赛博朋克主题)
+│   ├── src/hooks/          # 数据 hooks (useRanking, useMemberDetail)
+│   ├── src/lib/            # 工具函数 (badge-engine, colors, api)
+│   └── src/routes/         # 页面路由
+├── tests/                  # Vitest 测试套件
+├── scripts/                # 运维与部署脚本
+│   ├── ops/deploy-app.sh   # 应用部署
+│   ├── ops/deploy-timer.sh # 定时器部署
+│   └── ops/backup-db.sh    # 数据库备份
+├── deploy/systemd/         # systemd 单元
+│   ├── ai-seed-project.service  # 主服务
+│   ├── weekly-ranking.service   # 排行榜脚本服务
+│   └── weekly-ranking.timer     # 每周四 12:00 定时器
 ├── docs/
-│   ├── admin-guide.md      # Admin guide (no technical background required)
-│   ├── student-rules-guide.md  # Student scoring/promotion/badge rules
-│   ├── feishu-setup.md     # Feishu app configuration steps
-│   └── project-pitch.md    # Project introduction and use cases
-└── .env.example            # Complete environment variable template
+│   ├── admin-guide.md      # 管理员操作手册（零技术背景适用）
+│   ├── student-rules-guide.md  # 学员评分/晋升/勋章规则
+│   ├── feishu-setup.md     # 飞书应用配置详细步骤
+│   └── project-pitch.md    # 项目介绍与使用场景
+└── .env.example            # 完整环境变量模板
 ```
 
 ---
@@ -329,8 +327,8 @@ ai-seed-project/
 
 - Node.js 18+
 - 1 Core / 1 GB RAM
-- Feishu Enterprise Edition (Open Platform permissions)
-- Alibaba Cloud Bailian or other OpenAI-compatible LLM API account
+- 飞书企业版（开放平台权限）
+- 阿里云百炼或其他 OpenAI-compatible LLM API 账号
 
 ### Production
 
@@ -338,12 +336,12 @@ ai-seed-project/
 npm install
 npm run build
 
-# Using systemd (recommended)
+# Using systemd (推荐)
 sudo cp deploy/ai-seed-project.service /etc/systemd/system/
 sudo systemctl enable ai-seed-project
 sudo systemctl start ai-seed-project
 
-# Or run directly
+# 或直接运行
 node dist/main.js
 ```
 
@@ -353,21 +351,21 @@ node dist/main.js
 
 | Method | Path | Description |
 |--------|------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api/v2/board/ranking` | Leaderboard data |
-| GET | `/api/v2/board/member/:id` | Member details |
+| GET | `/api/health` | 健康检查 |
+| GET | `/api/v2/board/ranking` | 排行榜数据 |
+| GET | `/api/v2/board/member/:id` | 学员详情 |
 | GET | `/dashboard` | Dashboard SPA |
 
 ---
 
 ## Customization
 
-This project is designed as a **reusable template**:
+本项目设计为**模板化可复用**：
 
-1. **Swap IM platform**: Modify `src/services/feishu/` to adapt to other IM platforms (WeCom, DingTalk, etc.)
-2. **Swap AI engine**: Modify `src/services/llm/provider-config.ts` and `src/services/v2/llm-scoring-client.ts` to integrate other OpenAI-compatible LLMs
-3. **Customize scoring dimensions**: Modify the scoring rules and dimension definitions in `src/domain/v2/`
-4. **Customize dashboard theme**: Modify the CSS variables in `apps/dashboard/src/`
+1. **替换 IM 平台**：修改 `src/services/feishu/` 适配其他 IM（企业微信、钉钉等）
+2. **替换 AI 引擎**：修改 `src/services/llm/provider-config.ts` 和 `src/services/v2/llm-scoring-client.ts` 接入其他 OpenAI-compatible LLM
+3. **自定义评分维度**：修改 `src/domain/v2/` 中的评分规则和维度定义
+4. **自定义 Dashboard 主题**：修改 `apps/dashboard/src/` 中的 CSS 变量
 
 ---
 
@@ -375,23 +373,23 @@ This project is designed as a **reusable template**:
 
 | Doc | Description |
 |-----|-------------|
-| [Admin Guide](docs/admin-guide.md) | Admin guide (no technical background required) |
-| [Student Rules](docs/student-rules-guide.md) | Student scoring/promotion/badge rules documentation |
-| [Feishu Setup](docs/feishu-setup.md) | Detailed Feishu app configuration steps |
-| [Project Pitch](docs/project-pitch.md) | Project introduction and use cases |
-| [.env.example](.env.example) | Complete environment variable documentation |
+| [Admin Guide](docs/admin-guide.md) | 管理员操作手册（零技术背景适用） |
+| [Student Rules](docs/student-rules-guide.md) | 学员评分/晋升/勋章规则说明 |
+| [Feishu Setup](docs/feishu-setup.md) | 飞书应用配置详细步骤 |
+| [Project Pitch](docs/project-pitch.md) | 项目介绍与使用场景 |
+| [.env.example](.env.example) | 完整环境变量说明 |
 
 ---
 
 ## Contributing
 
-Issues and Pull Requests are welcome!
+欢迎提交 Issue 和 Pull Request！
 
-1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Fork 本仓库
+2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'feat: add amazing feature'`)
+4. 推送分支 (`git push origin feature/amazing-feature`)
+5. 发起 Pull Request
 
 ---
 
@@ -403,9 +401,9 @@ Issues and Pull Requests are welcome!
 
 <div align="center">
 
-**Let training be more than a one-person show.**
+**让培训不再是一场独角戏。**
 
-**Let AI see everyone's effort. Let data tell every growth story.**
+**让 AI 看见每一个人的努力，让数据讲述每一段成长的故事。**
 
 ---
 
@@ -413,3 +411,4 @@ Issues and Pull Requests are welcome!
 *Powered by Feishu Bot + Qwen3.5 Flash + Gamification*
 
 </div>
+
