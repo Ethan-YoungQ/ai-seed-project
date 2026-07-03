@@ -4,7 +4,7 @@
 
 # AI Seed Project - 飞书机器人培训评估系统
 
-AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书助教机器人与培训评估系统。它把飞书群聊里的发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、学习积分和排行榜看板，帮助团队持续追踪培训参与度。
+AI Seed Project 是一个面向企业培训、AI 训练营和学习社群的飞书助教机器人、培训评估系统与学习积分看板。它把飞书群聊里的发言、图片、文件、测验卡片和互动行为转成学习行为证据，再通过 LLM 辅助评分、管理员审核、积分规则和排行榜，帮助团队持续追踪培训参与度。
 
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Fastify](https://img.shields.io/badge/Fastify-5.x-000?logo=fastify)](https://fastify.dev/)
